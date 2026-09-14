@@ -1,0 +1,31 @@
+{
+  "family": "Speeduino",
+  "name": "Speeduino",
+  "signature_patterns": ["speeduino"],
+  "tables": [
+    {"id": "ve", "label": "VE Table", "z": ["veTable"],
+     "x": ["rpmBins"], "y": ["fuelLoadBins"],
+     "x_label": "RPM", "y_label": "Load", "units": "%", "palette": "ve"},
+    {"id": "spark", "label": "Ignition Advance", "z": ["advTable1", "ignTable"],
+     "x": ["rpmBins2"], "y": ["mapBins1", "ignLoadBins"],
+     "x_label": "RPM", "y_label": "Load", "units": "deg", "palette": "spark"},
+    {"id": "afr", "label": "AFR Target", "z": ["afrTable"],
+     "x": ["rpmBinsAFR"], "y": ["loadBinsAFR"],
+     "x_label": "RPM", "y_label": "Load", "units": "AFR", "palette": "afr"},
+    {"id": "ve2", "label": "VE Table 2", "z": ["veTable2"],
+     "x": ["rpmBinsVE2"], "y": ["loadBinsVE2"],
+     "x_label": "RPM", "y_label": "Load", "units": "%", "palette": "ve"}
+  ],
+  "summary_fields": [
+    {"name": "reqFuel", "label": "Req fuel"},
+    {"name": "nCylinders", "label": "Cylinders"},
+    {"name": "injOpen", "label": "Inj open"},
+    {"name": "algorithm", "label": "Fuel algorithm"},
+    {"name": ["HardRevLim", "rpmhardlimit"], "label": "Rev limit"},
+    {"name": "divider", "label": "Squirts/cycle"},
+    {"name": "twoStroke", "label": "Stroke"},
+    {"name": "engineType", "label": "Engine type"},
+    {"name": "mapSample", "label": "MAP sampling"},
+    {"name": ["boostCutPressure", "boostCut"], "label": "Boost cut"}
+  ]
+}

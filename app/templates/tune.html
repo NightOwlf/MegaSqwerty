@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}{{ og_title }} · MSQ Viewer{% endblock %}
+{% block og %}
+<meta property="og:site_name" content="MSQ Viewer">
+<meta property="og:type" content="website">
+<meta property="og:title" content="{{ og_title }}">
+<meta property="og:description" content="{{ og_desc }}">
+<meta property="og:url" content="{{ og_url }}">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="{{ og_title }}">
+<meta name="twitter:description" content="{{ og_desc }}">
+{% endblock %}
+{% block bodyclass %}has-tabbar{% endblock %}
+{% block main %}
+{% if delete_key %}
+<section class="keybox" role="status">
+  <h2>Uploaded. Save your delete key.</h2>
+  <p>It's shown <b>once</b>, and it's the only way to remove this tune.</p>
+  <div class="keyrow"><code id="dkey" class="mono">{{ delete_key }}</code><button class="btn" type="button" data-copy="#dkey">Copy key</button></div>
+</section>
+{% endif %}
+
+<section class="tunehead">
+  <div class="chips">
+    <span class="chip fam">{{ doc.family if doc.family != 'unknown' else 'Unknown firmware' }}</span>
+    {% if doc.version %}<span class="chip ghost mono">{{ doc.version }}</span>{% endif %}
+    {% if doc.board %}<span class="chip ghost mono">{{ doc.board }}</span>{% endif %}
+    {% if doc.branch and doc.branch|lower != doc.board|lower %}<span class="chip ghost mono">{{ doc.branch }}</span>{% endif %}
+  </div>
+  <p class="sig mono" title="Firmware signature, exactly as written in the file">{{ doc.signature or '(no signature in file)' }}</p>
+  {% if doc.tune_comment %}<h1 class="comment">{{ doc.tune_comment }}</h1>{% endif %}
+  <p class="meta">
+    {% if doc.write_date %}<span>Saved {{ doc.write_date }}</span>{% endif %}
+    {% if doc.author %}<span>by {{ doc.author }}</span>{% endif %}
+    <span>Layout: {{ tmap.name }}</span>
+  </p>
+  {% if summary %}
+  <dl class="readouts">
+    {% for label, val, units in summary %}
+    <div class="ro"><dt>{{ label }}</dt><dd><span class="v">{{ val }}</span>{% if units %}<span class="u">{{ units }}</span>{% endif %}</dd></div>
+    {% endfor %}
+  </dl>
+  {% endif %}
+  <div class="actions">
+    <button class="btn primary" type="button" data-share hidden>Share</button>
+    <button class="btn" type="button" data-copy-link>Copy link</button>
+    <a class="btn" href="/t/{{ slug }}.msq" download>Download .msq</a>
+    <a class="btn" href="/compare?a={{ slug }}">Compare…</a>
+    <a class="btn ghost" href="/t/{{ slug }}.json">JSON</a>
+  </div>
+</section>
+
+{% for g in fgrids %}
+<section class="panel" data-panel="{{ g.id }}">
+  {% include "_grid.html" %}
+</section>
+{% endfor %}
+
+{% if other %}
+<section class="panel" data-panel="other">
+  <h2 class="panel-title">{{ 'Tables' if not fgrids else 'Other tables' }} <small>{{ other|length }}</small></h2>
+  {% if not fgrids %}<p class="note">No layout for this firmware yet, so every table is shown with its raw name and cell-index axes.</p>{% endif %}
+  <input class="search" type="search" placeholder="Filter {{ other|length }} tables" data-filter="#other-list > .lazy" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <div id="other-list">
+  {% for v in other %}
+    <div class="lazy" data-name="{{ (v.label ~ ' ' ~ v.z.name)|lower }}" hx-get="/t/{{ slug }}/table?name={{ v.z.name|urlencode }}" hx-trigger="intersect once" hx-swap="innerHTML">
+      <div class="hm-head"><span class="hm-title">{{ v.label }}</span>{% if v.label != v.z.name %}<code class="hm-name">{{ v.z.name }}</code>{% endif %}<span class="hm-dims mono">{{ v.z.rows }}×{{ v.z.cols }}</span></div>
+      <div class="skeleton">loading…</div>
+    </div>
+  {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if cgrids %}
+<section class="panel" data-panel="curves">
+  <h2 class="panel-title">Curves <small>{{ cgrids|length }}</small></h2>
+  {% for g in cgrids %}{% include "_grid.html" %}{% endfor %}
+</section>
+{% endif %}
+
+<section class="panel" data-panel="all">
+  <h2 class="panel-title">All settings <small>{{ settings|length }}</small></h2>
+  <input class="search" type="search" placeholder="Search {{ settings|length }} settings" data-filter="#settings tbody tr" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <div class="tbl-scroll">
+  <table id="settings" class="settings">
+    <thead><tr><th>Name</th><th>Value</th><th>Units</th></tr></thead>
+    <tbody>
+    {% for c in settings %}
+      <tr data-name="{{ c.name|lower }} {{ (c|cval)|lower }}">
+        <td class="n mono">{{ c.name }}</td>
+        {% if c.kind in ('scalar', 'string') %}
+        <td class="v mono">{{ c|cval }}</td>
+        {% else %}
+        <td class="v"><details hx-get="/t/{{ slug }}/const?name={{ c.name|urlencode }}" hx-trigger="toggle once" hx-target="find .cbody"><summary class="mono">{{ c|cval }}</summary><div class="cbody">loading…</div></details></td>
+        {% endif %}
+        <td class="u">{{ c.units or '' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  <details class="danger">
+    <summary>Delete this tune</summary>
+    <form method="post" action="/t/{{ slug }}/delete" hx-delete="/t/{{ slug }}" hx-target="#del-msg" hx-confirm="Delete this tune for everyone? This can't be undone.">
+      <label>Delete key <input name="key" autocomplete="off" autocapitalize="off" spellcheck="false" required></label>
+      <button class="btn danger-btn" type="submit">Delete</button>
+      <div id="del-msg"></div>
+    </form>
+  </details>
+</section>
+{% endblock %}
+
+{% block after %}
+<nav class="tabbar" role="tablist" aria-label="Sections">
+  {% for t in tabs %}<button type="button" role="tab" data-tab="{{ t.id }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ t.label }}</button>{% endfor %}
+</nav>
+<div class="bubble" role="status" hidden></div>
+{% endblock %}

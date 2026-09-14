@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ status }} · MSQ Viewer{% endblock %}
+{% block main %}
+<section class="hero errorpage">
+  <p class="code mono">{{ status }}</p>
+  <h1>{{ message }}</h1>
+  <p><a class="btn primary big" href="/">Upload a tune</a></p>
+</section>
+{% endblock %}

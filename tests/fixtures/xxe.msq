@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<!DOCTYPE msq [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<msq>
+  <bibliography author="&xxe;"/>
+  <versionInfo signature="MS3 format 0342.01"/>
+</msq>

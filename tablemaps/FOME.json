@@ -1,0 +1,2736 @@
+{
+  "family": "FOME",
+  "name": "FOME",
+  "generated_by": "tools/ini_to_tablemap.py",
+  "source_ini": "fome_vthpnp.ini",
+  "signatures": [
+    "rusEFI (FOME) Vthpnp.2026.03.19.vthpnp.3616320453"
+  ],
+  "signature_patterns": [
+    "fome"
+  ],
+  "tables": [
+    {
+      "id": "ve",
+      "label": "VE Table",
+      "z": "veTable",
+      "x": "veRpmBins",
+      "y": "veLoadBins",
+      "x_label": "RPM",
+      "y_label": "load",
+      "units": "%",
+      "palette": "ve"
+    },
+    {
+      "id": "spark",
+      "label": "Ignition Table",
+      "z": "ignitionTable",
+      "x": "ignitionRpmBins",
+      "y": "ignitionLoadBins",
+      "x_label": "RPM",
+      "y_label": "Load",
+      "units": "deg",
+      "palette": "spark"
+    },
+    {
+      "id": "afr",
+      "label": "Target Lambda Table",
+      "z": "lambdaTable",
+      "x": "lambdaRpmBins",
+      "y": "lambdaLoadBins",
+      "x_label": "RPM",
+      "y_label": "",
+      "units": "lambda",
+      "palette": "afr"
+    },
+    {
+      "id": "tpsTpsAccelTbl",
+      "label": "TPS/TPS Acceleration Extra Fuel(ms)",
+      "z": "tpsTpsAccelTable",
+      "x": "tpsTpsAccelFromRpmBins",
+      "y": "tpsTpsAccelToRpmBins",
+      "x_label": "from",
+      "y_label": "to",
+      "units": "value",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "boostTableTbl",
+      "label": "Boost control duty cycle (open loop)",
+      "z": "boostTableOpenLoop",
+      "x": "boostRpmBins",
+      "y": "boostTpsBins",
+      "x_label": "",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "boostTable2Tbl",
+      "label": "Boost control target (kPa)",
+      "z": "boostTableClosedLoop",
+      "x": "boostClosedLoopXAxisBins",
+      "y": "boostClosedLoopYAxisBins",
+      "x_label": "",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "fan1DutyAcOffTbl",
+      "label": "Fan 1 Duty (AC Off)",
+      "z": "fan1DutyAcOff",
+      "x": "fan1XAxisBins",
+      "y": "fan1CltBins",
+      "x_label": "",
+      "y_label": "Coolant",
+      "units": "%",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "fan1DutyAcOnTbl",
+      "label": "Fan 1 Duty (AC On)",
+      "z": "fan1DutyAcOn",
+      "x": "fan1XAxisBins",
+      "y": "fan1CltBins",
+      "x_label": "",
+      "y_label": "Coolant",
+      "units": "%",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "fan2DutyAcOffTbl",
+      "label": "Fan 2 Duty (AC Off)",
+      "z": "fan2DutyAcOff",
+      "x": "fan2XAxisBins",
+      "y": "fan2CltBins",
+      "x_label": "",
+      "y_label": "Coolant",
+      "units": "%",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "fan2DutyAcOnTbl",
+      "label": "Fan 2 Duty (AC On)",
+      "z": "fan2DutyAcOn",
+      "x": "fan2XAxisBins",
+      "y": "fan2CltBins",
+      "x_label": "",
+      "y_label": "Coolant",
+      "units": "%",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "vvtTable1Tbl",
+      "label": "Intake VVT closed loop Target",
+      "z": "vvtTable1",
+      "x": "vvtTable1RpmBins",
+      "y": "vvtTable1LoadBins",
+      "x_label": "RPM",
+      "y_label": "L",
+      "units": "value",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "vvtTable2Tbl",
+      "label": "Exhaust VVT closed loop Target",
+      "z": "vvtTable2",
+      "x": "vvtTable2RpmBins",
+      "y": "vvtTable2LoadBins",
+      "x_label": "RPM",
+      "y_label": "L",
+      "units": "value",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "scriptTable1Tbl",
+      "label": "Script Table #1",
+      "z": "scriptTable1",
+      "x": "scriptTable1RpmBins",
+      "y": "scriptTable1LoadBins",
+      "x_label": "RPM",
+      "y_label": "L",
+      "units": "value",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "scriptTable2Tbl",
+      "label": "Script Table #2",
+      "z": "scriptTable2",
+      "x": "scriptTable2RpmBins",
+      "y": "scriptTable2LoadBins",
+      "x_label": "RPM",
+      "y_label": "L",
+      "units": "value",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "scriptTable3Tbl",
+      "label": "Script Table #3",
+      "z": "scriptTable3",
+      "x": "scriptTable3RpmBins",
+      "y": "scriptTable3LoadBins",
+      "x_label": "RPM",
+      "y_label": "L",
+      "units": "value",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "scriptTable4Tbl",
+      "label": "Script Table #4",
+      "z": "scriptTable4",
+      "x": "scriptTable4RpmBins",
+      "y": "scriptTable4LoadBins",
+      "x_label": "RPM",
+      "y_label": "L",
+      "units": "value",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "IgnRetardTableALS",
+      "label": "Ignition adjustment",
+      "z": "ALSTimingRetardTable",
+      "x": "alsIgnRetardrpmBins",
+      "y": "alsIgnRetardLoadBins",
+      "x_label": "RPM",
+      "y_label": "TPS",
+      "units": "deg",
+      "palette": "spark",
+      "featured": false
+    },
+    {
+      "id": "FuelAdderTableALS",
+      "label": "Fuel adjustment",
+      "z": "ALSFuelAdjustment",
+      "x": "alsFuelAdjustmentrpmBins",
+      "y": "alsFuelAdjustmentLoadBins",
+      "x_label": "RPM",
+      "y_label": "TPS",
+      "units": "percent",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "baroCorrTbl",
+      "label": "Baro Correction",
+      "z": "baroCorrTable",
+      "x": "baroCorrRpmBins",
+      "y": "baroCorrPressureBins",
+      "x_label": "RPM",
+      "y_label": "kPa",
+      "units": "ratio",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "trailingIgnitionTableTbl",
+      "label": "Trailing Ignition Table",
+      "z": "trailingIgnitionTable",
+      "x": "trailingIgnitionRpmBins",
+      "y": "trailingIgnitionLoadBins",
+      "x_label": "RPM",
+      "y_label": "Load",
+      "units": "deg",
+      "palette": "spark",
+      "featured": false
+    },
+    {
+      "id": "ignAdder1Table",
+      "label": "Ignition adder 1",
+      "z": "ignBlends1_table",
+      "x": "ignBlends1_rpmBins",
+      "y": "ignBlends1_loadBins",
+      "x_label": "RPM",
+      "y_label": "Load",
+      "units": "",
+      "palette": "spark",
+      "featured": false
+    },
+    {
+      "id": "ignAdder2Table",
+      "label": "Ignition adder 2",
+      "z": "ignBlends2_table",
+      "x": "ignBlends2_rpmBins",
+      "y": "ignBlends2_loadBins",
+      "x_label": "RPM",
+      "y_label": "Load",
+      "units": "",
+      "palette": "spark",
+      "featured": false
+    },
+    {
+      "id": "ignAdder3Table",
+      "label": "Ignition adder 3",
+      "z": "ignBlends3_table",
+      "x": "ignBlends3_rpmBins",
+      "y": "ignBlends3_loadBins",
+      "x_label": "RPM",
+      "y_label": "Load",
+      "units": "",
+      "palette": "spark",
+      "featured": false
+    },
+    {
+      "id": "ignAdder4Table",
+      "label": "Ignition adder 4",
+      "z": "ignBlends4_table",
+      "x": "ignBlends4_rpmBins",
+      "y": "ignBlends4_loadBins",
+      "x_label": "RPM",
+      "y_label": "Load",
+      "units": "",
+      "palette": "spark",
+      "featured": false
+    },
+    {
+      "id": "veBlend1Table",
+      "label": "VE blend 1",
+      "z": "veBlends1_table",
+      "x": "veBlends1_rpmBins",
+      "y": "veBlends1_loadBins",
+      "x_label": "RPM",
+      "y_label": "Load",
+      "units": "",
+      "palette": "ve",
+      "featured": false
+    },
+    {
+      "id": "veBlend2Table",
+      "label": "VE blend 2",
+      "z": "veBlends2_table",
+      "x": "veBlends2_rpmBins",
+      "y": "veBlends2_loadBins",
+      "x_label": "RPM",
+      "y_label": "Load",
+      "units": "",
+      "palette": "ve",
+      "featured": false
+    },
+    {
+      "id": "veBlend3Table",
+      "label": "VE blend 3",
+      "z": "veBlends3_table",
+      "x": "veBlends3_rpmBins",
+      "y": "veBlends3_loadBins",
+      "x_label": "RPM",
+      "y_label": "Load",
+      "units": "",
+      "palette": "ve",
+      "featured": false
+    },
+    {
+      "id": "veBlend4Table",
+      "label": "VE blend 4",
+      "z": "veBlends4_table",
+      "x": "veBlends4_rpmBins",
+      "y": "veBlends4_loadBins",
+      "x_label": "RPM",
+      "y_label": "Load",
+      "units": "",
+      "palette": "ve",
+      "featured": false
+    },
+    {
+      "id": "boostOpenBlend1Table",
+      "label": "Boost open loop blend 1",
+      "z": "boostOpenLoopBlends1_table",
+      "x": "boostOpenLoopBlends1_rpmBins",
+      "y": "boostOpenLoopBlends1_loadBins",
+      "x_label": "RPM",
+      "y_label": "Load",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "boostOpenBlend2Table",
+      "label": "Boost open loop blend 2",
+      "z": "boostOpenLoopBlends2_table",
+      "x": "boostOpenLoopBlends2_rpmBins",
+      "y": "boostOpenLoopBlends2_loadBins",
+      "x_label": "RPM",
+      "y_label": "Load",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "boostClosedBlend1Table",
+      "label": "Boost closed loop blend 1",
+      "z": "boostClosedLoopBlends1_table",
+      "x": "boostClosedLoopBlends1_rpmBins",
+      "y": "boostClosedLoopBlends1_loadBins",
+      "x_label": "RPM",
+      "y_label": "Load",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "boostClosedBlend2Table",
+      "label": "Boost closed loop blend 2",
+      "z": "boostClosedLoopBlends2_table",
+      "x": "boostClosedLoopBlends2_rpmBins",
+      "y": "boostClosedLoopBlends2_loadBins",
+      "x_label": "RPM",
+      "y_label": "Load",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "ignitionIatCorrTableTbl",
+      "label": "Ignition Intake Air Temp correction",
+      "z": "ignitionIatCorrTable",
+      "x": "ignitionIatCorrTempBins",
+      "y": "ignitionIatCorrLoadBins",
+      "x_label": "C",
+      "y_label": "Load",
+      "units": "deg",
+      "palette": "spark",
+      "featured": false
+    },
+    {
+      "id": "idleVeTableTbl",
+      "label": "Idle VE",
+      "z": "idleVeTable",
+      "x": "idleVeRpmBins",
+      "y": "idleVeLoadBins",
+      "x_label": "RPM",
+      "y_label": "load",
+      "units": "%",
+      "palette": "ve",
+      "featured": false
+    },
+    {
+      "id": "fuelTrimTbl1",
+      "label": "Fuel trim cyl 1",
+      "z": "fuelTrims1_table",
+      "x": "fuelTrimRpmBins",
+      "y": "fuelTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "fuelTrimTbl2",
+      "label": "Fuel trim cyl 2",
+      "z": "fuelTrims2_table",
+      "x": "fuelTrimRpmBins",
+      "y": "fuelTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "fuelTrimTbl3",
+      "label": "Fuel trim cyl 3",
+      "z": "fuelTrims3_table",
+      "x": "fuelTrimRpmBins",
+      "y": "fuelTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "fuelTrimTbl4",
+      "label": "Fuel trim cyl 4",
+      "z": "fuelTrims4_table",
+      "x": "fuelTrimRpmBins",
+      "y": "fuelTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "fuelTrimTbl5",
+      "label": "Fuel trim cyl 5",
+      "z": "fuelTrims5_table",
+      "x": "fuelTrimRpmBins",
+      "y": "fuelTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "fuelTrimTbl6",
+      "label": "Fuel trim cyl 6",
+      "z": "fuelTrims6_table",
+      "x": "fuelTrimRpmBins",
+      "y": "fuelTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "fuelTrimTbl7",
+      "label": "Fuel trim cyl 7",
+      "z": "fuelTrims7_table",
+      "x": "fuelTrimRpmBins",
+      "y": "fuelTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "fuelTrimTbl8",
+      "label": "Fuel trim cyl 8",
+      "z": "fuelTrims8_table",
+      "x": "fuelTrimRpmBins",
+      "y": "fuelTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "fuelTrimTbl9",
+      "label": "Fuel trim cyl 9",
+      "z": "fuelTrims9_table",
+      "x": "fuelTrimRpmBins",
+      "y": "fuelTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "fuelTrimTbl10",
+      "label": "Fuel trim cyl 10",
+      "z": "fuelTrims10_table",
+      "x": "fuelTrimRpmBins",
+      "y": "fuelTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "fuelTrimTbl11",
+      "label": "Fuel trim cyl 11",
+      "z": "fuelTrims11_table",
+      "x": "fuelTrimRpmBins",
+      "y": "fuelTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "fuelTrimTbl12",
+      "label": "Fuel trim cyl 12",
+      "z": "fuelTrims12_table",
+      "x": "fuelTrimRpmBins",
+      "y": "fuelTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "ignTrimTbl1",
+      "label": "Ign trim cyl 1",
+      "z": "ignTrims1_table",
+      "x": "ignTrimRpmBins",
+      "y": "ignTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "ignTrimTbl2",
+      "label": "Ign trim cyl 2",
+      "z": "ignTrims2_table",
+      "x": "ignTrimRpmBins",
+      "y": "ignTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "ignTrimTbl3",
+      "label": "Ign trim cyl 3",
+      "z": "ignTrims3_table",
+      "x": "ignTrimRpmBins",
+      "y": "ignTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "ignTrimTbl4",
+      "label": "Ign trim cyl 4",
+      "z": "ignTrims4_table",
+      "x": "ignTrimRpmBins",
+      "y": "ignTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "ignTrimTbl5",
+      "label": "Ign trim cyl 5",
+      "z": "ignTrims5_table",
+      "x": "ignTrimRpmBins",
+      "y": "ignTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "ignTrimTbl6",
+      "label": "Ign trim cyl 6",
+      "z": "ignTrims6_table",
+      "x": "ignTrimRpmBins",
+      "y": "ignTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "ignTrimTbl7",
+      "label": "Ign trim cyl 7",
+      "z": "ignTrims7_table",
+      "x": "ignTrimRpmBins",
+      "y": "ignTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "ignTrimTbl8",
+      "label": "Ign trim cyl 8",
+      "z": "ignTrims8_table",
+      "x": "ignTrimRpmBins",
+      "y": "ignTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "ignTrimTbl9",
+      "label": "Ign trim cyl 9",
+      "z": "ignTrims9_table",
+      "x": "ignTrimRpmBins",
+      "y": "ignTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "ignTrimTbl10",
+      "label": "Ign trim cyl 10",
+      "z": "ignTrims10_table",
+      "x": "ignTrimRpmBins",
+      "y": "ignTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "ignTrimTbl11",
+      "label": "Ign trim cyl 11",
+      "z": "ignTrims11_table",
+      "x": "ignTrimRpmBins",
+      "y": "ignTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "ignTrimTbl12",
+      "label": "Ign trim cyl 12",
+      "z": "ignTrims12_table",
+      "x": "ignTrimRpmBins",
+      "y": "ignTrimLoadBins",
+      "x_label": "rpm",
+      "y_label": "",
+      "units": "",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "mapEstimateTableTbl",
+      "label": "MAP Estimate",
+      "z": "mapEstimateTable",
+      "x": "mapEstimateRpmBins",
+      "y": "mapEstimateTpsBins",
+      "x_label": "RPM",
+      "y_label": "% TPS",
+      "units": "kPa",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "injPhaseTableTbl",
+      "label": "Injection Phase",
+      "z": "injectionPhase",
+      "x": "injPhaseRpmBins",
+      "y": "injPhaseLoadBins",
+      "x_label": "RPM",
+      "y_label": "Load",
+      "units": "deg",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "pedalToTpsTbl",
+      "label": "ETB Pedal to TPS",
+      "z": "pedalToTpsTable",
+      "x": "pedalToTpsRpmBins",
+      "y": "pedalToTpsPedalBins",
+      "x_label": "RPM",
+      "y_label": "%",
+      "units": "%",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "throttle2TrimTbl",
+      "label": "ETB #2 Trim",
+      "z": "throttle2TrimTable",
+      "x": "throttle2TrimRpmBins",
+      "y": "throttle2TrimTpsBins",
+      "x_label": "RPM",
+      "y_label": "%",
+      "units": "%",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "maxKnockRetardTbl",
+      "label": "Max knock retard",
+      "z": "maxKnockRetardTable",
+      "x": "maxKnockRetardRpmBins",
+      "y": "maxKnockRetardLoadBins",
+      "x_label": "RPM",
+      "y_label": "%",
+      "units": "deg",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "knockGainTbl1",
+      "label": "Knock gain cyl 1",
+      "z": "knockGains1_table",
+      "x": "knockGainRpmBins",
+      "y": "knockGainLoadBins",
+      "x_label": "RPM",
+      "y_label": "%",
+      "units": "dB",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "knockGainTbl2",
+      "label": "Knock gain cyl 2",
+      "z": "knockGains2_table",
+      "x": "knockGainRpmBins",
+      "y": "knockGainLoadBins",
+      "x_label": "RPM",
+      "y_label": "%",
+      "units": "dB",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "knockGainTbl3",
+      "label": "Knock gain cyl 3",
+      "z": "knockGains3_table",
+      "x": "knockGainRpmBins",
+      "y": "knockGainLoadBins",
+      "x_label": "RPM",
+      "y_label": "%",
+      "units": "dB",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "knockGainTbl4",
+      "label": "Knock gain cyl 4",
+      "z": "knockGains4_table",
+      "x": "knockGainRpmBins",
+      "y": "knockGainLoadBins",
+      "x_label": "RPM",
+      "y_label": "%",
+      "units": "dB",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "knockGainTbl5",
+      "label": "Knock gain cyl 5",
+      "z": "knockGains5_table",
+      "x": "knockGainRpmBins",
+      "y": "knockGainLoadBins",
+      "x_label": "RPM",
+      "y_label": "%",
+      "units": "dB",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "knockGainTbl6",
+      "label": "Knock gain cyl 6",
+      "z": "knockGains6_table",
+      "x": "knockGainRpmBins",
+      "y": "knockGainLoadBins",
+      "x_label": "RPM",
+      "y_label": "%",
+      "units": "dB",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "knockGainTbl7",
+      "label": "Knock gain cyl 7",
+      "z": "knockGains7_table",
+      "x": "knockGainRpmBins",
+      "y": "knockGainLoadBins",
+      "x_label": "RPM",
+      "y_label": "%",
+      "units": "dB",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "knockGainTbl8",
+      "label": "Knock gain cyl 8",
+      "z": "knockGains8_table",
+      "x": "knockGainRpmBins",
+      "y": "knockGainLoadBins",
+      "x_label": "RPM",
+      "y_label": "%",
+      "units": "dB",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "knockGainTbl9",
+      "label": "Knock gain cyl 9",
+      "z": "knockGains9_table",
+      "x": "knockGainRpmBins",
+      "y": "knockGainLoadBins",
+      "x_label": "RPM",
+      "y_label": "%",
+      "units": "dB",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "knockGainTbl10",
+      "label": "Knock gain cyl 10",
+      "z": "knockGains10_table",
+      "x": "knockGainRpmBins",
+      "y": "knockGainLoadBins",
+      "x_label": "RPM",
+      "y_label": "%",
+      "units": "dB",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "knockGainTbl11",
+      "label": "Knock gain cyl 11",
+      "z": "knockGains11_table",
+      "x": "knockGainRpmBins",
+      "y": "knockGainLoadBins",
+      "x_label": "RPM",
+      "y_label": "%",
+      "units": "dB",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "knockGainTbl12",
+      "label": "Knock gain cyl 12",
+      "z": "knockGains12_table",
+      "x": "knockGainRpmBins",
+      "y": "knockGainLoadBins",
+      "x_label": "RPM",
+      "y_label": "%",
+      "units": "dB",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "lambdaMaxDeviationTableTbl",
+      "label": "Maximum Lambda Deviation",
+      "z": "lambdaMaxDeviationTable",
+      "x": "lambdaMaxDeviationRpmBins",
+      "y": "lambdaMaxDeviationLoadBins",
+      "x_label": "RPM",
+      "y_label": "",
+      "units": "lambda",
+      "palette": "afr",
+      "featured": false
+    },
+    {
+      "id": "gppwm1Tbl",
+      "label": "GP#1",
+      "z": "gppwm1_table",
+      "x": "gppwm1_rpmBins",
+      "y": "gppwm1_loadBins",
+      "x_label": "RPM",
+      "y_label": "load",
+      "units": "duty",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "gppwm2Tbl",
+      "label": "GP#2",
+      "z": "gppwm2_table",
+      "x": "gppwm2_rpmBins",
+      "y": "gppwm2_loadBins",
+      "x_label": "RPM",
+      "y_label": "load",
+      "units": "duty",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "gppwm3Tbl",
+      "label": "GP#3",
+      "z": "gppwm3_table",
+      "x": "gppwm3_rpmBins",
+      "y": "gppwm3_loadBins",
+      "x_label": "RPM",
+      "y_label": "load",
+      "units": "duty",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "gppwm4Tbl",
+      "label": "GP#4",
+      "z": "gppwm4_table",
+      "x": "gppwm4_rpmBins",
+      "y": "gppwm4_loadBins",
+      "x_label": "RPM",
+      "y_label": "load",
+      "units": "duty",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "stagedInjectionTbl",
+      "label": "Staged Injection %",
+      "z": "injectorStagingTable",
+      "x": "injectorStagingRpmBins",
+      "y": "injectorStagingLoadBins",
+      "x_label": "RPM",
+      "y_label": "",
+      "units": "%",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "hpfpTargetTable",
+      "label": "HPFP Target Fuel Pressure",
+      "z": "hpfpTarget",
+      "x": "hpfpTargetRpmBins",
+      "y": "hpfpTargetLoadBins",
+      "x_label": "RPM",
+      "y_label": "load",
+      "units": "kPa",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "hpfpCompensationTable",
+      "label": "HPFP Pump Compensation Factor",
+      "z": "hpfpCompensation",
+      "x": "hpfpCompensationRpmBins",
+      "y": "hpfpCompensationLoadBins",
+      "x_label": "RPM",
+      "y_label": "cc/lobe",
+      "units": "%",
+      "palette": "default",
+      "featured": false
+    },
+    {
+      "id": "postCrankingEnrichmentTable",
+      "label": "postCrankingEnrichTable",
+      "z": "postCrankingEnrichTable",
+      "x": "postCrankingEnrichRuntimeBins",
+      "y": "postCrankingEnrichTempBins",
+      "x_label": "Run time",
+      "y_label": "CLT",
+      "units": "ratio",
+      "palette": "default",
+      "featured": false
+    }
+  ],
+  "curves": [
+    {
+      "id": "knockThresholdCurve",
+      "label": "Engine knock threshold RPM based",
+      "x": "knockNoiseRpmBins",
+      "y": "knockBaseNoise",
+      "x_label": "RPM",
+      "y_label": "Threshold"
+    },
+    {
+      "id": "scriptCurve1",
+      "label": "Script Curve #1",
+      "x": "scriptCurve1Bins",
+      "y": "scriptCurve1",
+      "x_label": "X",
+      "y_label": "Y"
+    },
+    {
+      "id": "scriptCurve2",
+      "label": "Script Curve #2",
+      "x": "scriptCurve2Bins",
+      "y": "scriptCurve2",
+      "x_label": "X",
+      "y_label": "Y"
+    },
+    {
+      "id": "scriptCurve3",
+      "label": "Script Curve #3",
+      "x": "scriptCurve3Bins",
+      "y": "scriptCurve3",
+      "x_label": "X",
+      "y_label": "Y"
+    },
+    {
+      "id": "scriptCurve4",
+      "label": "Script Curve #4",
+      "x": "scriptCurve4Bins",
+      "y": "scriptCurve4",
+      "x_label": "X",
+      "y_label": "Y"
+    },
+    {
+      "id": "scriptCurve5",
+      "label": "Script Curve #5",
+      "x": "scriptCurve5Bins",
+      "y": "scriptCurve5",
+      "x_label": "X",
+      "y_label": "Y"
+    },
+    {
+      "id": "scriptCurve6",
+      "label": "Script Curve #6",
+      "x": "scriptCurve6Bins",
+      "y": "scriptCurve6",
+      "x_label": "X",
+      "y_label": "Y"
+    },
+    {
+      "id": "dwellCorrection",
+      "label": "Dwell time base",
+      "x": "sparkDwellRpmBins",
+      "y": "sparkDwellValues",
+      "x_label": "RPM",
+      "y_label": "Dwell"
+    },
+    {
+      "id": "dwellVoltageCorrection",
+      "label": "Dwell voltage correction",
+      "x": "dwellVoltageCorrVoltBins",
+      "y": "dwellVoltageCorrValues",
+      "x_label": "Battery Volts",
+      "y_label": "Multiplier"
+    },
+    {
+      "id": "dfcoMapRpmCorrection",
+      "label": "DFCO RPM MAP Correction",
+      "x": "dfcoMapRpmValuesBins",
+      "y": "dfcoMapRpmValues",
+      "x_label": "Engine Speed",
+      "y_label": "DFCO Threshold"
+    },
+    {
+      "id": "tpsTspRpmCorrection",
+      "label": "TPS/TPS AE RPM Correction",
+      "x": "tpsTspCorrValuesBins",
+      "y": "tpsTspCorrValues",
+      "x_label": "RPM",
+      "y_label": "Multiplier"
+    },
+    {
+      "id": "primingPulse",
+      "label": "Priming pulse fuel mass",
+      "x": "primeBins",
+      "y": "primeValues",
+      "x_label": "Coolant",
+      "y_label": "Prime Pulse"
+    },
+    {
+      "id": "map_samplingAngleCurve",
+      "label": "MAP Sampling Start Angle",
+      "x": "map_samplingAngleBins",
+      "y": "map_samplingAngle",
+      "x_label": "RPM",
+      "y_label": "Angle"
+    },
+    {
+      "id": "map_samplingWindowCurve",
+      "label": "MAP Sampling Duration",
+      "x": "map_samplingWindowBins",
+      "y": "map_samplingWindow",
+      "x_label": "RPM",
+      "y_label": "Window"
+    },
+    {
+      "id": "injectorsDeadTime",
+      "label": "Injector dead time",
+      "x": "injector_battLagCorrBins",
+      "y": "injector_battLagCorr",
+      "x_label": "Battery",
+      "y_label": "Dead Time"
+    },
+    {
+      "id": "injectorsSecondaryDeadTime",
+      "label": "Secondary injector dead time",
+      "x": "injectorSecondary_battLagCorrBins",
+      "y": "injectorSecondary_battLagCorr",
+      "x_label": "Battery",
+      "y_label": "Dead Time"
+    },
+    {
+      "id": "vrThresholdCurve1",
+      "label": "VR 1 Threshold",
+      "x": "vrThreshold1_rpmBins",
+      "y": "vrThreshold1_values",
+      "x_label": "RPM",
+      "y_label": "Voltage"
+    },
+    {
+      "id": "vrThresholdCurve2",
+      "label": "VR 2 Threshold",
+      "x": "vrThreshold2_rpmBins",
+      "y": "vrThreshold2_values",
+      "x_label": "RPM",
+      "y_label": "Voltage"
+    },
+    {
+      "id": "mafDecodingCurve",
+      "label": "MAF sensor",
+      "x": "mafDecodingBins",
+      "y": "mafDecoding",
+      "x_label": "Voltage",
+      "y_label": "kg/hour"
+    },
+    {
+      "id": "iatFuelCorrCurve",
+      "label": "Intake air temperature fuel Multiplier",
+      "x": "iatFuelCorrBins",
+      "y": "iatFuelCorr",
+      "x_label": "Air Temp",
+      "y_label": "Multiplier"
+    },
+    {
+      "id": "cltTimingCorrCurve",
+      "label": "Warmup timing correction",
+      "x": "cltTimingBins",
+      "y": "cltTimingExtra",
+      "x_label": "Coolant",
+      "y_label": "Extra"
+    },
+    {
+      "id": "cltFuelCorrCurve",
+      "label": "Warmup fuel manual Multiplier",
+      "x": "cltFuelCorrBins",
+      "y": "cltFuelCorr",
+      "x_label": "Coolant",
+      "y_label": "Multiplier"
+    },
+    {
+      "id": "crankingCltCurve",
+      "label": "Cranking Coolant Temperature Multiplier",
+      "x": "crankingFuelBins",
+      "y": "crankingFuelCoef",
+      "x_label": "Coolant",
+      "y_label": "Multiplier"
+    },
+    {
+      "id": "crankingCltCurveE100",
+      "label": "Cranking Coolant Temperature Multiplier (Flex Fuel E85)",
+      "x": "crankingFuelBins",
+      "y": "crankingFuelCoefE100",
+      "x_label": "Coolant",
+      "y_label": "Multiplier"
+    },
+    {
+      "id": "cltRevLimitCurve",
+      "label": "cltRevLimitRpm",
+      "x": "cltRevLimitRpmBins",
+      "y": "cltRevLimitRpm",
+      "x_label": "Coolant",
+      "y_label": "RPM Limit"
+    },
+    {
+      "id": "etbTpsBiasCurve",
+      "label": "Electronic TB Bias Curve",
+      "x": "etbBiasBins",
+      "y": "etbBiasValues",
+      "x_label": "TPS",
+      "y_label": "duty bias"
+    },
+    {
+      "id": "crankingTpsCurve",
+      "label": "Cranking TPS Multiplier",
+      "x": "crankingTpsBins",
+      "y": "crankingTpsCoef",
+      "x_label": "TPS",
+      "y_label": "Multiplier"
+    },
+    {
+      "id": "crankingDurationCurve",
+      "label": "Cranking Duration Multiplier",
+      "x": "crankingCycleBins",
+      "y": "crankingCycleCoef",
+      "x_label": "Engine Cycle",
+      "y_label": "Multiplier"
+    },
+    {
+      "id": "cltIdleCurve",
+      "label": "Idle open loop warmup multiplier",
+      "x": "cltIdleCorrBins",
+      "y": "cltIdleCorr",
+      "x_label": "Coolant",
+      "y_label": "Multiplier"
+    },
+    {
+      "id": "iacCoastingCurve",
+      "label": "Coasting IAC Position",
+      "x": "iacCoastingRpmBins",
+      "y": "iacCoasting",
+      "x_label": "RPM",
+      "y_label": "Multiplier"
+    },
+    {
+      "id": "cltCrankingCurve",
+      "label": "Cranking Idle Air multiplier",
+      "x": "cltCrankingCorrBins",
+      "y": "cltCrankingCorr",
+      "x_label": "Coolant",
+      "y_label": "Multiplier"
+    },
+    {
+      "id": "cltCrankingTaperDurationCurve",
+      "label": "Cranking taper duration multiplier",
+      "x": "cltCrankingTaperCorrBins",
+      "y": "cltCrankingTaperCorr",
+      "x_label": "Coolant",
+      "y_label": "Multiplier"
+    },
+    {
+      "id": "cltIdleRPMCurve",
+      "label": "Idle Target RPM",
+      "x": "cltIdleRpmBins",
+      "y": "cltIdleRpm",
+      "x_label": "Coolant",
+      "y_label": "RPM"
+    },
+    {
+      "id": "idleAdvanceCurve",
+      "label": "Idle Advance Angle",
+      "x": "idleAdvanceBins",
+      "y": "idleAdvance",
+      "x_label": "RPM",
+      "y_label": "degrees"
+    },
+    {
+      "id": "crankingAdvanceCurve",
+      "label": "Cranking Advance Angle",
+      "x": "crankingAdvanceBins",
+      "y": "crankingAdvance",
+      "x_label": "RPM",
+      "y_label": "degrees"
+    },
+    {
+      "id": "fuelLevelCurve",
+      "label": "Fuel Level",
+      "x": "fuelLevelBins",
+      "y": "fuelLevelValues",
+      "x_label": "Voltage",
+      "y_label": "%"
+    },
+    {
+      "id": "wueAfrTargetOffsetCurve",
+      "label": "AFR Target Temperature Adjustment",
+      "x": "cltFuelCorrBins",
+      "y": "wueAfrTargetOffset",
+      "x_label": "Coolant",
+      "y_label": "AFR Offset"
+    },
+    {
+      "id": "wueAnalyzer_warmup_curve",
+      "label": "Warmup Enrichment",
+      "x": "cltFuelCorrBins",
+      "y": "cltFuelCorr",
+      "x_label": "Coolant",
+      "y_label": "Current WUE"
+    },
+    {
+      "id": "hpfpLobeProfileCurve",
+      "label": "HPFP Lobe Profile",
+      "x": "hpfpLobeProfileQuantityBins",
+      "y": "hpfpLobeProfileAngle",
+      "x_label": "% pump volume",
+      "y_label": "angle"
+    },
+    {
+      "id": "hpfpDeadtimeCurve",
+      "label": "HPFP Valve Deadtime",
+      "x": "hpfpDeadtimeVoltsBins",
+      "y": "hpfpDeadtimeMS",
+      "x_label": "volts",
+      "y_label": "ms"
+    },
+    {
+      "id": "wwTauCltCurve",
+      "label": "Evap time vs. CLT",
+      "x": "wwCltBins",
+      "y": "wwTauCltValues",
+      "x_label": "coolant",
+      "y_label": "seconds"
+    },
+    {
+      "id": "wwTauMapCurve",
+      "label": "Evap time vs. MAP",
+      "x": "wwMapBins",
+      "y": "wwTauMapValues",
+      "x_label": "MAP",
+      "y_label": "mult"
+    },
+    {
+      "id": "wwBetaCltCurve",
+      "label": "Impact fraction vs. CLT",
+      "x": "wwCltBins",
+      "y": "wwBetaCltValues",
+      "x_label": "coolant",
+      "y_label": "fraction"
+    },
+    {
+      "id": "wwBetaMapCurve",
+      "label": "Impact fraction vs. MAP",
+      "x": "wwMapBins",
+      "y": "wwBetaMapValues",
+      "x_label": "MAP",
+      "y_label": "mult"
+    },
+    {
+      "id": "tchargeCurve",
+      "label": "Charge temperature estimation coefficient",
+      "x": "tchargeBins",
+      "y": "tchargeValues",
+      "x_label": "flow",
+      "y_label": "coefficient"
+    },
+    {
+      "id": "ignAdder1Bias",
+      "label": "Ignition adder 1 bias",
+      "x": "ignBlends1_blendBins",
+      "y": "ignBlends1_blendValues",
+      "x_label": "param",
+      "y_label": "bias"
+    },
+    {
+      "id": "ignAdder2Bias",
+      "label": "Ignition adder 2 bias",
+      "x": "ignBlends2_blendBins",
+      "y": "ignBlends2_blendValues",
+      "x_label": "param",
+      "y_label": "bias"
+    },
+    {
+      "id": "ignAdder3Bias",
+      "label": "Ignition adder 3 bias",
+      "x": "ignBlends3_blendBins",
+      "y": "ignBlends3_blendValues",
+      "x_label": "param",
+      "y_label": "bias"
+    },
+    {
+      "id": "ignAdder4Bias",
+      "label": "Ignition adder 4 bias",
+      "x": "ignBlends4_blendBins",
+      "y": "ignBlends4_blendValues",
+      "x_label": "param",
+      "y_label": "bias"
+    },
+    {
+      "id": "veBlend1Bias",
+      "label": "VE blend 1 bias",
+      "x": "veBlends1_blendBins",
+      "y": "veBlends1_blendValues",
+      "x_label": "param",
+      "y_label": "bias"
+    },
+    {
+      "id": "veBlend2Bias",
+      "label": "VE blend 2 bias",
+      "x": "veBlends2_blendBins",
+      "y": "veBlends2_blendValues",
+      "x_label": "param",
+      "y_label": "bias"
+    },
+    {
+      "id": "veBlend3Bias",
+      "label": "VE blend 3 bias",
+      "x": "veBlends3_blendBins",
+      "y": "veBlends3_blendValues",
+      "x_label": "param",
+      "y_label": "bias"
+    },
+    {
+      "id": "veBlend4Bias",
+      "label": "VE blend 4 bias",
+      "x": "veBlends4_blendBins",
+      "y": "veBlends4_blendValues",
+      "x_label": "param",
+      "y_label": "bias"
+    },
+    {
+      "id": "boostOpenLoopBlend1Bias",
+      "label": "Boost open loop blend 1 bias",
+      "x": "boostOpenLoopBlends1_blendBins",
+      "y": "boostOpenLoopBlends1_blendValues",
+      "x_label": "param",
+      "y_label": "bias"
+    },
+    {
+      "id": "boostOpenLoopBlend2Bias",
+      "label": "Boost open loop blend 2 bias",
+      "x": "boostOpenLoopBlends2_blendBins",
+      "y": "boostOpenLoopBlends2_blendValues",
+      "x_label": "param",
+      "y_label": "bias"
+    },
+    {
+      "id": "boostClosedLoopBlend1Bias",
+      "label": "Boost Closed loop blend 1 bias",
+      "x": "boostClosedLoopBlends1_blendBins",
+      "y": "boostClosedLoopBlends1_blendValues",
+      "x_label": "param",
+      "y_label": "bias"
+    },
+    {
+      "id": "boostClosedLoopBlend2Bias",
+      "label": "Boost Closed loop blend 2 bias",
+      "x": "boostClosedLoopBlends2_blendBins",
+      "y": "boostClosedLoopBlends2_blendValues",
+      "x_label": "param",
+      "y_label": "bias"
+    },
+    {
+      "id": "throttleEffectiveArea",
+      "label": "Throttle effective area",
+      "x": "throttleEstimateEffectiveAreaBins",
+      "y": "throttleEstimateEffectiveAreaValues",
+      "x_label": "TPS",
+      "y_label": "normalized flow"
+    },
+    {
+      "id": "minimumOilPressure",
+      "label": "Minimum oil pressure",
+      "x": "minimumOilPressureBins",
+      "y": "minimumOilPressureValues",
+      "x_label": "RPM",
+      "y_label": "min pressure"
+    },
+    {
+      "id": "idleFlowEstimate",
+      "label": "Idle flow estimate",
+      "x": "idleFlowEstimateFlow",
+      "y": "idleFlowEstimatePosition",
+      "x_label": "Flow",
+      "y_label": "Idle %"
+    },
+    {
+      "id": "idleAirmassTimingEquivalence",
+      "label": "Idle airmass/timing equivalence",
+      "x": "airmassToTimingBins",
+      "y": "airmassToTimingValues",
+      "x_label": "Airmass delta",
+      "y_label": "Timing adjustment"
+    },
+    {
+      "id": "smallPulseAdder",
+      "label": "Small pulsewidth adder",
+      "x": "smallPulseAdderBins",
+      "y": "smallPulseAdderValues",
+      "x_label": "Pulsewidth",
+      "y_label": "Adder"
+    },
+    {
+      "id": "vvtOpenLoopIntakeCurve",
+      "label": "VVT intake hold duty",
+      "x": "vvtOpenLoop1_bins",
+      "y": "vvtOpenLoop1_values",
+      "x_label": "CLT",
+      "y_label": "duty"
+    },
+    {
+      "id": "vvtOpenLoopExhaustCurve",
+      "label": "VVT exhaust hold duty",
+      "x": "vvtOpenLoop2_bins",
+      "y": "vvtOpenLoop2_values",
+      "x_label": "CLT",
+      "y_label": "duty"
+    }
+  ],
+  "summary_fields": [
+    {
+      "name": "injector_flow",
+      "label": "Injector flow"
+    },
+    {
+      "name": "cylindersCount",
+      "label": "Cylinders"
+    },
+    {
+      "name": "displacement",
+      "label": "Displacement"
+    },
+    {
+      "name": "fuelAlgorithm",
+      "label": "Fuel algorithm"
+    },
+    {
+      "name": "rpmHardLimit",
+      "label": "Rev limit"
+    },
+    {
+      "name": "injectionMode",
+      "label": "Injection mode"
+    },
+    {
+      "name": "ignitionMode",
+      "label": "Ignition mode"
+    },
+    {
+      "name": "twoStroke",
+      "label": "Stroke"
+    },
+    {
+      "name": "boostCutPressure",
+      "label": "Boost cut"
+    }
+  ],
+  "constant_meta": {
+    "ALSFuelAdjustment": {
+      "units": "percent",
+      "digits": 1
+    },
+    "ALSTimingRetardTable": {
+      "units": "deg",
+      "digits": 1
+    },
+    "airmassToTimingBins": {
+      "units": "mg",
+      "digits": 0
+    },
+    "airmassToTimingValues": {
+      "units": "deg",
+      "digits": 0
+    },
+    "alsFuelAdjustmentLoadBins": {
+      "units": "TPS",
+      "digits": 0
+    },
+    "alsFuelAdjustmentrpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "alsIgnRetardLoadBins": {
+      "units": "TPS",
+      "digits": 0
+    },
+    "alsIgnRetardrpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "baroCorrPressureBins": {
+      "units": "kPa",
+      "digits": 1
+    },
+    "baroCorrRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "baroCorrTable": {
+      "units": "ratio",
+      "digits": 3
+    },
+    "boostClosedLoopBlends1_blendBins": {
+      "digits": 1
+    },
+    "boostClosedLoopBlends1_blendValues": {
+      "units": "%",
+      "digits": 1
+    },
+    "boostClosedLoopBlends1_loadBins": {
+      "units": "Load",
+      "digits": 0
+    },
+    "boostClosedLoopBlends1_rpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "boostClosedLoopBlends1_table": {
+      "digits": 1
+    },
+    "boostClosedLoopBlends2_blendBins": {
+      "digits": 1
+    },
+    "boostClosedLoopBlends2_blendValues": {
+      "units": "%",
+      "digits": 1
+    },
+    "boostClosedLoopBlends2_loadBins": {
+      "units": "Load",
+      "digits": 0
+    },
+    "boostClosedLoopBlends2_rpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "boostClosedLoopBlends2_table": {
+      "digits": 1
+    },
+    "boostClosedLoopXAxisBins": {
+      "digits": 0
+    },
+    "boostClosedLoopYAxisBins": {
+      "digits": 0
+    },
+    "boostCutPressure": {
+      "units": "kPa (absolute)",
+      "digits": 0
+    },
+    "boostOpenLoopBlends1_blendBins": {
+      "digits": 1
+    },
+    "boostOpenLoopBlends1_blendValues": {
+      "units": "%",
+      "digits": 1
+    },
+    "boostOpenLoopBlends1_loadBins": {
+      "units": "Load",
+      "digits": 0
+    },
+    "boostOpenLoopBlends1_rpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "boostOpenLoopBlends1_table": {
+      "digits": 1
+    },
+    "boostOpenLoopBlends2_blendBins": {
+      "digits": 1
+    },
+    "boostOpenLoopBlends2_blendValues": {
+      "units": "%",
+      "digits": 1
+    },
+    "boostOpenLoopBlends2_loadBins": {
+      "units": "Load",
+      "digits": 0
+    },
+    "boostOpenLoopBlends2_rpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "boostOpenLoopBlends2_table": {
+      "digits": 1
+    },
+    "boostRpmBins": {
+      "digits": 0
+    },
+    "boostTableClosedLoop": {
+      "digits": 0
+    },
+    "boostTableOpenLoop": {
+      "digits": 1
+    },
+    "boostTpsBins": {
+      "digits": 0
+    },
+    "cltCrankingCorr": {
+      "units": "%",
+      "digits": 2
+    },
+    "cltCrankingCorrBins": {
+      "units": "C",
+      "digits": 2
+    },
+    "cltCrankingTaperCorr": {
+      "units": "%",
+      "digits": 2
+    },
+    "cltCrankingTaperCorrBins": {
+      "units": "C",
+      "digits": 2
+    },
+    "cltFuelCorr": {
+      "units": "ratio",
+      "digits": 2
+    },
+    "cltFuelCorrBins": {
+      "units": "C",
+      "digits": 2
+    },
+    "cltIdleCorr": {
+      "units": "ratio",
+      "digits": 2
+    },
+    "cltIdleCorrBins": {
+      "units": "C",
+      "digits": 2
+    },
+    "cltIdleRpm": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "cltIdleRpmBins": {
+      "units": "C",
+      "digits": 0
+    },
+    "cltRevLimitRpm": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "cltRevLimitRpmBins": {
+      "units": "C",
+      "digits": 0
+    },
+    "cltTimingBins": {
+      "units": "C",
+      "digits": 1
+    },
+    "cltTimingExtra": {
+      "units": "degree",
+      "digits": 1
+    },
+    "crankingAdvance": {
+      "units": "deg",
+      "digits": 2
+    },
+    "crankingAdvanceBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "crankingCycleBins": {
+      "units": "counter",
+      "digits": 0
+    },
+    "crankingCycleCoef": {
+      "units": "ratio",
+      "digits": 2
+    },
+    "crankingFuelBins": {
+      "units": "C",
+      "digits": 2
+    },
+    "crankingFuelCoef": {
+      "units": "ratio",
+      "digits": 2
+    },
+    "crankingFuelCoefE100": {
+      "units": "ratio",
+      "digits": 2
+    },
+    "crankingTpsBins": {
+      "units": "%",
+      "digits": 2
+    },
+    "crankingTpsCoef": {
+      "units": "Ratio",
+      "digits": 2
+    },
+    "cylindersCount": {
+      "digits": 0
+    },
+    "dfcoMapRpmValues": {
+      "units": "MAP",
+      "digits": 0
+    },
+    "dfcoMapRpmValuesBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "displacement": {
+      "units": "L",
+      "digits": 3
+    },
+    "dwellVoltageCorrValues": {
+      "units": "multiplier",
+      "digits": 2
+    },
+    "dwellVoltageCorrVoltBins": {
+      "units": "volts",
+      "digits": 1
+    },
+    "etbBiasBins": {
+      "units": "target TPS position",
+      "digits": 1
+    },
+    "etbBiasValues": {
+      "units": "ETB duty cycle bias",
+      "digits": 1
+    },
+    "fan1CltBins": {
+      "units": "C",
+      "digits": 0
+    },
+    "fan1DutyAcOff": {
+      "units": "%",
+      "digits": 1
+    },
+    "fan1DutyAcOn": {
+      "units": "%",
+      "digits": 1
+    },
+    "fan1XAxisBins": {
+      "digits": 1
+    },
+    "fan2CltBins": {
+      "units": "C",
+      "digits": 0
+    },
+    "fan2DutyAcOff": {
+      "units": "%",
+      "digits": 1
+    },
+    "fan2DutyAcOn": {
+      "units": "%",
+      "digits": 1
+    },
+    "fan2XAxisBins": {
+      "digits": 1
+    },
+    "fuelLevelBins": {
+      "units": "volt",
+      "digits": 3
+    },
+    "fuelLevelValues": {
+      "units": "%",
+      "digits": 0
+    },
+    "fuelTrimLoadBins": {
+      "digits": 0
+    },
+    "fuelTrimRpmBins": {
+      "units": "rpm",
+      "digits": 0
+    },
+    "fuelTrims10_table": {
+      "digits": 1
+    },
+    "fuelTrims11_table": {
+      "digits": 1
+    },
+    "fuelTrims12_table": {
+      "digits": 1
+    },
+    "fuelTrims1_table": {
+      "digits": 1
+    },
+    "fuelTrims2_table": {
+      "digits": 1
+    },
+    "fuelTrims3_table": {
+      "digits": 1
+    },
+    "fuelTrims4_table": {
+      "digits": 1
+    },
+    "fuelTrims5_table": {
+      "digits": 1
+    },
+    "fuelTrims6_table": {
+      "digits": 1
+    },
+    "fuelTrims7_table": {
+      "digits": 1
+    },
+    "fuelTrims8_table": {
+      "digits": 1
+    },
+    "fuelTrims9_table": {
+      "digits": 1
+    },
+    "gppwm1_loadBins": {
+      "units": "load",
+      "digits": 1
+    },
+    "gppwm1_rpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "gppwm1_table": {
+      "units": "duty",
+      "digits": 1
+    },
+    "gppwm2_loadBins": {
+      "units": "load",
+      "digits": 1
+    },
+    "gppwm2_rpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "gppwm2_table": {
+      "units": "duty",
+      "digits": 1
+    },
+    "gppwm3_loadBins": {
+      "units": "load",
+      "digits": 1
+    },
+    "gppwm3_rpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "gppwm3_table": {
+      "units": "duty",
+      "digits": 1
+    },
+    "gppwm4_loadBins": {
+      "units": "load",
+      "digits": 1
+    },
+    "gppwm4_rpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "gppwm4_table": {
+      "units": "duty",
+      "digits": 1
+    },
+    "hpfpCompensation": {
+      "units": "%",
+      "digits": 0
+    },
+    "hpfpCompensationLoadBins": {
+      "units": "cc/lobe",
+      "digits": 3
+    },
+    "hpfpCompensationRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "hpfpDeadtimeMS": {
+      "units": "ms",
+      "digits": 3
+    },
+    "hpfpDeadtimeVoltsBins": {
+      "units": "volts",
+      "digits": 0
+    },
+    "hpfpLobeProfileAngle": {
+      "units": "deg",
+      "digits": 1
+    },
+    "hpfpLobeProfileQuantityBins": {
+      "units": "%",
+      "digits": 1
+    },
+    "hpfpTarget": {
+      "units": "kPa",
+      "digits": 0
+    },
+    "hpfpTargetLoadBins": {
+      "units": "load",
+      "digits": 1
+    },
+    "hpfpTargetRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "iacCoasting": {
+      "units": "%",
+      "digits": 1
+    },
+    "iacCoastingRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "iatFuelCorr": {
+      "units": "ratio",
+      "digits": 2
+    },
+    "iatFuelCorrBins": {
+      "units": "C",
+      "digits": 2
+    },
+    "idleAdvance": {
+      "units": "deg",
+      "digits": 1
+    },
+    "idleAdvanceBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "idleFlowEstimateFlow": {
+      "units": "kg/h",
+      "digits": 2
+    },
+    "idleFlowEstimatePosition": {
+      "units": "%",
+      "digits": 1
+    },
+    "idleVeLoadBins": {
+      "units": "load",
+      "digits": 0
+    },
+    "idleVeRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "idleVeTable": {
+      "units": "%",
+      "digits": 1
+    },
+    "ignBlends1_blendBins": {
+      "digits": 1
+    },
+    "ignBlends1_blendValues": {
+      "units": "%",
+      "digits": 1
+    },
+    "ignBlends1_loadBins": {
+      "units": "Load",
+      "digits": 0
+    },
+    "ignBlends1_rpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "ignBlends1_table": {
+      "digits": 1
+    },
+    "ignBlends2_blendBins": {
+      "digits": 1
+    },
+    "ignBlends2_blendValues": {
+      "units": "%",
+      "digits": 1
+    },
+    "ignBlends2_loadBins": {
+      "units": "Load",
+      "digits": 0
+    },
+    "ignBlends2_rpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "ignBlends2_table": {
+      "digits": 1
+    },
+    "ignBlends3_blendBins": {
+      "digits": 1
+    },
+    "ignBlends3_blendValues": {
+      "units": "%",
+      "digits": 1
+    },
+    "ignBlends3_loadBins": {
+      "units": "Load",
+      "digits": 0
+    },
+    "ignBlends3_rpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "ignBlends3_table": {
+      "digits": 1
+    },
+    "ignBlends4_blendBins": {
+      "digits": 1
+    },
+    "ignBlends4_blendValues": {
+      "units": "%",
+      "digits": 1
+    },
+    "ignBlends4_loadBins": {
+      "units": "Load",
+      "digits": 0
+    },
+    "ignBlends4_rpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "ignBlends4_table": {
+      "digits": 1
+    },
+    "ignTrimLoadBins": {
+      "digits": 0
+    },
+    "ignTrimRpmBins": {
+      "units": "rpm",
+      "digits": 0
+    },
+    "ignTrims10_table": {
+      "digits": 1
+    },
+    "ignTrims11_table": {
+      "digits": 1
+    },
+    "ignTrims12_table": {
+      "digits": 1
+    },
+    "ignTrims1_table": {
+      "digits": 1
+    },
+    "ignTrims2_table": {
+      "digits": 1
+    },
+    "ignTrims3_table": {
+      "digits": 1
+    },
+    "ignTrims4_table": {
+      "digits": 1
+    },
+    "ignTrims5_table": {
+      "digits": 1
+    },
+    "ignTrims6_table": {
+      "digits": 1
+    },
+    "ignTrims7_table": {
+      "digits": 1
+    },
+    "ignTrims8_table": {
+      "digits": 1
+    },
+    "ignTrims9_table": {
+      "digits": 1
+    },
+    "ignitionIatCorrLoadBins": {
+      "units": "Load",
+      "digits": 0
+    },
+    "ignitionIatCorrTable": {
+      "units": "deg",
+      "digits": 1
+    },
+    "ignitionIatCorrTempBins": {
+      "units": "C",
+      "digits": 0
+    },
+    "ignitionLoadBins": {
+      "units": "Load",
+      "digits": 0
+    },
+    "ignitionRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "ignitionTable": {
+      "units": "deg",
+      "digits": 1
+    },
+    "injPhaseLoadBins": {
+      "units": "Load",
+      "digits": 0
+    },
+    "injPhaseRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "injectionPhase": {
+      "units": "deg",
+      "digits": 0
+    },
+    "injectorSecondary_battLagCorr": {
+      "units": "ms",
+      "digits": 2
+    },
+    "injectorSecondary_battLagCorrBins": {
+      "units": "volts",
+      "digits": 2
+    },
+    "injectorStagingLoadBins": {
+      "digits": 0
+    },
+    "injectorStagingRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "injectorStagingTable": {
+      "units": "%",
+      "digits": 0
+    },
+    "injector_battLagCorr": {
+      "units": "ms",
+      "digits": 2
+    },
+    "injector_battLagCorrBins": {
+      "units": "volts",
+      "digits": 2
+    },
+    "injector_flow": {
+      "digits": 2
+    },
+    "knockBaseNoise": {
+      "units": "dBv",
+      "digits": 1
+    },
+    "knockGainLoadBins": {
+      "units": "%",
+      "digits": 0
+    },
+    "knockGainRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "knockGains10_table": {
+      "units": "dB",
+      "digits": 0
+    },
+    "knockGains11_table": {
+      "units": "dB",
+      "digits": 0
+    },
+    "knockGains12_table": {
+      "units": "dB",
+      "digits": 0
+    },
+    "knockGains1_table": {
+      "units": "dB",
+      "digits": 0
+    },
+    "knockGains2_table": {
+      "units": "dB",
+      "digits": 0
+    },
+    "knockGains3_table": {
+      "units": "dB",
+      "digits": 0
+    },
+    "knockGains4_table": {
+      "units": "dB",
+      "digits": 0
+    },
+    "knockGains5_table": {
+      "units": "dB",
+      "digits": 0
+    },
+    "knockGains6_table": {
+      "units": "dB",
+      "digits": 0
+    },
+    "knockGains7_table": {
+      "units": "dB",
+      "digits": 0
+    },
+    "knockGains8_table": {
+      "units": "dB",
+      "digits": 0
+    },
+    "knockGains9_table": {
+      "units": "dB",
+      "digits": 0
+    },
+    "knockNoiseRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "lambdaLoadBins": {
+      "digits": 0
+    },
+    "lambdaMaxDeviationLoadBins": {
+      "digits": 0
+    },
+    "lambdaMaxDeviationRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "lambdaMaxDeviationTable": {
+      "units": "lambda",
+      "digits": 2
+    },
+    "lambdaRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "lambdaTable": {
+      "units": "lambda",
+      "digits": 2
+    },
+    "mafDecoding": {
+      "units": "kg/hour",
+      "digits": 3
+    },
+    "mafDecodingBins": {
+      "units": "V",
+      "digits": 2
+    },
+    "mapEstimateRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "mapEstimateTable": {
+      "units": "kPa",
+      "digits": 2
+    },
+    "mapEstimateTpsBins": {
+      "units": "% TPS",
+      "digits": 1
+    },
+    "map_samplingAngle": {
+      "units": "deg",
+      "digits": 0
+    },
+    "map_samplingAngleBins": {
+      "digits": 0
+    },
+    "map_samplingWindow": {
+      "units": "deg",
+      "digits": 0
+    },
+    "map_samplingWindowBins": {
+      "digits": 0
+    },
+    "maxKnockRetardLoadBins": {
+      "units": "%",
+      "digits": 0
+    },
+    "maxKnockRetardRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "maxKnockRetardTable": {
+      "units": "deg",
+      "digits": 2
+    },
+    "minimumOilPressureBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "minimumOilPressureValues": {
+      "units": "kPa",
+      "digits": 0
+    },
+    "pedalToTpsPedalBins": {
+      "units": "%",
+      "digits": 0
+    },
+    "pedalToTpsRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "pedalToTpsTable": {
+      "units": "%",
+      "digits": 0
+    },
+    "postCrankingEnrichRuntimeBins": {
+      "units": "sec",
+      "digits": 0
+    },
+    "postCrankingEnrichTable": {
+      "units": "ratio",
+      "digits": 2
+    },
+    "postCrankingEnrichTempBins": {
+      "units": "deg C",
+      "digits": 0
+    },
+    "primeBins": {
+      "units": "C",
+      "digits": 0
+    },
+    "primeValues": {
+      "units": "mg",
+      "digits": 0
+    },
+    "rpmHardLimit": {
+      "units": "rpm",
+      "digits": 0
+    },
+    "scriptCurve1": {
+      "units": "y",
+      "digits": 2
+    },
+    "scriptCurve1Bins": {
+      "units": "x",
+      "digits": 2
+    },
+    "scriptCurve2": {
+      "units": "y",
+      "digits": 2
+    },
+    "scriptCurve2Bins": {
+      "units": "x",
+      "digits": 2
+    },
+    "scriptCurve3": {
+      "units": "y",
+      "digits": 2
+    },
+    "scriptCurve3Bins": {
+      "units": "x",
+      "digits": 2
+    },
+    "scriptCurve4": {
+      "units": "y",
+      "digits": 2
+    },
+    "scriptCurve4Bins": {
+      "units": "x",
+      "digits": 2
+    },
+    "scriptCurve5": {
+      "units": "y",
+      "digits": 2
+    },
+    "scriptCurve5Bins": {
+      "units": "x",
+      "digits": 2
+    },
+    "scriptCurve6": {
+      "units": "y",
+      "digits": 2
+    },
+    "scriptCurve6Bins": {
+      "units": "x",
+      "digits": 2
+    },
+    "scriptTable1": {
+      "units": "value",
+      "digits": 2
+    },
+    "scriptTable1LoadBins": {
+      "units": "L",
+      "digits": 0
+    },
+    "scriptTable1RpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "scriptTable2": {
+      "units": "value",
+      "digits": 2
+    },
+    "scriptTable2LoadBins": {
+      "units": "L",
+      "digits": 0
+    },
+    "scriptTable2RpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "scriptTable3": {
+      "units": "value",
+      "digits": 2
+    },
+    "scriptTable3LoadBins": {
+      "units": "L",
+      "digits": 0
+    },
+    "scriptTable3RpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "scriptTable4": {
+      "units": "value",
+      "digits": 2
+    },
+    "scriptTable4LoadBins": {
+      "units": "L",
+      "digits": 0
+    },
+    "scriptTable4RpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "smallPulseAdderBins": {
+      "units": "ms",
+      "digits": 3
+    },
+    "smallPulseAdderValues": {
+      "units": "ms",
+      "digits": 3
+    },
+    "sparkDwellRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "sparkDwellValues": {
+      "units": "ms",
+      "digits": 2
+    },
+    "tchargeBins": {
+      "units": "kg/h",
+      "digits": 0
+    },
+    "tchargeValues": {
+      "units": "ratio",
+      "digits": 2
+    },
+    "throttle2TrimRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "throttle2TrimTable": {
+      "units": "%",
+      "digits": 1
+    },
+    "throttle2TrimTpsBins": {
+      "units": "%",
+      "digits": 0
+    },
+    "throttleEstimateEffectiveAreaBins": {
+      "units": "%",
+      "digits": 1
+    },
+    "throttleEstimateEffectiveAreaValues": {
+      "units": "g/s",
+      "digits": 1
+    },
+    "tpsTpsAccelFromRpmBins": {
+      "units": "from",
+      "digits": 2
+    },
+    "tpsTpsAccelTable": {
+      "units": "value",
+      "digits": 2
+    },
+    "tpsTpsAccelToRpmBins": {
+      "units": "to",
+      "digits": 2
+    },
+    "tpsTspCorrValues": {
+      "units": "multiplier",
+      "digits": 2
+    },
+    "tpsTspCorrValuesBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "trailingIgnitionLoadBins": {
+      "units": "Load",
+      "digits": 0
+    },
+    "trailingIgnitionRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "trailingIgnitionTable": {
+      "units": "deg",
+      "digits": 1
+    },
+    "veBlends1_blendBins": {
+      "digits": 1
+    },
+    "veBlends1_blendValues": {
+      "units": "%",
+      "digits": 1
+    },
+    "veBlends1_loadBins": {
+      "units": "Load",
+      "digits": 0
+    },
+    "veBlends1_rpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "veBlends1_table": {
+      "digits": 1
+    },
+    "veBlends2_blendBins": {
+      "digits": 1
+    },
+    "veBlends2_blendValues": {
+      "units": "%",
+      "digits": 1
+    },
+    "veBlends2_loadBins": {
+      "units": "Load",
+      "digits": 0
+    },
+    "veBlends2_rpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "veBlends2_table": {
+      "digits": 1
+    },
+    "veBlends3_blendBins": {
+      "digits": 1
+    },
+    "veBlends3_blendValues": {
+      "units": "%",
+      "digits": 1
+    },
+    "veBlends3_loadBins": {
+      "units": "Load",
+      "digits": 0
+    },
+    "veBlends3_rpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "veBlends3_table": {
+      "digits": 1
+    },
+    "veBlends4_blendBins": {
+      "digits": 1
+    },
+    "veBlends4_blendValues": {
+      "units": "%",
+      "digits": 1
+    },
+    "veBlends4_loadBins": {
+      "units": "Load",
+      "digits": 0
+    },
+    "veBlends4_rpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "veBlends4_table": {
+      "digits": 1
+    },
+    "veLoadBins": {
+      "units": "kPa",
+      "digits": 0
+    },
+    "veRpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "veTable": {
+      "units": "%",
+      "digits": 1
+    },
+    "vrThreshold1_rpmBins": {
+      "units": "rpm",
+      "digits": 0
+    },
+    "vrThreshold1_values": {
+      "units": "volts",
+      "digits": 2
+    },
+    "vrThreshold2_rpmBins": {
+      "units": "rpm",
+      "digits": 0
+    },
+    "vrThreshold2_values": {
+      "units": "volts",
+      "digits": 2
+    },
+    "vvtOpenLoop1_bins": {
+      "units": "deg C",
+      "digits": 0
+    },
+    "vvtOpenLoop1_values": {
+      "units": "%",
+      "digits": 0
+    },
+    "vvtOpenLoop2_bins": {
+      "units": "deg C",
+      "digits": 0
+    },
+    "vvtOpenLoop2_values": {
+      "units": "%",
+      "digits": 0
+    },
+    "vvtTable1": {
+      "units": "value",
+      "digits": 0
+    },
+    "vvtTable1LoadBins": {
+      "units": "L",
+      "digits": 0
+    },
+    "vvtTable1RpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "vvtTable2": {
+      "units": "value",
+      "digits": 0
+    },
+    "vvtTable2LoadBins": {
+      "units": "L",
+      "digits": 0
+    },
+    "vvtTable2RpmBins": {
+      "units": "RPM",
+      "digits": 0
+    },
+    "wwBetaCltValues": {
+      "digits": 2
+    },
+    "wwBetaMapValues": {
+      "digits": 2
+    },
+    "wwCltBins": {
+      "units": "deg C",
+      "digits": 0
+    },
+    "wwMapBins": {
+      "units": "kPa",
+      "digits": 0
+    },
+    "wwTauCltValues": {
+      "digits": 2
+    },
+    "wwTauMapValues": {
+      "digits": 2
+    }
+  }
+}

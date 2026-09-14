@@ -1,0 +1,33 @@
+{
+  "family": "MS3",
+  "name": "MegaSquirt-III",
+  "signatures": [],
+  "signature_patterns": ["^MS3"],
+  "tables": [
+    {"id": "ve", "label": "VE Table 1", "z": ["veTable1"],
+     "x": ["frpm_table1", "rpmBins"], "y": ["fmap_table1", "fuelLoadBins"],
+     "x_label": "RPM", "y_label": "Load", "units": "%", "palette": "ve"},
+    {"id": "spark", "label": "Ignition Advance", "z": ["advanceTable1", "advTable1"],
+     "x": ["srpm_table1", "rpmBins2"], "y": ["smap_table1", "ignLoadBins"],
+     "x_label": "RPM", "y_label": "Load", "units": "deg", "palette": "spark"},
+    {"id": "afr", "label": "AFR Target", "z": ["afrTable1"],
+     "x": ["arpm_table1", "rpmBinsAFR"], "y": ["amap_table1", "loadBinsAFR"],
+     "x_label": "RPM", "y_label": "Load", "units": "AFR", "palette": "afr"},
+    {"id": "ve2", "label": "VE Table 2", "z": ["veTable2"],
+     "x": ["frpm_table2"], "y": ["fmap_table2"],
+     "x_label": "RPM", "y_label": "Load", "units": "%", "palette": "ve"}
+  ],
+  "summary_fields": [
+    {"name": "reqFuel", "label": "Req fuel"},
+    {"name": ["nCylinders", "nCylinders1"], "label": "Cylinders"},
+    {"name": ["injOpen1", "injOpen"], "label": "Inj open"},
+    {"name": ["algorithm", "algorithm1"], "label": "Fuel algorithm"},
+    {"name": ["RevLimNormal2", "RevLimRpm2", "rpmhardlimit"], "label": "Rev limit"},
+    {"name": "divider", "label": "Squirts/cycle"},
+    {"name": "alternate", "label": "Injector staging"},
+    {"name": "twoStroke", "label": "Stroke"},
+    {"name": "engineType", "label": "Engine type"},
+    {"name": "mapsample_opt", "label": "MAP sampling"},
+    {"name": ["boostCut", "OverBoostKpa"], "label": "Boost cut"}
+  ]
+}

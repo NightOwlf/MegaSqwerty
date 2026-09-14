@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block main %}
+<section class="hero">
+  <p class="eyebrow mono">TunerStudio .msq · MS1/MS2/MS3 · Speeduino · rusEFI · FOME</p>
+  <h1>Read a tune file on your phone.</h1>
+</section>
+
+{% if deleted %}<p class="flash ok" role="status">Tune deleted.</p>{% endif %}
+{% if error %}<p class="flash err" role="alert">{{ error }}</p>{% endif %}
+
+<form class="upload" method="post" action="/upload" enctype="multipart/form-data" data-max="{{ max_bytes }}" data-autosubmit>
+  <label class="dropzone">
+    <input type="file" name="file" required>
+    <span class="dz-icon" aria-hidden="true">▲</span>
+    <span class="dz-main">Choose .msq file</span>
+    <span class="dz-sub">or drop it here · {{ max_mb }} MB max</span>
+  </label>
+  <p class="upload-status mono" aria-live="polite"></p>
+  <noscript><button class="btn primary big" type="submit">Upload &amp; view</button></noscript>
+</form>
+
+<aside class="warning" role="note">
+  <strong>ANYONE WITH THE LINK CAN SEE THIS TUNE.</strong>
+  <span>Do not upload anything private.</span>
+</aside>
+
+<section class="about">
+  <h2 class="panel-title">What is this?</h2>
+  <p>MSQ Viewer opens the <span class="mono">.msq</span> tune files that TunerStudio saves for MegaSquirt, Speeduino, rusEFI and FOME ECUs. You get VE, spark and AFR/lambda tables as heatmaps, every other setting in a searchable list, and a link you can post in a forum or Discord.</p>
+  <ul class="specs mono">
+    <li>No account, nothing to install</li>
+    <li>Tap any cell for its RPM/load and value</li>
+    <li>Compare two tunes cell by cell</li>
+    <li>You get a delete key after uploading. Tunes nobody views for 180 days are removed.</li>
+  </ul>
+  <p><a class="btn" href="/compare">Compare two tunes →</a></p>
+</section>
+{% endblock %}

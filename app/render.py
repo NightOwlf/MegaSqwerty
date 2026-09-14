@@ -1,0 +1,182 @@
+"""Turn constants into heatmap view-models the templates can render."""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from .parser import Constant, fmt_value
+
+# name -> (color stops low..high, low label, high label)
+PALETTES: dict[str, tuple[list[str], str, str]] = {
+    "ve": (["#12a150", "#8fcf2f", "#f2d100", "#f08a00", "#e0301e"], "low", "high"),
+    "spark": (["#2456ff", "#5a4dff", "#9b3ff0", "#e0337a", "#ff3b1f"], "retard", "advance"),
+    "afr": (["#ff3b30", "#ff9500", "#ffd60a", "#34c759", "#0a84ff"], "rich", "lean"),
+    "default": (["#1b3a8a", "#1f7fa8", "#22b39a", "#b9d23a", "#f5c518"], "low", "high"),
+    "diff": (["#388eff", "#1a2127", "#ff5630"], "lower", "higher"),
+}
+
+
+def _hex(c: str) -> tuple[int, int, int]:
+    return int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)
+
+
+def palette(name: str) -> tuple[list[str], str, str]:
+    return PALETTES.get(name, PALETTES["default"])
+
+
+def color_at(t: float, name: str) -> tuple[str, str]:
+    """Background + readable foreground for t in [0, 1]."""
+    stops = [_hex(s) for s in palette(name)[0]]
+    t = 0.0 if t != t else max(0.0, min(1.0, t))
+    pos = t * (len(stops) - 1)
+    i = min(int(pos), len(stops) - 2)
+    f = pos - i
+    r, g, b = (round(a + (bb - a) * f) for a, bb in zip(stops[i], stops[i + 1]))
+    lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+    return f"#{r:02x}{g:02x}{b:02x}", ("#000" if lum > 0.55 else "#fff")
+
+
+def gradient_css(name: str) -> str:
+    return "linear-gradient(90deg," + ",".join(palette(name)[0]) + ")"
+
+
+def fuel_mode(z: Constant, units: str, palette_name: str) -> str | None:
+    """'lambda' / 'afr' for target-mixture tables, else None. Never converts."""
+    u = (units or "").lower()
+    if "lambda" in u or "λ" in u:
+        return "lambda"
+    if "afr" in u:
+        return "afr"
+    if palette_name != "afr":
+        return None
+    nums = [v for v in z.values if isinstance(v, float)]
+    if nums and 0.6 <= min(nums) and max(nums) <= 1.3:
+        return "lambda"
+    if nums and 6.0 <= min(nums) and max(nums) <= 25.0:
+        return "afr"
+    return None
+
+
+@dataclass
+class Cell:
+    text: str
+    r: int
+    c: int
+    style: str = ""
+    cls: str = ""
+    delta: str = ""
+    a_text: str = ""
+
+
+@dataclass
+class Row:
+    label: str
+    index: int
+    cells: list[Cell]
+
+
+@dataclass
+class Grid:
+    id: str
+    title: str
+    units: str
+    palette: str
+    name: str = ""
+    x_label: str = ""
+    y_label: str = ""
+    x_labels: list[str] = field(default_factory=list)
+    rows: list[Row] = field(default_factory=list)
+    lo: str = ""
+    hi: str = ""
+    note: str = ""
+    is_diff: bool = False
+    fuel: str | None = None
+
+    @property
+    def gradient(self) -> str:
+        return gradient_css(self.palette)
+
+    @property
+    def legend(self) -> tuple[str, str]:
+        _, lo, hi = palette(self.palette)
+        return lo, hi
+
+    @property
+    def dims(self) -> str:
+        return f"{len(self.rows)}×{len(self.x_labels)}"
+
+
+def _decimals_needed(v: float, cap: int = 3) -> int:
+    for d in range(cap + 1):
+        if abs(round(v, d) - v) <= 1e-6 * max(1.0, abs(v)):
+            return d
+    return cap
+
+
+def axis_labels(bins: list | None, n: int, digits: int | None = None) -> list[str]:
+    """Format axis bins with one sensible precision for the whole axis.
+
+    MegaSquirt bins are usually integers ("2500"); rusEFI stores floats that
+    may carry F32 noise ("0.30000001"). Use the fewest decimals (<= 3) that
+    represent every bin, ignoring a `digits` hint that would add trailing
+    zeros to integer bins.
+    """
+    if bins is None or len(bins) != n:
+        return [str(i) for i in range(n)]
+    nums = [v for v in bins if isinstance(v, float)]
+    dec = max((_decimals_needed(v) for v in nums), default=0)
+    if digits is not None and 0 <= digits < dec:
+        dec = digits
+    out = []
+    for v in bins:
+        if isinstance(v, float):
+            s = f"{v:.{dec}f}"
+            out.append("0" if s.strip("-0.") == "" else s)
+        else:
+            out.append(str(v))
+    return out
+
+
+def build_grid(gid: str, title: str, z: Constant, x: Constant | None = None, y: Constant | None = None,
+               palette_name: str = "default", units: str | None = None,
+               x_label: str = "", y_label: str = "", digits: int | None = None) -> Grid:
+    digits = z.digits if digits is None else digits
+    nums = [v for v in z.values if isinstance(v, float)]
+    lo, hi = (min(nums), max(nums)) if nums else (0.0, 0.0)
+    span = hi - lo
+    x_bins = x.values if x is not None and len(x.values) == z.cols else None
+    y_bins = y.values if y is not None and len(y.values) == z.rows else None
+    u = units if units is not None else (z.units or "")
+    grid = Grid(
+        id=gid, title=title, units=u, palette=palette_name, name=z.name,
+        x_label=x_label or (x.units or "" if x is not None else ""),
+        y_label=y_label or (y.units or "" if y is not None else ""),
+        x_labels=axis_labels(x_bins, z.cols, x.digits if x is not None else None),
+        lo=fmt_value(lo, digits) if nums else "", hi=fmt_value(hi, digits) if nums else "",
+        fuel=fuel_mode(z, u, palette_name),
+    )
+    if (x is not None and x_bins is None) or (y is not None and y_bins is None):
+        grid.note = "Axis bins don't match the table size; showing cell indexes."
+    y_labels = axis_labels(y_bins, z.rows, y.digits if y is not None else None)
+    # Row 0 is the lowest load bin; draw it at the bottom like TunerStudio.
+    for r in reversed(range(z.rows)):
+        cells = []
+        for c, v in enumerate(z.row(r)):
+            if isinstance(v, float):
+                bg, fg = color_at((v - lo) / span if span else 0.5, palette_name)
+                cells.append(Cell(fmt_value(v, digits), r, c, f"background:{bg};color:{fg}"))
+            else:
+                cells.append(Cell(str(v), r, c, cls="nan"))
+        grid.rows.append(Row(y_labels[r], r, cells))
+    return grid
+
+
+def build_curve_grid(gid: str, title: str, y: Constant, x: Constant | None, x_label: str = "",
+                     y_label: str = "", units: str = "") -> Grid:
+    """A 1D curve as a one-row heatmap with its bins across the top."""
+    flat = Constant(y.name, "table", list(y.values), 1, len(y.values), y.units, y.digits, y.page)
+    g = build_grid(gid, title, flat, x=x, palette_name="default", units=units or y.units or "",
+                   x_label=x_label, y_label="")
+    if g.rows:
+        g.rows[0].label = y_label or "value"
+    g.name = y.name
+    return g

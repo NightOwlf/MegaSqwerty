@@ -1,0 +1,25 @@
+{
+  "family": "MS1",
+  "name": "MegaSquirt-I / MSnS-Extra",
+  "signature_patterns": ["^MS1", "^MSnS"],
+  "tables": [
+    {"id": "ve", "label": "VE Table", "z": ["veBins1", "veBins", "veTable"],
+     "x": ["rpmBins1", "rpmBins"], "y": ["mapBins1", "mapBins"],
+     "x_label": "RPM", "y_label": "kPa", "units": "%", "palette": "ve"},
+    {"id": "spark", "label": "Ignition Advance", "z": ["advanceTable1", "advanceTable", "sparkTable"],
+     "x": ["srpm_table", "srpm_table1"], "y": ["smap_table", "smap_table1"],
+     "x_label": "RPM", "y_label": "kPa", "units": "deg", "palette": "spark"},
+    {"id": "afr", "label": "AFR Target", "z": ["afrTable1", "afrTable"],
+     "x": ["arpm_table1", "arpm_table"], "y": ["amap_table1", "amap_table"],
+     "x_label": "RPM", "y_label": "kPa", "units": "AFR", "palette": "afr"}
+  ],
+  "summary_fields": [
+    {"name": ["reqFuel", "req_fuel", "reqFuel1"], "label": "Req fuel"},
+    {"name": ["nCylinders", "nCylinders1"], "label": "Cylinders"},
+    {"name": ["injOpen", "injOpen1"], "label": "Inj open"},
+    {"name": ["algorithm", "algorithm1"], "label": "Fuel algorithm"},
+    {"name": ["RevLimRPM", "revLimit"], "label": "Rev limit"},
+    {"name": ["divider", "divider1"], "label": "Squirts/cycle"},
+    {"name": ["twoStroke", "twoStroke1"], "label": "Stroke"}
+  ]
+}

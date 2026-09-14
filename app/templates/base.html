@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#07090b">
+<meta name="color-scheme" content="dark">
+<title>{% block title %}MSQ Viewer · read .msq tune files on your phone{% endblock %}</title>
+<meta name="description" content="Open MegaSquirt, Speeduino, rusEFI and FOME .msq tune files on your phone as heatmaps, and share a link.">
+{% block og %}
+<meta property="og:site_name" content="MSQ Viewer">
+<meta property="og:type" content="website">
+<meta property="og:title" content="MSQ Viewer">
+<meta property="og:description" content="Open MegaSquirt, Speeduino, rusEFI and FOME .msq tune files on your phone and share a link.">
+{% endblock %}
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23ffb020'/%3E%3Crect x='3' y='3' width='4' height='4' fill='%2312a150'/%3E%3Crect x='9' y='3' width='4' height='4' fill='%23f2d100'/%3E%3Crect x='3' y='9' width='4' height='4' fill='%23f08a00'/%3E%3Crect x='9' y='9' width='4' height='4' fill='%23e0301e'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/app.css?v={{ asset_v }}">
+<script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js" defer></script>
+<script src="/static/app.js?v={{ asset_v }}" defer></script>
+</head>
+<body class="{% block bodyclass %}{% endblock %}">
+<header class="topbar">
+  <a class="brand" href="/"><span class="brand-mark">MSQ</span><span class="brand-word">Viewer</span></a>
+  <nav><a href="/compare">Compare</a><a href="/">Upload</a></nav>
+</header>
+<main>
+{% block main %}{% endblock %}
+</main>
+{% block after %}{% endblock %}
+</body>
+</html>
