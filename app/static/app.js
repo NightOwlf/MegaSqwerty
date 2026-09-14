@@ -3,6 +3,8 @@
   "use strict";
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var bubble = $(".bubble");
+  var selected = [];
 
   if (window.htmx) {
     // Let the delete form show "wrong key" messages (403) instead of silently ignoring them.
@@ -69,8 +71,6 @@
   if (tabs.length) showTab(decodeURIComponent(location.hash.slice(1)) || tabs[0].dataset.tab, false);
 
   /* ---------- tap a cell ---------- */
-  var bubble = $(".bubble");
-  var selected = [];
   function hideBubble() {
     if (bubble) bubble.hidden = true;
     selected.forEach(function (el) { el.classList.remove("sel", "hl"); });

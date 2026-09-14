@@ -117,15 +117,13 @@ def axis_labels(bins: list | None, n: int, digits: int | None = None) -> list[st
 
     MegaSquirt bins are usually integers ("2500"); rusEFI stores floats that
     may carry F32 noise ("0.30000001"). Use the fewest decimals (<= 3) that
-    represent every bin, ignoring a `digits` hint that would add trailing
-    zeros to integer bins.
+    represent every bin. The file's `digits` hint is ignored on purpose: it
+    would either pad integer bins with zeros or hide real fractions (12.5).
     """
     if bins is None or len(bins) != n:
         return [str(i) for i in range(n)]
     nums = [v for v in bins if isinstance(v, float)]
     dec = max((_decimals_needed(v) for v in nums), default=0)
-    if digits is not None and 0 <= digits < dec:
-        dec = digits
     out = []
     for v in bins:
         if isinstance(v, float):
