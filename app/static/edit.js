@@ -298,43 +298,191 @@
     });
   }
 
+  /* Tune health: the same rules as app/checks.py, re-evaluated with pending edits. Keep the two in step. */
+  var CHECK_ORDER = { error: 0, warn: 1, info: 2, ok: 3 };
+  var PLACEHOLDER_VALUES = [127, 127.5, 255, 510, 1020, 25500, 65535];
+  var CHECK_OPS = {
+    "<": function (a, b) { return a < b; }, "<=": function (a, b) { return a <= b; },
+    ">=": function (a, b) { return a >= b; }, ">": function (a, b) { return a > b; }
+  };
+  function arrayOf(name) {
+    if (!name || !Object.prototype.hasOwnProperty.call(tuneValues, name)) return null;
+    var base = Array.isArray(tuneValues[name]) ? tuneValues[name] : [tuneValues[name]];
+    return base.map(function (v, i) {
+      var e = editedAt(name, i);
+      return e !== undefined ? e : (typeof v === "number" ? v : null);
+    });
+  }
+  function refOf(ref) {
+    if (typeof ref === "number") return ref;
+    if (!ref || !ref.length) return null;
+    var arr = arrayOf(ref[0]);
+    if (!arr) return null;
+    var nums = arr.filter(function (v) { return v !== null; });
+    if (!nums.length) return null;
+    return ref[1] === "max" ? Math.max.apply(null, nums) : ref[1] === "min" ? Math.min.apply(null, nums) : arr[0];
+  }
+  function withUnits(v, u) { return u ? short(v) + " " + u : short(v); }
+  function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
+  function whereOf(rule, r, c) {
+    var x = arrayOf(rule.x), y = arrayOf(rule.y);
+    if (x && y && c < x.length && r < y.length && x[c] !== null && y[r] !== null) {
+      return withUnits(x[c], rule.xu || "") + " / " + withUnits(y[r], rule.yu || "");
+    }
+    return "row " + (r + 1) + ", column " + (c + 1);
+  }
+  function evaluateCheck(rule) {
+    var u = rule.units || "", a, b, i;
+    if (rule.kind === "cmp") {
+      a = refOf(rule.a); b = refOf(rule.b);
+      return a === null || b === null ? null : [CHECK_OPS[rule.op](a, b), { a: withUnits(a, u), b: withUnits(b, u) }];
+    }
+    if (rule.kind === "range") {
+      a = refOf(rule.a);
+      if (a === null) return null;
+      return [(rule.lo == null || a >= rule.lo) && (rule.hi == null || a <= rule.hi), { a: withUnits(a, u) }];
+    }
+    if (rule.kind === "ascending") {
+      var bins = arrayOf(rule.a);
+      if (!bins || bins.length < 2 || bins.indexOf(null) >= 0) return null;
+      for (i = 0; i < bins.length - 1; i++) {
+        if (bins[i] >= bins[i + 1]) return [false, { where: withUnits(bins[i], u) + " then " + withUnits(bins[i + 1], u) }];
+      }
+      return [true, {}];
+    }
+    if (rule.kind === "placeholder") {
+      var vals = (arrayOf(rule.z) || []).filter(function (v) { return v !== null; });
+      if (vals.length < 2) return null;
+      var same = vals.every(function (v) { return v === vals[0]; });
+      return [!(same && (!rule.strict || PLACEHOLDER_VALUES.indexOf(vals[0]) >= 0)), { value: short(vals[0]) }];
+    }
+    if (rule.kind === "coverage") {
+      a = refOf(rule.a); b = refOf(rule.b);
+      return a === null || b === null ? null : [!(b > 110 && a <= 103), { a: withUnits(a, u), b: withUnits(b, u) }];
+    }
+    if (rule.kind === "boostcut") {
+      a = refOf(rule.a);
+      return a === null ? null : [!!rule.enabled || a <= 103, { a: withUnits(a, u) }];
+    }
+    if (rule.kind === "static") return [!!rule.passed, {}];
+
+    var z = arrayOf(rule.z), rows = rule.rows, cols = rule.cols;
+    if (!z || z.length !== rows * cols) return null;
+    var scale = rule.scale != null ? refOf(rule.scale) : 1;
+    if (!scale) return null;
+    if (rule.kind === "cells") {
+      var badCells = [];
+      z.forEach(function (v, k) {
+        if (v !== null && ((rule.lo != null && v / scale < rule.lo) || (rule.hi != null && v / scale > rule.hi))) badCells.push(k);
+      });
+      if (!badCells.length) return [true, {}];
+      i = badCells[0];
+      return [false, { cells: plural(badCells.length, "cell"), value: short(z[i]), conv: (z[i] / scale).toFixed(2), where: whereOf(rule, Math.floor(i / cols), i % cols) }];
+    }
+    if (rule.kind === "spike") {
+      var worst = null;
+      for (var r = 0; r < rows; r++) {
+        for (var c = 0; c < cols; c++) {
+          var v = z[r * cols + c];
+          if (v === null) continue;
+          var around = [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]].filter(function (p) {
+            return p[0] >= 0 && p[0] < rows && p[1] >= 0 && p[1] < cols && z[p[0] * cols + p[1]] !== null;
+          }).map(function (p) { return z[p[0] * cols + p[1]]; });
+          if (around.length < 2) continue;
+          var mean = around.reduce(function (s, n) { return s + n; }, 0) / around.length;
+          var ratio = Math.abs(v - mean) / Math.max(rule.abs, (rule.pct || 0) * Math.abs(mean));
+          if (ratio > 1 && (!worst || ratio > worst[0])) worst = [ratio, r, c, v, mean];
+        }
+      }
+      return worst ? [false, { where: whereOf(rule, worst[1], worst[2]), value: short(worst[3]), around: worst[4].toFixed(1) }] : [true, {}];
+    }
+    if (rule.kind === "rows") {
+      var y = arrayOf(rule.y), xb = arrayOf(rule.x), best = null;
+      if (!y || y.length !== rows) return null;
+      for (var rr = 0; rr < rows; rr++) {
+        if (y[rr] === null || y[rr] < rule.min_load) continue;
+        for (var cc = 0; cc < cols; cc++) {
+          if (rule.min_rpm && xb && xb.length === cols && xb[cc] !== null && xb[cc] < rule.min_rpm) continue;
+          var cell = z[rr * cols + cc];
+          if (cell !== null && (!best || cell > best[0])) best = [cell, rr, cc];
+        }
+      }
+      if (!best) return null;
+      return [best[0] / scale <= rule.hi, { value: short(best[0]), conv: (best[0] / scale).toFixed(2), where: whereOf(rule, best[1], best[2]) }];
+    }
+    return null;
+  }
+  function fillText(template, vars) {
+    Object.keys(vars).forEach(function (k) { template = template.split("{" + k + "}").join(vars[k]); });
+    return template;
+  }
+  function healthSummary(results) {
+    var n = { error: 0, warn: 0, info: 0 };
+    results.forEach(function (r) { if (r.status in n) n[r.status]++; });
+    if (n.error) return { tone: "error", short: n.error + " to fix", verdict: "Not ready to start: " + plural(n.error, "problem") + " to fix" };
+    if (n.warn) return { tone: "warn", short: n.warn + " to check", verdict: "No blocking problems, but " + plural(n.warn, "thing") + (n.warn === 1 ? " looks" : " look") + " off" };
+    return { tone: "ok", short: "All good", verdict: "No problems found" };
+  }
+  var LED_FOR = { ok: "on", warn: "warn", error: "bad" };
   function updateChecks() {
     if (!checksBox || !checkRules.length) return;
-    var agg = function (ref) { return ref[1] === "max" ? currentMax(ref[0]) : current(ref[0], 0); };
-    var results = checkRules.map(function (r) {
-      var a = agg(r.a), b = agg(r.b);
-      if (typeof a !== "number" || typeof b !== "number") return null;
-      var ok = r.op === "<" ? a < b : r.op === "<=" ? a <= b : a >= b;
-      return { ok: ok, text: (ok ? r.ok : r.bad).replace("{a}", short(a) + " " + r.units).replace("{b}", short(b) + " " + r.units) };
-    }).filter(Boolean);
-    var bad = results.filter(function (r) { return !r.ok; }), good = results.filter(function (r) { return r.ok; });
-    var old = $("details.checks-ok", checksBox);
-    function list(items, cls, led) {
-      var ul = document.createElement("ul");
-      if (cls) ul.className = cls;
+    var results = [];
+    checkRules.forEach(function (rule) {
+      var res = evaluateCheck(rule);
+      if (!res) return;
+      results.push({ status: res[0] ? "ok" : rule.level, text: fillText(res[0] ? rule.ok : rule.bad, res[1]), group: rule.group });
+    });
+    results.sort(function (p, q) { return CHECK_ORDER[p.status] - CHECK_ORDER[q.status]; });
+    var sum = healthSummary(results);
+    var open = {};
+    $$("details[data-more]", checksBox).forEach(function (d) { open[d.dataset.more] = d.open; });
+    function el(tag, cls, text) {
+      var n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text != null) n.textContent = text;
+      return n;
+    }
+    function list(items) {
+      var ul = el("ul", "chk-list");
       items.forEach(function (r) {
-        var li = document.createElement("li"), dot = document.createElement("span"), t = document.createElement("span");
-        dot.className = "led " + led;
-        t.textContent = r.text;
-        li.appendChild(dot);
-        li.appendChild(t);
+        var li = el("li", "chk chk-" + r.status);
+        li.appendChild(el("span", "chk-tag", { error: "Fix", warn: "Check", info: "Note", ok: "OK" }[r.status]));
+        li.appendChild(el("span", "chk-text", r.text));
+        li.appendChild(el("span", "chk-group", r.group));
         ul.appendChild(li);
       });
       return ul;
     }
-    checksBox.textContent = "";
-    if (bad.length) checksBox.appendChild(list(bad, "checks-bad", "bad"));
-    if (good.length) {
-      var det = document.createElement("details"), sum = document.createElement("summary");
-      det.className = "checks-ok";
-      det.open = bad.length ? !!(old && old.open) : true;
-      sum.textContent = good.length + (good.length === 1 ? " check passes" : " checks pass");
-      det.appendChild(sum);
-      det.appendChild(list(good, "", "on"));
-      checksBox.appendChild(det);
+    function more(key, items, word) {
+      var d = el("details", "chk-more");
+      d.dataset.more = key;
+      d.open = !!open[key];
+      d.appendChild(el("summary", "", plural(items.length, word) + (key === "passed" ? " passed" : "")));
+      d.appendChild(list(items));
+      return d;
     }
+    var fine = $(".chk-fine", checksBox);
+    checksBox.textContent = "";
+    var verdict = el("p", "verdict verdict-" + sum.tone);
+    verdict.appendChild(el("span", "led " + LED_FOR[sum.tone]));
+    verdict.appendChild(el("b", "", sum.verdict));
+    checksBox.appendChild(verdict);
+    var problems = results.filter(function (r) { return r.status === "error" || r.status === "warn"; });
+    var notes = results.filter(function (r) { return r.status === "info"; });
+    var passed = results.filter(function (r) { return r.status === "ok" && r.text; });
+    if (problems.length) checksBox.appendChild(list(problems));
+    if (notes.length) checksBox.appendChild(more("notes", notes, "note"));
+    if (passed.length) checksBox.appendChild(more("passed", passed, "check"));
+    if (fine) checksBox.appendChild(fine);
     var sub = $("[data-checks-sub]");
-    if (sub) sub.textContent = bad.length ? bad.length + " to look at" : "All good";
+    if (sub) { sub.textContent = sum.short; sub.className = "win-sub chk-sub chk-sub-" + sum.tone; }
+    var status = $("[data-health-status]");
+    if (status) {
+      status.className = "st-health st-health-" + sum.tone;
+      status.textContent = "";
+      status.appendChild(el("span", "led " + LED_FOR[sum.tone]));
+      status.appendChild(document.createTextNode(sum.short));
+    }
   }
 
   // A timer, not requestAnimationFrame: rAF is paused while the tab is hidden, which left the Dash stale.

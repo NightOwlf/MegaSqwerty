@@ -73,17 +73,6 @@
       </section>
       {% endif %}
 
-      {% if checks %}
-      {% set bad = checks|selectattr('status', 'equalto', 'bad')|list %}
-      {% set good = checks|selectattr('status', 'equalto', 'ok')|list %}
-      <section class="win win-checks">
-        <header class="win-title">{{ icon('shield') }}<h2>Checks</h2><span class="win-sub" data-checks-sub>{{ (bad|length ~ ' to look at') if bad else 'All good' }}</span></header>
-        <div class="win-body checks" data-checks='{{ checks|tojson }}'>
-          {% if bad %}<ul class="checks-bad">{% for ch in bad %}<li><span class="led bad"></span><span>{{ ch.text }}</span></li>{% endfor %}</ul>{% endif %}
-          {% if good %}<details class="checks-ok"{% if not bad %} open{% endif %}><summary>{{ good|length }} {{ 'check passes' if good|length == 1 else 'checks pass' }}</summary><ul>{% for ch in good %}<li><span class="led on"></span><span>{{ ch.text }}</span></li>{% endfor %}</ul></details>{% endif %}
-        </div>
-      </section>
-      {% endif %}
       <div hidden data-tune-values='{{ live_values|tojson }}'></div>
 
       <section class="win win-info">
@@ -112,6 +101,22 @@
     </div>
 
     <div class="dash-main">
+      {% if health %}
+      {% set hs = health_summary %}
+      <section class="win win-checks">
+        <header class="win-title">{{ icon('shield') }}<h2>Tune Health</h2><span class="win-sub chk-sub chk-sub-{{ hs.tone }}" data-checks-sub>{{ hs.short }}</span></header>
+        <div class="win-body checks" data-checks='{{ health|tojson }}'>
+          <p class="verdict verdict-{{ hs.tone }}"><span class="led {{ {'ok': 'on', 'warn': 'warn', 'error': 'bad'}[hs.tone] }}"></span><b>{{ hs.verdict }}</b></p>
+          {% set chk_problems = health|selectattr('status', 'in', ['error', 'warn'])|list %}
+          {% if chk_problems %}<ul class="chk-list">{% for r in chk_problems %}<li class="chk chk-{{ r.status }}"><span class="chk-tag">{{ 'Fix' if r.status == 'error' else 'Check' }}</span><span class="chk-text">{{ r.text }}</span><span class="chk-group">{{ r.group }}</span></li>{% endfor %}</ul>{% endif %}
+          {% set chk_notes = health|selectattr('status', 'equalto', 'info')|list %}
+          {% if chk_notes %}<details class="chk-more" data-more="notes"><summary>{{ chk_notes|length }} note{{ 's' if chk_chk_notes|length != 1 }}</summary><ul class="chk-list">{% for r in chk_notes %}<li class="chk chk-info"><span class="chk-tag">Note</span><span class="chk-text">{{ r.text }}</span><span class="chk-group">{{ r.group }}</span></li>{% endfor %}</ul></details>{% endif %}
+          {% set chk_passed = health|selectattr('status', 'equalto', 'ok')|selectattr('text')|list %}
+          {% if chk_passed %}<details class="chk-more" data-more="passed"><summary>{{ chk_passed|length }} check{{ 's' if chk_chk_passed|length != 1 }} passed</summary><ul class="chk-list">{% for r in chk_passed %}<li class="chk chk-ok"><span class="chk-tag">OK</span><span class="chk-text">{{ r.text }}</span><span class="chk-group">{{ r.group }}</span></li>{% endfor %}</ul></details>{% endif %}
+          <p class="chk-fine">These checks catch common setup mistakes as you edit. They can't prove a tune is safe, so still have it reviewed and check a wideband log.</p>
+        </div>
+      </section>
+      {% endif %}
       <section class="win win-editor" data-switch-scope>
         <header class="win-title">{{ icon('grid') }}<h2>Main Tables</h2>
           {% if fgrids|length > 1 %}
@@ -212,7 +217,7 @@
 </section>
 {% endblock %}
 
-{% block status %}<span class="led on"></span><span>Tune loaded</span><span class="st-sep"></span><b>{{ family }}{% if doc.version %} {{ doc.version }}{% endif %}</b><span class="st-sep"></span><span class="mono st-sig">{{ doc.signature or 'no signature' }}</span><span class="st-grow"></span><span class="st-dim">{{ m.tables|length }} tables · {{ m.curves|length }} curves · {{ m.settings|length }} settings</span>{% endblock %}
+{% block status %}<span class="led on"></span><span>Tune loaded</span><span class="st-sep"></span><b>{{ family }}{% if doc.version %} {{ doc.version }}{% endif %}</b><span class="st-sep"></span><span class="mono st-sig">{{ doc.signature or 'no signature' }}</span><span class="st-grow"></span>{% if health %}<span class="st-health st-health-{{ health_summary.tone }}" data-health-status><span class="led {{ {'ok': 'on', 'warn': 'warn', 'error': 'bad'}[health_summary.tone] }}"></span>{{ health_summary.short }}</span><span class="st-sep"></span>{% endif %}<span class="st-dim">{{ m.tables|length }} tables · {{ m.curves|length }} curves · {{ m.settings|length }} settings</span>{% endblock %}
 
 {% block after %}
 {{ dock([("overview", "Dash", "gauge", none), ("tables", "Tables", "grid", m.tables|length), ("curves", "Curves", "curve", m.curves|length), ("settings", "Settings", "list", m.settings|length)]) }}

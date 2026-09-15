@@ -509,79 +509,11 @@ def gauges(summary, doc: TuneDoc | None = None) -> tuple[list[Dial], list[dict]]
     return dials, readouts
 
 
-# ------------------------------------------------------------------ checks
-
-REV_LIMIT_NAMES = ("hardRevLim", "rpmHardLimit", "RevLimNormal2", "RevLimRpm2", "HardRevLim", "rpmhardlimit",
-                   "RevLimRPM", "revLimit")
-_OPS = {"<": lambda a, b: a < b, "<=": lambda a, b: a <= b, ">=": lambda a, b: a >= b}
-
-
-def _agg(doc: TuneDoc, name: str, agg: str) -> float | None:
-    c = doc.get(name)
-    if c is None or c.kind not in ("scalar", "array"):
-        return None
-    nums = [v for v in c.values if isinstance(v, float)]
-    if not nums:
-        return None
-    return max(nums) if agg == "max" else (nums[0] if c.kind == "scalar" else None)
-
-
-def consistency_checks(doc: TuneDoc, featured: list[TableView]) -> list[dict]:
-    """Settings that have to agree with each other, for the settings this tune has. Failures first.
-
-    Each rule carries its own ok/problem wording so edit.js can re-check it live as values change.
-    """
-    rules: list[dict] = []
-    seen: set[tuple] = set()
-
-    def add(a, b, op, units, ok, bad, a_agg="value", b_agg="value"):
-        av, bv = _agg(doc, a, a_agg), _agg(doc, b, b_agg)
-        if av is None or bv is None or (a, b, op) in seen:
-            return
-        seen.add((a, b, op))
-        passed = _OPS[op](av, bv)
-        text = (ok if passed else bad).replace("{a}", f"{av:g} {units}").replace("{b}", f"{bv:g} {units}")
-        rules.append({"a": [a, a_agg], "b": [b, b_agg], "op": op, "units": units, "ok": ok, "bad": bad,
-                      "status": "ok" if passed else "bad", "text": text})
-
-    rev = next((n for n in REV_LIMIT_NAMES if _agg(doc, n, "value") is not None), None)
-    if rev:
-        add("SoftRevLim", rev, "<", "rpm", "Soft rev limit {a} is below the hard rev limit {b}.",
-            "Soft rev limit {a} should be below the hard rev limit {b}.")
-        add("lnchHardLim", rev, "<=", "rpm", "Launch hard limit {a} is at or below the rev limit {b}.",
-            "Launch hard limit {a} is above the rev limit {b}.")
-        add(rev, "rpmhigh", "<=", "rpm", "The tach gauge (max {b}) covers the rev limit {a}.",
-            "The tach gauge tops out at {b}, below the rev limit {a}. Raise rpmhigh.")
-    add("lnchSoftLim", "lnchHardLim", "<", "rpm", "Launch soft limit {a} is below the launch hard limit {b}.",
-        "Launch soft limit {a} should be below the launch hard limit {b}.")
-    add("rpmwarn", "rpmdang", "<=", "rpm", "Tach warning zone {a} starts before the danger zone {b}.",
-        "Tach warning zone {a} starts after the danger zone {b}.")
-    add("rpmdang", "rpmhigh", "<=", "rpm", "Tach danger zone {a} is on the gauge (max {b}).",
-        "Tach danger zone {a} is past the gauge maximum {b}.")
-    add("mapwarn", "mapdang", "<=", "kPa", "MAP warning zone {a} starts before the danger zone {b}.",
-        "MAP warning zone {a} starts after the danger zone {b}.")
-    add("mapdang", "maphigh", "<=", "kPa", "MAP danger zone {a} is on the gauge (max {b}).",
-        "MAP danger zone {a} is past the gauge maximum {b}.")
-    for v in featured:
-        if v.y is not None and v.y_units == "kPa":
-            add(v.y.name, "mapMax", "<=", "kPa",
-                f"{v.label} load bins (up to {{a}}) are within the MAP sensor's range ({{b}}).",
-                f"{v.label} load bins go up to {{a}}, past what the MAP sensor is calibrated to read ({{b}}).",
-                a_agg="max")
-        if rev and v.x is not None and v.x_label == "RPM":
-            add(v.x.name, rev, ">=", "rpm", f"{v.label} RPM bins reach {{a}}, covering the rev limit {{b}}.",
-                f"{v.label} RPM bins stop at {{a}}, below the rev limit {{b}}: above that the last column is used.",
-                a_agg="max")
-    add("boostLimit", "mapMax", "<=", "kPa", "Boost cut {a} is within the MAP sensor's range ({b}).",
-        "Boost cut {a} is past what the MAP sensor can read ({b}), so it can never trigger.")
-    rules.sort(key=lambda r: r["status"] == "ok")
-    return rules
-
-
 def live_values(doc: TuneDoc, dials: list[Dial], checks: list[dict]) -> dict:
     """Current values of the settings the Dash derives things from, for edit.js to recompute with."""
-    names = {n for d in dials for n in (d.name, *d.scale_names) if n}
-    names |= {ref[0] for ch in checks for ref in (ch["a"], ch["b"])}
+    from .checks import referenced_names
+
+    names = {n for d in dials for n in (d.name, *d.scale_names) if n} | referenced_names(checks)
     out = {}
     for n in sorted(names):
         c = doc.get(n)

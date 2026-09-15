@@ -6,6 +6,7 @@ import hashlib
 import logging
 import os
 import re
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
 from starlette.middleware.gzip import GZipMiddleware
 
+from . import checks as checksmod
 from . import diff as diffmod
 from .axes import axis_text
 from . import edit as editmod
@@ -30,6 +32,33 @@ from .tablemaps import TableView, all_tables, meta_digits, meta_units, resolve_m
 
 log = logging.getLogger("msq")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
+
+class _BelowWarning(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno < logging.WARNING
+
+
+def split_log_streams(*names: str) -> None:
+    """Send INFO to stdout and WARNING+ to stderr. Railway shows everything on stderr as an error, and uvicorn
+    writes its normal startup and request lines there."""
+    for name in names:
+        logger = logging.getLogger(name)
+        for h in list(logger.handlers):
+            if getattr(h, "_msq_split", False) or not isinstance(h, logging.StreamHandler):
+                continue
+            if h.stream not in (sys.stderr, sys.stdout):
+                continue  # e.g. pytest's capture
+            out, err = logging.StreamHandler(sys.stdout), logging.StreamHandler(sys.stderr)
+            for new in (out, err):
+                new.setFormatter(h.formatter)
+                new._msq_split = True
+            out.setLevel(h.level)
+            out.addFilter(_BelowWarning())
+            err.setLevel(max(h.level, logging.WARNING))
+            logger.removeHandler(h)
+            logger.addHandler(out)
+            logger.addHandler(err)
 
 HERE = Path(__file__).resolve().parent
 MAX_MB = MAX_BYTES // (1024 * 1024)
@@ -136,6 +165,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
 
     @asynccontextmanager
     async def lifespan(app):
+        split_log_streams("", "uvicorn", "uvicorn.error", "uvicorn.access")
         store.init()
         task = asyncio.create_task(purge_loop())
         try:
@@ -262,7 +292,8 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
     # ------------------------------------------------------------- pages
     @app.get("/healthz")
     def healthz():
-        return {"ok": True}
+        # persistent=false means tunes live in the container and every redeploy deletes them.
+        return {"ok": True, "persistent": store.persistent}
 
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request):
@@ -384,14 +415,14 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             fgrids.append(g)
         summary = summary_rows(doc, tmap)
         dials, readouts = views.gauges(summary, doc)
-        checks = views.consistency_checks(doc, model.featured)
+        health = checksmod.run(doc, model.table_views)
         parent = edited_from(slug)
         og_title, og_desc = og_for(doc, summary, edited=parent is not None)
         delete_key = pop_delete_key(request, slug)
         resp = templates.TemplateResponse(request, "tune.html", {
             "slug": slug, "doc": doc, "tmap": tmap, "m": model, "fgrids": fgrids, "summary": summary,
-            "dials": dials, "readouts": readouts, "parent": parent, "checks": checks,
-            "live_values": views.live_values(doc, dials, checks),
+            "dials": dials, "readouts": readouts, "parent": parent, "health": health,
+            "health_summary": checksmod.summary(health), "live_values": views.live_values(doc, dials, health),
             "load": next((v.load for v in model.featured if v.load is not None), None),
             "family": views.family_label(doc), "tune_label": views.tune_label(doc), "delete_key": delete_key,
             "og_title": og_title, "og_desc": og_desc, "og_url": page_url(request),

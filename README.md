@@ -49,8 +49,8 @@ docker run -p 8000:8000 -v "$PWD/data:/data" msq-viewer
    `railway.json`, which builds from the `Dockerfile` and sets `/healthz` as the healthcheck.
    Pushes to `main` redeploy automatically.
 2. **Add a volume** to the service with mount path `/data`. The SQLite DB (`/data/msq.db`) and the
-   uploaded files (`/data/tunes/<slug>.msq`) live there. Without a volume, every redeploy wipes all tunes
-   (the app logs a warning at boot).
+   uploaded files (`/data/tunes/<slug>.msq`) live there. Without a volume, every redeploy wipes all tunes and
+   every shared link: the app logs a warning at boot and `/healthz` reports `"persistent": false`.
 3. **Settings → Networking → Generate Domain** gives you the public `*.up.railway.app` URL.
 
 The app binds `0.0.0.0:$PORT`. Optional env var: `UPLOADS_PER_HOUR` (default `20`).
@@ -101,10 +101,26 @@ and the boost line), and the **Checks** panel.
   from the tune's TunerStudio gauge settings when present: `rpmhigh` is the tach maximum, `rpmwarn` starts the
   yellow zone and `rpmdang` the red. A boost-cut dial uses `maphigh`/`mapwarn`/`mapdang`. These are gauge
   settings, not engine limits, and the settings list says so.
-- **Checks** lists settings that have to agree, for whichever of them the tune has: soft vs hard rev limit,
-  launch limits, the rev limit vs the tach maximum, gauge zones, load bins vs the MAP sensor's calibrated
-  range, RPM bins vs the rev limit, and boost cut vs the MAP sensor's range. It re-checks as you type.
-  Nothing is changed for you; a failed check just says what to look at.
+
+### Tune Health
+
+The Dash's **Tune Health** panel (`app/checks.py`) checks the tune whenever it loads and again on every edit, and
+gives a verdict: **Not ready to start**, **No blocking problems, but N things look off**, or **No problems found**.
+
+- **Fix** (don't start the engine): required fuel of 0, a rev limit that is unset or a placeholder, a main
+  table that was never set up, axis bins out of order, backwards MAP sensor calibration, rusEFI injector flow,
+  displacement or cylinder count of 0.
+- **Check** (looks off): unusual required fuel or injector open time, stoich outside 6–16, VE cells at 0 or
+  above 200%, sharp VE or ignition spikes, advance outside −20° to 55° or above 35° in boost, AFR/λ targets
+  outside λ 0.65–1.20, lean full-load (λ > 0.95) or boost (λ > 0.86) targets, soft/launch limits out of order,
+  RPM bins short of the rev limit, load bins or boost cut past the MAP sensor's range, boost control on with
+  an unset table.
+- **Note** (worth knowing): a boost-capable MAP sensor with tables that stop at atmospheric, boost rows with
+  boost cut off, TunerStudio gauge settings that don't cover the rev limit, and other tables still holding
+  placeholder values.
+
+Rules are data, so the same rule runs on the server and in the browser (`evaluateCheck` in `edit.js`). They
+catch common setup mistakes and can't prove a tune is safe.
 
 ## Adding a new firmware
 

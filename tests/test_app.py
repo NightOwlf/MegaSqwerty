@@ -30,7 +30,8 @@ def assert_no_leaks(text):
 
 
 def test_healthz(client):
-    assert client.get("/healthz").json() == {"ok": True}
+    body = client.get("/healthz").json()
+    assert body["ok"] is True and body["persistent"] is False  # a temp dir isn't a mounted volume
 
 
 def test_home_has_warning(client):

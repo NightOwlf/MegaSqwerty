@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 from app import views
 from app.main import create_app
 from app.parser import parse_msq
-from app.tablemaps import all_tables, resolve_map
 
 
 def tune(rpmhigh=7000, soft=7300, map_max=179, load_top=250, rpm_top=6000) -> bytes:
@@ -42,24 +41,10 @@ def test_dial_scale_comes_from_the_tunes_tach_settings():
     assert d.angle == round(135 + 270 * 7500 / 9000, 2)  # needle at the rev limit
 
 
-def test_a_tach_max_below_the_rev_limit_still_fits_and_is_flagged():
+def test_a_tach_max_below_the_rev_limit_still_fits():
     doc = parse_msq(tune(rpmhigh=7000))
     d = views.build_dial("Rev limit", "7500", "rpm", "hardRevLim", doc)
     assert [t.label for t in d.ticks if t.major][-1] == "9" and d.angle < 405  # scale grows to fit the limit
-    checks = views.consistency_checks(doc, all_tables(doc, resolve_map(doc))[0])
-    bad = [c["text"] for c in checks if c["status"] == "bad"]
-    assert "The tach gauge tops out at 7000 rpm, below the rev limit 7500 rpm. Raise rpmhigh." in bad
-    assert "VE Table load bins go up to 250 kPa, past what the MAP sensor is calibrated to read (179 kPa)." in bad
-    assert any(t.startswith("VE Table RPM bins stop at 6000 rpm") for t in bad)
-    assert checks[0]["status"] == "bad" and checks[-1]["status"] == "ok"  # problems first
-    ok = [c["text"] for c in checks if c["status"] == "ok"]
-    assert "Soft rev limit 7300 rpm is below the hard rev limit 7500 rpm." in ok
-
-
-def test_everything_agrees_on_a_consistent_tune():
-    doc = parse_msq(tune(rpmhigh=8000, load_top=170, rpm_top=8000))
-    checks = views.consistency_checks(doc, all_tables(doc, resolve_map(doc))[0])
-    assert checks and all(c["status"] == "ok" for c in checks)
 
 
 def test_tune_page_carries_what_edits_need(tmp_path):
@@ -69,12 +54,11 @@ def test_tune_page_carries_what_edits_need(tmp_path):
         values = json.loads(html.unescape(re.search(r"data-tune-values='([^']*)'", page).group(1)))
         assert values["hardRevLim"] == 7500 and values["rpmhigh"] == 7000 and values["fuelLoadBins"] == [30, 250]
         rules = json.loads(html.unescape(re.search(r"data-checks='([^']*)'", page).group(1)))
-        assert {"a": ["hardRevLim", "value"], "b": ["rpmhigh", "value"]}.items() <= rules[0].items() or any(
-            r["a"] == ["hardRevLim", "value"] and r["b"] == ["rpmhigh", "value"] for r in rules)
+        assert any(r.get("a") == ["hardRevLim", "value"] and r.get("b") == ["rpmhigh", "value"] for r in rules)
         assert 'data-dial data-name="hardRevLim"' in page and 'data-scale-names="rpmhigh,rpmwarn,rpmdang"' in page
         assert 'data-bind="reqFuel" data-digits="1"' in page
-        # tach max below the rev limit, danger zone past the tach max, load bins past the sensor, RPM bins short
-        assert "4 to look at" in page
+        assert "VE Table load bins go up to 250 kPa, past what the MAP sensor is calibrated to read (179 kPa)." in page
+        assert "The tach gauge tops out at 7000 rpm, below the rev limit 7500 rpm. Raise rpmhigh." in page
         assert "Tach gauge maximum (a TunerStudio gauge setting, not the rev limiter)" in page
         assert 'data-bin="rpmBins" data-bin-i="1"' in page and 'data-bin="fuelLoadBins" data-bin-i="0"' in page
         ve = c.get(f"/t/{slug}/c/veTable").text

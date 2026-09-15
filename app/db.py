@@ -50,10 +50,22 @@ class Store:
         self._cache_lock = threading.Lock()
 
     # ------------------------------------------------------------ plumbing
+    @property
+    def persistent(self) -> bool:
+        """True when tunes survive a redeploy: the data directory is (or sits on) a mounted volume."""
+        path = self.data_dir.resolve()
+        for p in (path, *path.parents):
+            if p == Path(p.anchor):
+                return False
+            if os.path.ismount(p):
+                return True
+        return False
+
     def init(self) -> None:
         self.tune_dir.mkdir(parents=True, exist_ok=True)
-        if str(self.data_dir) != "/data":
-            log.warning("storing tunes in %s (not a /data volume) — data is lost on redeploy", self.data_dir)
+        if not self.persistent:
+            log.warning("storing tunes in %s, which is not a mounted volume: every redeploy deletes all tunes. "
+                        "On Railway, add a volume mounted at /data.", self.data_dir)
         with self.conn() as c:
             c.execute("PRAGMA journal_mode=WAL")
             c.executescript(
