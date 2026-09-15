@@ -121,6 +121,8 @@ class Grid:
     axes_note: str = ""
     pressure_note: str = ""
     setup_note: str = ""  # the table still holds never-configured placeholder values
+    x_bins_name: str = ""  # axis bin constants, so pending edits to them relabel the headers
+    y_bins_name: str = ""
 
     @property
     def boost_line(self) -> bool:
@@ -203,6 +205,8 @@ def build_grid(gid: str, title: str, z: Constant, x: Constant | None = None, y: 
         lo=fmt_value(lo, digits) if nums else "", hi=fmt_value(hi, digits) if nums else "",
         fuel=fuel_mode(z, u, palette_name),
     )
+    grid.x_bins_name = x.name if x_bins is not None else ""
+    grid.y_bins_name = y.name if y_bins is not None else ""
     grid.editable = z.is_table and len(nums) == len(z.values)
     grid.edit_digits, grid.lo_v, grid.hi_v = edit_digits(z), lo, hi
     if (x is not None and x_bins is None) or (y is not None and y_bins is None):

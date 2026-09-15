@@ -50,6 +50,7 @@
     if (Object.keys(e).length) edits[name] = e; else delete edits[name];
     stash(KEY, Object.keys(edits).length ? JSON.stringify(edits) : null);
     updateBar();
+    refreshDerived();
   }
 
   /* ---------- showing a value: cell colors use the same ramp and ink rule as render.py ---------- */
@@ -115,6 +116,242 @@
     });
   });
   refreshPlots($$(".hm-wrap[data-edit-name]"));
+
+  /* ---------- everything that follows from a setting ----------
+     Other copies of the same field, gauge readouts, the limit dials (their needle and their scale), table
+     stats, axis headers (with boost readings and the boost line) and the consistency checks all recompute
+     from the tune's values plus pending edits, so the Dash always matches what's been typed. */
+  var liveEl = $("[data-tune-values]"), tuneValues = {};
+  try { tuneValues = liveEl ? JSON.parse(liveEl.dataset.tuneValues) || {} : {}; } catch (e) { tuneValues = {}; }
+  var checksBox = $("[data-checks]"), checkRules = [];
+  try { checkRules = checksBox ? JSON.parse(checksBox.dataset.checks) || [] : []; } catch (e) { checkRules = []; }
+
+  function editedAt(name, i) {
+    var e = edits[name];
+    return e && typeof e[i || 0] === "number" ? e[i || 0] : undefined;
+  }
+  function current(name, i) {
+    var e = editedAt(name, i);
+    if (e !== undefined) return e;
+    var v = tuneValues[name];
+    v = Array.isArray(v) ? v[i || 0] : (i ? undefined : v);
+    return typeof v === "number" ? v : undefined;
+  }
+  function currentMax(name) {
+    var base = tuneValues[name], best;
+    if (!Array.isArray(base)) return current(name, 0);
+    base.forEach(function (_, i) {
+      var v = current(name, i);
+      if (typeof v === "number" && (best === undefined || v > best)) best = v;
+    });
+    return best;
+  }
+  function short(n) { return String(+n.toFixed(4)); }
+  function gaugeText(kpa) {
+    var d = kpa - 101.325;
+    if (Math.abs(d) < 1.5) return "atmospheric";
+    return d > 0 ? (d * 0.1450377).toFixed(1) + " psi boost" : (-d * 0.2953).toFixed(1) + " inHg vacuum";
+  }
+  function setText(ro, text, edited) {
+    var v = $(".ro-v", ro), node = v && v.firstChild;
+    if (!node || node.nodeType !== 3) return;
+    if (ro.dataset.orig == null) ro.dataset.orig = node.nodeValue;
+    node.nodeValue = text == null ? ro.dataset.orig : text;
+    v.classList.toggle("edited", !!edited && node.nodeValue !== ro.dataset.orig);
+  }
+
+  function syncFields() {
+    fields.forEach(function (el) {
+      if (el === document.activeElement) return;
+      var box = el.closest("[data-edit-name]"), e = editedAt(box.dataset.editName, el.dataset.i);
+      var text = e !== undefined ? fmt(e, +box.dataset.digits) : el.dataset.orig;
+      if (el.textContent.trim() !== text) {
+        el.textContent = text;
+        moveChartPoint(box.dataset.editName, el.dataset.i, num(text), text);
+      }
+      el.dataset.cur = text;
+      el.classList.toggle("edited", text !== el.dataset.orig);
+    });
+  }
+  function updateReadouts() {
+    $$("[data-bind]").forEach(function (ro) {
+      var e = editedAt(ro.dataset.bind, 0);
+      setText(ro, e !== undefined ? fmt(e, +ro.dataset.digits) : null, e !== undefined);
+    });
+  }
+  function updateStats() {
+    $$("[data-stats-for]").forEach(function (strip) {
+      var name = strip.dataset.statsFor, box = $('[data-edit-name="' + attr(name) + '"]');
+      var ros = $$("[data-stat]", strip);
+      if (!box || !edits[name]) { ros.forEach(function (ro) { setText(ro, null, false); }); return; }
+      var nums = $$("[data-i]", box).map(function (el) { return num(textOf(el)); }).filter(function (n) { return !isNaN(n); });
+      if (!nums.length) return;
+      var d = +box.dataset.digits || 0;
+      var vals = { lo: Math.min.apply(null, nums), hi: Math.max.apply(null, nums), mean: nums.reduce(function (a, b) { return a + b; }, 0) / nums.length };
+      ros.forEach(function (ro) { setText(ro, fmt(vals[ro.dataset.stat], d), true); });
+    });
+  }
+  function decimalsOf(text) { var m = /\.(\d+)/.exec(text || ""); return m ? m[1].length : 0; }
+  function refreshBoostLine(fig) {
+    var rows = $$("tbody tr", fig);
+    if (!rows.length || rows[0].cells[0].dataset.g == null) return;
+    var bins = rows.map(function (tr) { return parseFloat(tr.cells[0].textContent); });
+    var boost = [], descending = true; // display order: highest load at the top
+    bins.forEach(function (b, k) {
+      if (b > 103) boost.push(k);
+      if (k && !(b < bins[k - 1])) descending = false;
+    });
+    rows.forEach(function (tr) { tr.classList.remove("boost-edge"); });
+    var where = boost.length + " of " + rows.length + " rows are boost.";
+    if (boost.length && descending && boost.length < rows.length) {
+      rows[boost[boost.length - 1]].classList.add("boost-edge");
+      where = "Rows above the orange line are boost.";
+    }
+    var note = $(".pressure-note", fig), top = Math.max.apply(null, bins);
+    if (!note) return;
+    note.classList.toggle("has-line", !!$("tr.boost-edge", fig));
+    note.textContent = boost.length
+      ? where + " The top load bin, " + short(top) + " kPa, is about " + gaugeText(top) + " at sea level."
+      : "No boost rows: the top load bin is " + short(top) + " kPa, about atmospheric. That's normal for a naturally aspirated engine; a turbo or supercharged engine needs load bins above ~101 kPa.";
+  }
+  function updateAxes() {
+    var touched = [];
+    $$("th[data-bin]").forEach(function (th) {
+      if (th.dataset.orig == null) th.dataset.orig = th.textContent;
+      var e = editedAt(th.dataset.bin, +th.dataset.binI);
+      var text = e !== undefined ? fmt(e, decimalsOf(th.dataset.orig)) : th.dataset.orig;
+      if (th.textContent === text) return;
+      th.textContent = text;
+      th.classList.toggle("edited", text !== th.dataset.orig);
+      if (th.dataset.g != null) {
+        th.dataset.g = gaugeText(parseFloat(text));
+        th.title = text + " kPa ≈ " + th.dataset.g + " (at sea level)";
+      }
+      var fig = th.closest(".hm-wrap");
+      if (fig && touched.indexOf(fig) < 0) touched.push(fig);
+    });
+    touched.forEach(function (fig) { refreshBoostLine(fig); if (fig._plot) fig._plot.refresh(); });
+  }
+
+  // Limit dials: same geometry as views.dial_geometry.
+  var SVG_NS = "http://www.w3.org/2000/svg", NICE = [10, 20, 25, 50, 100, 200, 250, 500, 1000, 1e9];
+  function svgEl(tag, attrs, text) {
+    var n = document.createElementNS(SVG_NS, tag);
+    Object.keys(attrs).forEach(function (k) { n.setAttribute(k, attrs[k]); });
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function polar(r, deg) {
+    var a = deg * Math.PI / 180;
+    return [Math.round((100 + r * Math.cos(a)) * 100) / 100, Math.round((100 + r * Math.sin(a)) * 100) / 100];
+  }
+  function arcPath(from, to, top) {
+    var a0 = 135 + 270 * from / top, a1 = 135 + 270 * to / top, s = polar(80, a0), e = polar(80, a1);
+    return "M" + s[0] + " " + s[1] + "A80 80 0 " + (a1 - a0 > 180 ? 1 : 0) + " 1 " + e[0] + " " + e[1];
+  }
+  function updateDials() {
+    $$("[data-dial]").forEach(function (fig) {
+      var names = (fig.dataset.scaleNames || "").split(",");
+      var touched = [fig.dataset.name].concat(names).some(function (n) { return n && edits[n]; });
+      if (!touched && !fig.dataset.redrawn) return; // the server's drawing is already current
+      var v = current(fig.dataset.name, 0);
+      if (!(v > 0)) return;
+      var topS = current(names[0]), warnS = current(names[1]), dangerS = current(names[2]);
+      var top, major, div;
+      if (fig.dataset.kind === "rpm") {
+        top = topS >= v ? topS : Math.ceil(v * 1.15 / 1000) * 1000;
+        major = top > 12000 ? 2000 : 1000;
+        div = 1000;
+      } else {
+        var step = NICE.filter(function (s) { return s * 7 >= v * 1.2; })[0];
+        top = topS >= v ? topS : Math.ceil(v * 1.2 / step) * step;
+        major = NICE.filter(function (s) { return s * 8 >= top; })[0];
+        div = 1;
+      }
+      var minor = major / 2, svg = svgEl("svg", { viewBox: "0 0 200 200", "aria-hidden": "true" });
+      svg.appendChild(svgEl("circle", { "class": "dial-rim", cx: 100, cy: 100, r: 97 }));
+      svg.appendChild(svgEl("circle", { "class": "dial-face", cx: 100, cy: 100, r: 91 }));
+      var redFrom = dangerS > 0 && dangerS < top ? dangerS : v;
+      if (warnS > 0 && warnS < redFrom) svg.appendChild(svgEl("path", { "class": "dial-warn", d: arcPath(warnS, redFrom, top) }));
+      if (redFrom < top) svg.appendChild(svgEl("path", { "class": "dial-red", d: arcPath(redFrom, top, top) }));
+      for (var i = 0; i <= Math.floor(top / minor + 1e-9); i++) {
+        var k = i * minor, deg = 135 + 270 * k / top, isMajor = i % 2 === 0;
+        var p1 = polar(84, deg), p2 = polar(isMajor ? 70 : 77, deg);
+        svg.appendChild(svgEl("line", { "class": isMajor ? "tk-major" : "tk-minor", x1: p1[0], y1: p1[1], x2: p2[0], y2: p2[1] }));
+        if (isMajor) {
+          var lp = polar(56, deg);
+          svg.appendChild(svgEl("text", { "class": "tk-label", x: lp[0], y: lp[1], "text-anchor": "middle", "dominant-baseline": "central" }, short(k / div)));
+        }
+      }
+      svg.appendChild(svgEl("text", { "class": "dial-scale", x: 100, y: 76, "text-anchor": "middle" }, fig.dataset.kind === "rpm" ? "×1000 rpm" : fig.dataset.units));
+      var needle = svgEl("g", { transform: "rotate(" + Math.round((135 + 270 * v / top) * 100) / 100 + " 100 100)" });
+      needle.appendChild(svgEl("path", { "class": "dial-needle", d: "M84 100 100 96.6 178 100 100 103.4z" }));
+      svg.appendChild(needle);
+      svg.appendChild(svgEl("circle", { "class": "dial-hub", cx: 100, cy: 100, r: 7.5 }));
+      var text = fmt(v, +fig.dataset.digits || 0);
+      svg.appendChild(svgEl("text", { "class": "dial-val", x: 100, y: 146, "text-anchor": "middle" }, text));
+      svg.appendChild(svgEl("text", { "class": "dial-label", x: 100, y: 166, "text-anchor": "middle" }, fig.dataset.label));
+      fig.replaceChild(svg, $("svg", fig));
+      fig.setAttribute("aria-label", fig.dataset.label + ": " + text + " " + (fig.dataset.units || ""));
+      fig.classList.toggle("dial-edited", touched);
+      fig.dataset.redrawn = touched ? "1" : "";
+    });
+  }
+
+  function updateChecks() {
+    if (!checksBox || !checkRules.length) return;
+    var agg = function (ref) { return ref[1] === "max" ? currentMax(ref[0]) : current(ref[0], 0); };
+    var results = checkRules.map(function (r) {
+      var a = agg(r.a), b = agg(r.b);
+      if (typeof a !== "number" || typeof b !== "number") return null;
+      var ok = r.op === "<" ? a < b : r.op === "<=" ? a <= b : a >= b;
+      return { ok: ok, text: (ok ? r.ok : r.bad).replace("{a}", short(a) + " " + r.units).replace("{b}", short(b) + " " + r.units) };
+    }).filter(Boolean);
+    var bad = results.filter(function (r) { return !r.ok; }), good = results.filter(function (r) { return r.ok; });
+    var old = $("details.checks-ok", checksBox);
+    function list(items, cls, led) {
+      var ul = document.createElement("ul");
+      if (cls) ul.className = cls;
+      items.forEach(function (r) {
+        var li = document.createElement("li"), dot = document.createElement("span"), t = document.createElement("span");
+        dot.className = "led " + led;
+        t.textContent = r.text;
+        li.appendChild(dot);
+        li.appendChild(t);
+        ul.appendChild(li);
+      });
+      return ul;
+    }
+    checksBox.textContent = "";
+    if (bad.length) checksBox.appendChild(list(bad, "checks-bad", "bad"));
+    if (good.length) {
+      var det = document.createElement("details"), sum = document.createElement("summary");
+      det.className = "checks-ok";
+      det.open = bad.length ? !!(old && old.open) : true;
+      sum.textContent = good.length + (good.length === 1 ? " check passes" : " checks pass");
+      det.appendChild(sum);
+      det.appendChild(list(good, "", "on"));
+      checksBox.appendChild(det);
+    }
+    var sub = $("[data-checks-sub]");
+    if (sub) sub.textContent = bad.length ? bad.length + " to look at" : "All good";
+  }
+
+  // A timer, not requestAnimationFrame: rAF is paused while the tab is hidden, which left the Dash stale.
+  // One pass per burst of edits (an Interpolate over 64 cells records 64 values).
+  var derivedTimer = 0;
+  function refreshDerived() {
+    if (derivedTimer) return;
+    derivedTimer = setTimeout(function () {
+      derivedTimer = 0;
+      syncFields();
+      updateReadouts();
+      updateStats();
+      updateAxes();
+      updateDials();
+      updateChecks();
+    });
+  }
 
   /* ---------- table cell selection ---------- */
   function rowsOf(fig) { return fig.querySelector("table.hm").tBodies[0].rows; }
@@ -425,4 +662,5 @@
   window.addEventListener("pagehide", function () { seen = stash(KEY); });
 
   setEditing(stash(MODE_KEY) === "1" && toggles.length > 0);
+  refreshDerived();
 })();

@@ -765,3 +765,18 @@ body.editing [contenteditable=true]:focus { outline: 2px solid var(--sel); backg
 .bubble .xy { white-space: normal; }
 .setup-note { display: flex; align-items: flex-start; gap: 7px; margin: 0 0 8px; padding: 7px 10px; border: 1px solid var(--warn-line); border-radius: 4px; background: var(--warn-bg); color: var(--warn-ink); font-size: 12.5px; }
 .setup-note .ic { width: 15px; height: 15px; margin-top: 1px; color: var(--warn); }
+
+/* live Dash: dial zones, checks, setting hints */
+.dial-warn { fill: none; stroke: #ffc233; stroke-width: 8; }
+.dial-edited .dial-val { text-decoration: underline; }
+.win-checks .win-body { padding: 8px 12px 10px; }
+.checks ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.checks li { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; line-height: 1.4; }
+.checks li .led { flex: none; margin-top: 3px; }
+.checks-bad { margin-bottom: 8px !important; }
+.checks-bad li { color: var(--text); }
+.checks-ok > summary { margin-bottom: 6px; color: var(--muted); font-size: 12.5px; cursor: pointer; }
+.checks-ok li { color: var(--muted); }
+.shint { display: block; margin-top: 1px; color: var(--faint); font-size: 11.5px; }
+.hm th.ax.edited { text-decoration: underline 2px; }
+@media (max-width: 1099px) { .win-checks { order: 3; } .win-info { order: 4; } }

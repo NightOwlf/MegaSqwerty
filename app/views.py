@@ -298,6 +298,7 @@ class SettingRow:
     cat: str = "other"
     editable: bool = False
     digits: int = 0
+    hint: str = ""
 
 
 @dataclass
@@ -379,10 +380,11 @@ def tune_model(slug: str, doc: TuneDoc, tmap: dict) -> TuneModel:
         value, units = display_value(c, tmap), meta_units(tmap, c)
         line = spark(c.values, w=60, h=20)[0] if k == "array" and len(c.values) <= 512 else ""
         cat = categorize(c.name)
+        hint = SETTING_HINTS.get(c.name, "")
         settings.append(SettingRow(c.name, k, value, units, line,
                                    c_url(slug, c.name) if k in ("array", "table") else "",
-                                   _search(c.name, value, units, CATEGORY_LABELS[cat]), cat,
-                                   k == "number" and is_editable(c), edit_digits(c)))
+                                   _search(c.name, value, units, CATEGORY_LABELS[cat], hint), cat,
+                                   k == "number" and is_editable(c), edit_digits(c), hint))
     return TuneModel(featured, tviews, cvs, tables, curve_cards, settings, _cat_counts(tables),
                      _cat_counts(curve_cards), _cat_counts(settings), _menus(tables, curve_cards, settings))
 
@@ -410,9 +412,17 @@ class Dial:
     angle: float
     red: str
     ticks: list[Tick]
+    warn: str = ""  # arc for the warning zone, when the tune sets one
+    name: str = ""  # the setting the needle shows, so edits can redraw it live
+    kind: str = ""  # "rpm" | "kpa"
+    digits: int = 0
+    scale_names: tuple[str, ...] = ()  # the tune's gauge max / warning / danger settings, in that order
 
 
 _DIAL_START, _DIAL_SWEEP, _CX = 135.0, 270.0, 100.0
+_NICE_STEPS = (10, 20, 25, 50, 100, 200, 250, 500, 1000, 1e9)
+# TunerStudio gauge settings stored in a tune: (maximum, warning zone from, danger zone from).
+GAUGE_SCALES = {"rpm": ("rpmhigh", "rpmwarn", "rpmdang"), "kpa": ("maphigh", "mapwarn", "mapdang")}
 
 
 def _polar(r: float, deg: float) -> tuple[float, float]:
@@ -420,26 +430,34 @@ def _polar(r: float, deg: float) -> tuple[float, float]:
     return round(_CX + r * math.cos(rad), 2), round(_CX + r * math.sin(rad), 2)
 
 
-def build_dial(label: str, text: str, units: str) -> Dial | None:
-    """An analog gauge for a limit setting (rev limit, boost cut): the needle and the red zone start at the limit."""
-    u = (units or "").lower()
-    try:
-        v = float(text)
-    except ValueError:
-        return None
-    if v <= 0 or not ("limit" in label.lower() or "cut" in label.lower()):
-        return None
-    if "rpm" in u:
-        major = 2000.0 if v > 11000 else 1000.0
-        top, div, scale = math.ceil(v * 1.15 / major) * major, 1000.0, "×1000 rpm"
-    elif "kpa" in u:
-        major = next(s for s in (10, 20, 25, 50, 100, 200, 250, 500, 1000, 1e9) if s * 7 >= v * 1.2)
-        top, div, scale = math.ceil(v * 1.2 / major) * major, 1.0, units
+def _arc(start: float, end: float, top: float) -> str:
+    a0 = _DIAL_START + _DIAL_SWEEP * start / top
+    a1 = _DIAL_START + _DIAL_SWEEP * end / top
+    sx, sy = _polar(80, a0)
+    ex, ey = _polar(80, a1)
+    return f"M{sx} {sy}A80 80 0 {1 if a1 - a0 > 180 else 0} 1 {ex} {ey}"
+
+
+def _scalar(doc: TuneDoc | None, name: str) -> float | None:
+    c = doc.get(name) if doc is not None and name else None
+    return c.value if c is not None and c.kind == "scalar" and isinstance(c.value, float) else None
+
+
+def dial_geometry(v: float, kind: str, top_s: float | None = None, warn_s: float | None = None,
+                  danger_s: float | None = None) -> tuple[float, list[Tick], str, str, float]:
+    """-> (top, ticks, red arc, warning arc, needle angle). Mirrored by renderDial in edit.js."""
+    if kind == "rpm":
+        auto = math.ceil(v * 1.15 / 1000) * 1000
+        top = top_s if top_s is not None and top_s >= v else auto
+        major, div = (2000.0 if top > 12000 else 1000.0), 1000.0
     else:
-        return None
-    ticks = []
+        auto_step = next(s for s in _NICE_STEPS if s * 7 >= v * 1.2)
+        auto = math.ceil(v * 1.2 / auto_step) * auto_step
+        top = top_s if top_s is not None and top_s >= v else auto
+        major, div = float(next(s for s in _NICE_STEPS if s * 8 >= top)), 1.0
     minor = major / 2
-    for i in range(int(round(top / minor)) + 1):
+    ticks = []
+    for i in range(int(top / minor + 1e-9) + 1):
         k = i * minor
         deg = _DIAL_START + _DIAL_SWEEP * k / top
         is_major = i % 2 == 0
@@ -447,23 +465,155 @@ def build_dial(label: str, text: str, units: str) -> Dial | None:
         x2, y2 = _polar(70 if is_major else 77, deg)
         lx, ly = _polar(56, deg)
         ticks.append(Tick(x1, y1, x2, y2, is_major, f"{k / div:g}" if is_major else "", lx, ly))
-    a0 = _DIAL_START + _DIAL_SWEEP * v / top
-    sx, sy = _polar(80, a0)
-    ex, ey = _polar(80, _DIAL_START + _DIAL_SWEEP)
-    large = 1 if _DIAL_SWEEP * (top - v) / top > 180 else 0
-    return Dial(label, text, units, scale, round(a0, 2), f"M{sx} {sy}A80 80 0 {large} 1 {ex} {ey}", ticks)
+    red_from = danger_s if danger_s is not None and 0 < danger_s < top else v
+    red = _arc(red_from, top, top) if red_from < top else ""
+    warn = _arc(warn_s, red_from, top) if warn_s is not None and 0 < warn_s < red_from else ""
+    return top, ticks, red, warn, round(_DIAL_START + _DIAL_SWEEP * v / top, 2)
 
 
-def gauges(summary: list[tuple[str, str, str]]) -> tuple[list[Dial], list[tuple[str, str, str]]]:
-    """Split summary rows into analog dials (limits) and digital readouts (everything else)."""
+def build_dial(label: str, text: str, units: str, name: str = "", doc: TuneDoc | None = None,
+               digits: int = 0) -> Dial | None:
+    """An analog gauge for a limit setting (rev limit, boost cut).
+
+    The needle shows the limit. The scale and zones come from the tune's own TunerStudio gauge settings
+    (rpmhigh/rpmwarn/rpmdang, maphigh/mapwarn/mapdang) when it has them, so changing those changes the dial.
+    """
+    u = (units or "").lower()
+    try:
+        v = float(text)
+    except ValueError:
+        return None
+    if v <= 0 or not ("limit" in label.lower() or "cut" in label.lower()):
+        return None
+    kind = "rpm" if "rpm" in u else "kpa" if "kpa" in u else ""
+    if not kind:
+        return None
+    names = GAUGE_SCALES[kind]
+    _, ticks, red, warn, angle = dial_geometry(v, kind, *(_scalar(doc, n) for n in names))
+    present = tuple(n if _scalar(doc, n) is not None else "" for n in names)
+    return Dial(label, text, units, "×1000 rpm" if kind == "rpm" else units, angle, red, ticks, warn, name, kind,
+                digits, present if any(present) else ())
+
+
+def gauges(summary, doc: TuneDoc | None = None) -> tuple[list[Dial], list[dict]]:
+    """Split summary rows (label, value text, units, constant) into analog dials (limits) and digital readouts."""
     dials, readouts = [], []
-    for label, val, units in summary:
-        d = build_dial(label, val, units)
+    for label, val, units, c in summary:
+        d = build_dial(label, val, units, c.name, doc, edit_digits(c))
         if d:
             dials.append(d)
         else:
-            readouts.append((label, val, units))
+            numeric = c.kind == "scalar" and isinstance(c.value, float)
+            readouts.append({"label": label, "value": val, "units": units, "name": c.name if numeric else "",
+                             "digits": edit_digits(c)})
     return dials, readouts
+
+
+# ------------------------------------------------------------------ checks
+
+REV_LIMIT_NAMES = ("hardRevLim", "rpmHardLimit", "RevLimNormal2", "RevLimRpm2", "HardRevLim", "rpmhardlimit",
+                   "RevLimRPM", "revLimit")
+_OPS = {"<": lambda a, b: a < b, "<=": lambda a, b: a <= b, ">=": lambda a, b: a >= b}
+
+
+def _agg(doc: TuneDoc, name: str, agg: str) -> float | None:
+    c = doc.get(name)
+    if c is None or c.kind not in ("scalar", "array"):
+        return None
+    nums = [v for v in c.values if isinstance(v, float)]
+    if not nums:
+        return None
+    return max(nums) if agg == "max" else (nums[0] if c.kind == "scalar" else None)
+
+
+def consistency_checks(doc: TuneDoc, featured: list[TableView]) -> list[dict]:
+    """Settings that have to agree with each other, for the settings this tune has. Failures first.
+
+    Each rule carries its own ok/problem wording so edit.js can re-check it live as values change.
+    """
+    rules: list[dict] = []
+    seen: set[tuple] = set()
+
+    def add(a, b, op, units, ok, bad, a_agg="value", b_agg="value"):
+        av, bv = _agg(doc, a, a_agg), _agg(doc, b, b_agg)
+        if av is None or bv is None or (a, b, op) in seen:
+            return
+        seen.add((a, b, op))
+        passed = _OPS[op](av, bv)
+        text = (ok if passed else bad).replace("{a}", f"{av:g} {units}").replace("{b}", f"{bv:g} {units}")
+        rules.append({"a": [a, a_agg], "b": [b, b_agg], "op": op, "units": units, "ok": ok, "bad": bad,
+                      "status": "ok" if passed else "bad", "text": text})
+
+    rev = next((n for n in REV_LIMIT_NAMES if _agg(doc, n, "value") is not None), None)
+    if rev:
+        add("SoftRevLim", rev, "<", "rpm", "Soft rev limit {a} is below the hard rev limit {b}.",
+            "Soft rev limit {a} should be below the hard rev limit {b}.")
+        add("lnchHardLim", rev, "<=", "rpm", "Launch hard limit {a} is at or below the rev limit {b}.",
+            "Launch hard limit {a} is above the rev limit {b}.")
+        add(rev, "rpmhigh", "<=", "rpm", "The tach gauge (max {b}) covers the rev limit {a}.",
+            "The tach gauge tops out at {b}, below the rev limit {a}. Raise rpmhigh.")
+    add("lnchSoftLim", "lnchHardLim", "<", "rpm", "Launch soft limit {a} is below the launch hard limit {b}.",
+        "Launch soft limit {a} should be below the launch hard limit {b}.")
+    add("rpmwarn", "rpmdang", "<=", "rpm", "Tach warning zone {a} starts before the danger zone {b}.",
+        "Tach warning zone {a} starts after the danger zone {b}.")
+    add("rpmdang", "rpmhigh", "<=", "rpm", "Tach danger zone {a} is on the gauge (max {b}).",
+        "Tach danger zone {a} is past the gauge maximum {b}.")
+    add("mapwarn", "mapdang", "<=", "kPa", "MAP warning zone {a} starts before the danger zone {b}.",
+        "MAP warning zone {a} starts after the danger zone {b}.")
+    add("mapdang", "maphigh", "<=", "kPa", "MAP danger zone {a} is on the gauge (max {b}).",
+        "MAP danger zone {a} is past the gauge maximum {b}.")
+    for v in featured:
+        if v.y is not None and v.y_units == "kPa":
+            add(v.y.name, "mapMax", "<=", "kPa",
+                f"{v.label} load bins (up to {{a}}) are within the MAP sensor's range ({{b}}).",
+                f"{v.label} load bins go up to {{a}}, past what the MAP sensor is calibrated to read ({{b}}).",
+                a_agg="max")
+        if rev and v.x is not None and v.x_label == "RPM":
+            add(v.x.name, rev, ">=", "rpm", f"{v.label} RPM bins reach {{a}}, covering the rev limit {{b}}.",
+                f"{v.label} RPM bins stop at {{a}}, below the rev limit {{b}}: above that the last column is used.",
+                a_agg="max")
+    add("boostLimit", "mapMax", "<=", "kPa", "Boost cut {a} is within the MAP sensor's range ({b}).",
+        "Boost cut {a} is past what the MAP sensor can read ({b}), so it can never trigger.")
+    rules.sort(key=lambda r: r["status"] == "ok")
+    return rules
+
+
+def live_values(doc: TuneDoc, dials: list[Dial], checks: list[dict]) -> dict:
+    """Current values of the settings the Dash derives things from, for edit.js to recompute with."""
+    names = {n for d in dials for n in (d.name, *d.scale_names) if n}
+    names |= {ref[0] for ch in checks for ref in (ch["a"], ch["b"])}
+    out = {}
+    for n in sorted(names):
+        c = doc.get(n)
+        if c is not None:
+            nums = [v if isinstance(v, float) else None for v in c.values]
+            out[n] = nums[0] if c.kind == "scalar" else nums
+    return out
+
+
+# Plain-English meaning of settings whose names mislead (gauge settings look like engine limits).
+SETTING_HINTS = {
+    "rpmhigh": "Tach gauge maximum (a TunerStudio gauge setting, not the rev limiter)",
+    "rpmwarn": "Tach gauge: the warning zone starts here",
+    "rpmdang": "Tach gauge: the danger zone starts here",
+    "maphigh": "MAP gauge maximum (a TunerStudio gauge setting)",
+    "mapwarn": "MAP gauge: the warning zone starts here",
+    "mapdang": "MAP gauge: the danger zone starts here",
+    "batlow": "Battery gauge: low-voltage warning",
+    "bathigh": "Battery gauge: high-voltage warning",
+    "hardRevLim": "Hard rev limit: the ECU cuts fuel or spark here",
+    "SoftRevLim": "Soft rev limit: timing is pulled from here, before the hard limit",
+    "rpmHardLimit": "Hard rev limit",
+    "lnchSoftLim": "Launch control soft limit",
+    "lnchHardLim": "Launch control hard limit",
+    "mapMin": "MAP sensor calibration: kPa at 0 V",
+    "mapMax": "MAP sensor calibration: kPa at 5 V (the most it can read)",
+    "baroMin": "Baro sensor calibration: kPa at 0 V",
+    "baroMax": "Baro sensor calibration: kPa at 5 V",
+    "boostLimit": "Boost cut pressure (only used when boost cut is enabled)",
+    "reqFuel": "Required fuel: injector pulse for a full cylinder at 100% VE",
+    "injOpen": "Injector opening time, added to every pulse",
+}
 
 
 def demo_grid() -> Grid:

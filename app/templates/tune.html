@@ -68,10 +68,23 @@
         <header class="win-title">{{ icon('gauge') }}<h2>Gauge Cluster</h2><span class="win-sub">Key settings</span></header>
         <div class="cluster">
           {% if dials %}<div class="dials">{% for d in dials %}{{ dial(d) }}{% endfor %}</div>{% endif %}
-          {% if readouts %}<div class="readouts">{% for label, val, units in readouts %}{{ readout(label, val, units) }}{% endfor %}</div>{% endif %}
+          {% if readouts %}<div class="readouts">{% for r in readouts %}{{ readout(r.label, r.value, r.units, bind=r.name, digits=r.digits) }}{% endfor %}</div>{% endif %}
         </div>
       </section>
       {% endif %}
+
+      {% if checks %}
+      {% set bad = checks|selectattr('status', 'equalto', 'bad')|list %}
+      {% set good = checks|selectattr('status', 'equalto', 'ok')|list %}
+      <section class="win win-checks">
+        <header class="win-title">{{ icon('shield') }}<h2>Checks</h2><span class="win-sub" data-checks-sub>{{ (bad|length ~ ' to look at') if bad else 'All good' }}</span></header>
+        <div class="win-body checks" data-checks='{{ checks|tojson }}'>
+          {% if bad %}<ul class="checks-bad">{% for ch in bad %}<li><span class="led bad"></span><span>{{ ch.text }}</span></li>{% endfor %}</ul>{% endif %}
+          {% if good %}<details class="checks-ok"{% if not bad %} open{% endif %}><summary>{{ good|length }} {{ 'check passes' if good|length == 1 else 'checks pass' }}</summary><ul>{% for ch in good %}<li><span class="led on"></span><span>{{ ch.text }}</span></li>{% endfor %}</ul></details>{% endif %}
+        </div>
+      </section>
+      {% endif %}
+      <div hidden data-tune-values='{{ live_values|tojson }}'></div>
 
       <section class="win win-info">
         <header class="win-title">{{ icon('info') }}<h2>Tune Information</h2></header>
@@ -180,7 +193,7 @@
   <ul class="slist" data-list="settings" data-label="Settings">
     {% for s in m.settings %}
     <li data-s="{{ s.search }}" data-chip-val="{{ s.cat }}">{% if s.url %}<a class="srow" href="{{ s.url }}">{% else %}<div class="srow">{% endif %}
-      <span class="sname">{{ s.name }}</span>
+      <span class="sname">{{ s.name }}{% if s.hint %}<small class="shint">{{ s.hint }}</small>{% endif %}</span>
       <span class="sval">{% if s.line %}{{ spark(s.line, "", "spark spark-sm", 60, 20) }}{% endif %}<span class="field k-{{ s.kind }}"{% if s.editable %} data-edit-name="{{ s.name }}" data-digits="{{ s.digits }}"{% endif %}><span class="mono"{% if s.editable %} data-i="0"{% endif %}>{{ s.value }}</span>{% if s.units %}<small>{{ s.units }}</small>{% endif %}{% if s.kind == 'option' %}{{ icon('down', 'caret') }}{% endif %}</span></span>
       {% if s.url %}<span class="chev">{{ icon('right') }}</span></a>{% else %}</div>{% endif %}
     </li>

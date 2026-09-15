@@ -69,10 +69,10 @@
     <div class="hm-scroll">
       <table class="hm{{ ' diff' if g.is_diff }}" data-xl="{{ g.x_label }}" data-yl="{{ g.y_label }}" data-xu="{{ g.x_units }}" data-yu="{{ g.y_units }}" data-units="{{ g.units }}">
         <tbody>
-        {% for row in g.rows %}<tr{% if row.boost_edge %} class="boost-edge"{% endif %}><th class="ax y" scope="row"{% if row.gauge %} data-g="{{ row.gauge }}" title="{{ row.label }} kPa ≈ {{ row.gauge }} (at sea level)"{% endif %}>{{ row.label }}</th>{% for c in row.cells %}<td{% if c.style %} style="{{ c.style }}"{% endif %}{% if c.cls %} class="{{ c.cls }}"{% endif %}{% if g.is_diff %} data-a="{{ c.a_text }}"{% endif %}{% if can_edit %} data-i="{{ row.index * g.x_labels|length + c.c }}"{% endif %}>{{ c.text }}{% if c.delta %}<small>{{ c.delta }}</small>{% endif %}</td>{% endfor %}</tr>
+        {% for row in g.rows %}<tr{% if row.boost_edge %} class="boost-edge"{% endif %}><th class="ax y" scope="row"{% if g.y_bins_name %} data-bin="{{ g.y_bins_name }}" data-bin-i="{{ row.index }}"{% endif %}{% if row.gauge %} data-g="{{ row.gauge }}" title="{{ row.label }} kPa ≈ {{ row.gauge }} (at sea level)"{% endif %}>{{ row.label }}</th>{% for c in row.cells %}<td{% if c.style %} style="{{ c.style }}"{% endif %}{% if c.cls %} class="{{ c.cls }}"{% endif %}{% if g.is_diff %} data-a="{{ c.a_text }}"{% endif %}{% if can_edit %} data-i="{{ row.index * g.x_labels|length + c.c }}"{% endif %}>{{ c.text }}{% if c.delta %}<small>{{ c.delta }}</small>{% endif %}</td>{% endfor %}</tr>
         {% endfor %}
         </tbody>
-        <tfoot><tr><th class="ax corner" scope="col"><span>{{ g.y_text }} ↑</span><span>{{ g.x_text }} →</span></th>{% for x in g.x_labels %}<th class="ax x" scope="col">{{ x }}</th>{% endfor %}</tr></tfoot>
+        <tfoot><tr><th class="ax corner" scope="col"><span>{{ g.y_text }} ↑</span><span>{{ g.x_text }} →</span></th>{% for x in g.x_labels %}<th class="ax x" scope="col"{% if g.x_bins_name %} data-bin="{{ g.x_bins_name }}" data-bin-i="{{ loop.index0 }}"{% endif %}>{{ x }}</th>{% endfor %}</tr></tfoot>
       </table>
     </div>
     <div class="ed-3d" hidden>

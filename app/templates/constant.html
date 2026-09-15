@@ -38,8 +38,9 @@
   </div>
 
   <div class="win-body dlg-body">
+    {% if hint %}<p class="loadsrc">{{ icon('info') }}<span>{{ hint }}</span></p>{% endif %}
     {% if st %}
-    <div class="cluster cluster-strip">{{ readout('Min', st.lo) }}{{ readout('Max', st.hi) }}{{ readout('Mean', st.mean) }}{{ readout('Cells' if kind == 'table' else 'Points', st.count) }}</div>
+    <div class="cluster cluster-strip"{% if editable %} data-stats-for="{{ c.name }}"{% endif %}>{{ readout('Min', st.lo, stat='lo') }}{{ readout('Max', st.hi, stat='hi') }}{{ readout('Mean', st.mean, stat='mean') }}{{ readout('Cells' if kind == 'table' else 'Points', st.count) }}</div>
     {% endif %}
 
     {% if kind == 'table' %}

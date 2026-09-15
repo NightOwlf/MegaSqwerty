@@ -38,18 +38,19 @@
 {%- endmacro %}
 
 {# A digital readout gauge: label on top, big value, small units. #}
-{% macro readout(label, value, units="", cls="") -%}
+{% macro readout(label, value, units="", cls="", bind="", digits=0, stat="") -%}
 {% set v = value|string %}
-<div class="readout{{ ' ro-text' if v[:1] not in '+-−0123456789.' or not v }}{{ ' ' ~ cls if cls }}"><span class="ro-l">{{ label }}</span><span class="ro-v">{{ v }}{% if units %}<small>{{ units }}</small>{% endif %}</span></div>
+<div class="readout{{ ' ro-text' if v[:1] not in '+-−0123456789.' or not v }}{{ ' ' ~ cls if cls }}"{% if bind %} data-bind="{{ bind }}" data-digits="{{ digits }}"{% endif %}{% if stat %} data-stat="{{ stat }}"{% endif %}><span class="ro-l">{{ label }}</span><span class="ro-v">{{ v }}{% if units %}<small>{{ units }}</small>{% endif %}</span></div>
 {%- endmacro %}
 
 {# An analog dial for a limit setting. Geometry comes from views.build_dial. #}
 {% macro dial(d) -%}
-<figure class="dial" role="img" aria-label="{{ d.label }}: {{ d.value }} {{ d.units }}">
+<figure class="dial" role="img" aria-label="{{ d.label }}: {{ d.value }} {{ d.units }}" data-dial data-name="{{ d.name }}" data-label="{{ d.label }}" data-units="{{ d.units }}" data-kind="{{ d.kind }}" data-digits="{{ d.digits }}" data-scale-names="{{ d.scale_names|join(',') }}">
   <svg viewBox="0 0 200 200" aria-hidden="true">
     <circle class="dial-rim" cx="100" cy="100" r="97"/>
     <circle class="dial-face" cx="100" cy="100" r="91"/>
-    <path class="dial-red" d="{{ d.red }}"/>
+    {% if d.warn %}<path class="dial-warn" d="{{ d.warn }}"/>{% endif %}
+    {% if d.red %}<path class="dial-red" d="{{ d.red }}"/>{% endif %}
     {% for t in d.ticks %}<line class="{{ 'tk-major' if t.major else 'tk-minor' }}" x1="{{ t.x1 }}" y1="{{ t.y1 }}" x2="{{ t.x2 }}" y2="{{ t.y2 }}"/>{% if t.label %}<text class="tk-label" x="{{ t.lx }}" y="{{ t.ly }}" text-anchor="middle" dominant-baseline="central">{{ t.label }}</text>{% endif %}{% endfor %}
     <text class="dial-scale" x="100" y="76" text-anchor="middle">{{ d.scale }}</text>
     <g transform="rotate({{ d.angle }} 100 100)"><path class="dial-needle" d="M84 100 100 96.6 178 100 100 103.4z"/></g>

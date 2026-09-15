@@ -91,6 +91,21 @@ curve or setting page):
   TunerStudio's own limits apply when the file is loaded.
 - Saving counts toward the upload rate limit.
 
+### The Dash follows your edits
+
+Pending edits update everything derived from them straight away: other places the same setting appears,
+the gauge cluster readouts, the limit dials, table Min/Max/Mean, axis headers (with their boost readings
+and the boost line), and the **Checks** panel.
+
+- The rev-limit dial's needle is the rev limit (`hardRevLim`, `rpmHardLimit`, …). Its scale and zones come
+  from the tune's TunerStudio gauge settings when present: `rpmhigh` is the tach maximum, `rpmwarn` starts the
+  yellow zone and `rpmdang` the red. A boost-cut dial uses `maphigh`/`mapwarn`/`mapdang`. These are gauge
+  settings, not engine limits, and the settings list says so.
+- **Checks** lists settings that have to agree, for whichever of them the tune has: soft vs hard rev limit,
+  launch limits, the rev limit vs the tach maximum, gauge zones, load bins vs the MAP sensor's calibrated
+  range, RPM bins vs the rev limit, and boost cut vs the MAP sensor's range. It re-checks as you type.
+  Nothing is changed for you; a failed check just says what to look at.
+
 ## Adding a new firmware
 
 The app has no firmware-specific code for table layouts. Everything comes from `tablemaps/*.json`, so

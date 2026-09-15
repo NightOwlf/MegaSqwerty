@@ -238,13 +238,13 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         return g
 
     def summary_rows(doc: TuneDoc, tmap: dict):
-        return [(label, views.display_value(c, tmap), meta_units(tmap, c)) for label, c in summary_fields(doc, tmap)]
+        return [(label, views.display_value(c, tmap), meta_units(tmap, c), c) for label, c in summary_fields(doc, tmap)]
 
     def og_for(doc: TuneDoc, summary, edited: bool = False) -> tuple[str, str]:
         title = ("Edited copy · " if edited else "") + f"{views.family_label(doc)} {doc.version}".strip() + " tune"
         if doc.tune_comment:
             title += f" · {doc.tune_comment[:80]}"
-        bits = [f"{label} {val}{(' ' + units) if units else ''}" for label, val, units in summary[:6]]
+        bits = [f"{label} {val}{(' ' + units) if units else ''}" for label, val, units, _ in summary[:6]]
         desc = " · ".join(bits) or "TunerStudio .msq tune"
         return title, f"{desc}. Signature: {doc.signature or 'none'}"[:300]
 
@@ -383,13 +383,15 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             g.url = views.c_url(slug, v.z.name)
             fgrids.append(g)
         summary = summary_rows(doc, tmap)
-        dials, readouts = views.gauges(summary)
+        dials, readouts = views.gauges(summary, doc)
+        checks = views.consistency_checks(doc, model.featured)
         parent = edited_from(slug)
         og_title, og_desc = og_for(doc, summary, edited=parent is not None)
         delete_key = pop_delete_key(request, slug)
         resp = templates.TemplateResponse(request, "tune.html", {
             "slug": slug, "doc": doc, "tmap": tmap, "m": model, "fgrids": fgrids, "summary": summary,
-            "dials": dials, "readouts": readouts, "parent": parent,
+            "dials": dials, "readouts": readouts, "parent": parent, "checks": checks,
+            "live_values": views.live_values(doc, dials, checks),
             "load": next((v.load for v in model.featured if v.load is not None), None),
             "family": views.family_label(doc), "tune_label": views.tune_label(doc), "delete_key": delete_key,
             "og_title": og_title, "og_desc": og_desc, "og_url": page_url(request),
@@ -411,6 +413,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         ctx = {"slug": slug, "doc": doc, "c": c, "tune_label": views.tune_label(doc), "kind": views.kind_of(c),
                "units": meta_units(tmap, c), "st": None, "dims": "", "nav_groups": None, "prev": None,
                "editable": editmod.is_editable(c), "edit_digits": editmod.edit_digits(c),
+               "hint": views.SETTING_HINTS.get(name, ""),
                "next": None, "og_url": page_url(request)}
         if c.is_table:
             idx = next(i for i, v in enumerate(tviews) if v.z.name == name)
