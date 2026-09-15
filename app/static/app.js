@@ -546,6 +546,7 @@
     if (b) { var el = $(b.dataset.copy); if (el) copyText(el.textContent.trim(), b); return; }
 
     if (!bubble) return;
+    if (document.body.classList.contains("editing") && t.closest("[data-edit-name]")) return; // edit.js owns taps
     var td = t.closest("table.hm td");
     var pt = t.closest("circle.pt");
     if (!td && !pt) { hideBubble(); return; }
@@ -611,6 +612,7 @@
     if (e.key === "Escape") { closeMenus(); hideBubble(); }
     if (e.metaKey || e.ctrlKey || e.altKey || typing(e.target)) return;
     if (e.key === "/" && searchInput) { e.preventDefault(); searchInput.focus(); return; }
+    if (document.body.classList.contains("editing")) return; // digits and arrows edit cells (edit.js)
     var n = parseInt(e.key, 10);
     if (panels.length && n >= 1 && n <= panels.length) {
       clearSearch();

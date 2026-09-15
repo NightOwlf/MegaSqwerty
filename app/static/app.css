@@ -697,3 +697,58 @@ details.danger label { display: grid; flex: 1 1 220px; gap: 4px; color: var(--er
 .bubble .xy, .bubble .ab { margin-top: 2px; color: #333; font-size: 12px; white-space: nowrap; }
 
 @media (prefers-reduced-motion: reduce) { .busy .dz-icon { animation: none; } }
+
+/* ---------- editing ---------- */
+.proj .edit-toggle { flex: none; margin-left: auto; }
+.edit-toggle[aria-pressed=true] { background: linear-gradient(#ffc75a, #e9a21f); border-color: #b27a14; color: #1d1300; }
+.edit-only { display: none; }
+body.editing .edit-only { display: block; }
+.edtools { position: sticky; top: var(--stick, 0px); z-index: 6; display: none; flex-wrap: wrap; align-items: center; gap: 4px; margin: 0 0 8px; padding: 6px; border: 1px solid var(--warn-line); border-radius: 4px; background: var(--warn-bg); box-shadow: var(--card-shadow); }
+body.editing .hm-wrap[data-edit-name] .edtools { display: flex; }
+.edsel { flex: 1 1 100%; color: var(--warn-ink); font-size: 12px; }
+.edval { width: 7.5em; height: 28px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: 3px; background: var(--field); color: var(--text); font: 14px var(--mono); box-shadow: var(--inset); }
+.edval:focus { outline: 2px solid var(--sel-soft); border-color: var(--sel); }
+body.editing .hm-wrap[data-edit-name] .fuelbar .seg, body.editing .hm-wrap[data-edit-name] .stoich { display: none; }
+body.editing .hm-wrap[data-edit-name] td[data-i] { cursor: cell; -webkit-user-select: none; user-select: none; }
+.hm td.insel { box-shadow: inset 0 0 0 2px #000, inset 0 0 0 4px #fff; }
+.edited { font-weight: 800 !important; text-decoration: underline 2px; text-underline-offset: 2px; }
+body.editing [contenteditable=true] { outline: 1px dashed var(--sel-line); outline-offset: 2px; cursor: text; }
+body.editing span[contenteditable=true] { display: inline-block; min-width: 3em; }
+body.editing [contenteditable=true]:focus { outline: 2px solid var(--sel); background: var(--field); color: var(--text); }
+.bad-input { outline: 2px solid #ef5350 !important; animation: shake .3s; }
+@keyframes shake { 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+@media (prefers-reduced-motion: reduce) { .bad-input { animation: none; } }
+.win-edited { border-color: var(--warn-line); }
+.win-edited .win-title > .ic { color: var(--warn); }
+.edited-p { margin-bottom: 10px; }
+.editbar { position: fixed; right: 0; bottom: 0; left: 0; z-index: 45; border-top: 1px solid var(--warn-line); background: var(--warn-bg); box-shadow: var(--dock-shadow); }
+.editbar.err { border-top-color: var(--err-line); background: var(--err-bg); }
+.editbar-in { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding-block: 7px; }
+.editbar-ic { display: grid; color: var(--warn); }
+.editbar-msg { flex: 1 1 260px; color: var(--warn-ink); font-size: 13px; }
+.editbar.err .editbar-msg { color: var(--err-ink); }
+.editbar-review { position: relative; }
+.editbar-review > summary { list-style: none; }
+.editbar-review > summary::-webkit-details-marker { display: none; }
+.editbar-list { position: absolute; right: 0; bottom: calc(100% + 6px); min-width: 250px; max-height: 50vh; overflow: auto; padding: 4px 0; border: 1px solid var(--line-2); border-radius: 4px; background: var(--win); box-shadow: var(--shadow); }
+.editbar-list a { display: flex; justify-content: space-between; gap: 14px; padding: 7px 12px; color: var(--text); font: 13px var(--mono); text-decoration: none; }
+.editbar-list a small { color: var(--faint); font-family: var(--ui); }
+.editbar-list a:hover { background: var(--sel); color: #fff; }
+.editbar-list a:hover small { color: inherit; }
+@media (min-width: 760px) {
+  .editbar { bottom: 27px; }
+  body.has-editbar { padding-bottom: 84px; }
+}
+@media (max-width: 759px) {
+  .editbar-msg { flex-basis: 100%; }
+  .editbar .btn, .editbar-review { flex: 1; }
+  .editbar-review > summary { width: 100%; }
+  .editbar-list { right: auto; left: 0; }
+  body.has-dock .editbar { bottom: calc(63px + env(safe-area-inset-bottom)); }
+  body.has-pager .editbar { bottom: calc(67px + env(safe-area-inset-bottom)); }
+  body.has-editbar { padding-bottom: calc(120px + env(safe-area-inset-bottom)); }
+  body.has-editbar.has-dock, body.has-editbar.has-pager { padding-bottom: calc(190px + env(safe-area-inset-bottom)); }
+  .edtools .tool { padding: 0 9px; }
+  .edval { flex: 1 1 6em; height: 36px; font-size: 16px; }
+  .proj .edit-toggle { min-height: 36px; }
+}

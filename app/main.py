@@ -20,6 +20,7 @@ from starlette.exceptions import HTTPException
 from starlette.middleware.gzip import GZipMiddleware
 
 from . import diff as diffmod
+from . import edit as editmod
 from . import views
 from .db import SLUG_RE, Store
 from .parser import MAX_BYTES, MsqError, TuneDoc, fmt_value, parse_msq
@@ -118,7 +119,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
 
     templates = Jinja2Templates(directory=HERE / "templates")
     asset_v = hashlib.sha1(b"".join((HERE / "static" / f).read_bytes()
-                                    for f in ("app.css", "app.js", "theme.js"))).hexdigest()[:8]
+                                    for f in ("app.css", "app.js", "theme.js", "edit.js"))).hexdigest()[:8]
     templates.env.globals.update(asset_v=asset_v, max_mb=MAX_MB, max_bytes=MAX_BYTES, icons=views.ICONS,
                                  tab_names=views.TAB_NAMES, cat_labels=views.CATEGORY_LABELS,
                                  cat_icons=views.CAT_ICONS)
@@ -216,13 +217,14 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             return None, MESSAGES[413], 413
         return data, None, 200
 
-    async def store_upload(request: Request, data: bytes) -> tuple[str | None, str | None, str | None, int]:
+    async def store_upload(request: Request, data: bytes,
+                           parent: str | None = None) -> tuple[str | None, str | None, str | None, int]:
         """Parse + persist. -> (slug, delete_key, error, status)."""
         try:
             doc = await run_in_threadpool(parse_msq, data)
         except MsqError as e:
             return None, None, str(e), 400
-        slug, key = await run_in_threadpool(store.create_tune, data, doc)
+        slug, key = await run_in_threadpool(store.create_tune, data, doc, parent)
         store.record_upload(client_ip(request))
         log.info("stored tune %s family=%s size=%d", slug, doc.family, len(data))
         return slug, key, None, 200
@@ -241,6 +243,14 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         bits = [f"{label} {val}{(' ' + units) if units else ''}" for label, val, units in summary[:6]]
         desc = " · ".join(bits) or "TunerStudio .msq tune"
         return title, f"{desc}. Signature: {doc.signature or 'none'}"[:300]
+
+    def edited_from(slug: str) -> dict | None:
+        meta = store.get_meta(slug)
+        parent = meta["parent"] if meta is not None else None
+        if not parent:
+            return None
+        pdoc = store.get_doc(parent)
+        return {"slug": parent, "label": views.tune_label(pdoc) if pdoc else "", "exists": pdoc is not None}
 
     def page_url(request: Request) -> str:
         return str(request.url.replace(query="", fragment=""))
@@ -285,7 +295,9 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
     def tune_json(slug: str):
         doc = load_doc(slug)
         tmap = resolve_map(doc)
-        payload = {"slug": slug, "tablemap": tmap.get("family"), **doc.to_dict()}
+        meta = store.get_meta(slug)
+        payload = {"slug": slug, "tablemap": tmap.get("family"), "parent": meta["parent"] if meta else None,
+                   **doc.to_dict()}
         return JSONResponse(payload, headers={"Access-Control-Allow-Origin": "*"})
 
     @app.get("/t/{slug}.msq")
@@ -317,6 +329,40 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         store.delete_tune(slug)
         return RedirectResponse("/?deleted=1", status_code=302)
 
+    @app.post("/t/{slug}/save")
+    async def tune_save(request: Request, slug: str):
+        """Save edited values as a new tune with its own link. The original is never modified."""
+        load_doc(slug)
+
+        def fail(message: str, status: int = 400):
+            return JSONResponse({"error": message}, status_code=status)
+
+        if request.state._state.get("body_too_large"):
+            return fail(MESSAGES[413], 413)
+        if store.over_limit(client_ip(request), limit):
+            return fail(MESSAGES[429], 429)
+        try:
+            payload = await request.json()
+        except BodyTooLarge:
+            raise
+        except Exception:
+            return fail("Those changes didn't come through. Try again.")
+        raw = store.read_raw(slug)
+        if raw is None:
+            raise HTTPException(404)
+        changes = payload.get("changes") if isinstance(payload, dict) else None
+        try:
+            new_raw, changed = await run_in_threadpool(editmod.apply_changes, raw, changes)
+        except editmod.EditError as e:
+            return fail(str(e))
+        new_slug, key, err, status = await store_upload(request, new_raw, parent=slug)
+        if err:
+            return fail(err, status)
+        log.info("saved edited tune %s from %s (%d values)", new_slug, slug, changed)
+        resp = JSONResponse({"url": f"/t/{new_slug}", "slug": new_slug, "changed": changed})
+        set_key_cookie(resp, request, new_slug, key)
+        return resp
+
     @app.get("/t/{slug}", response_class=HTMLResponse)
     def tune_view(request: Request, slug: str):
         doc = load_doc(slug)
@@ -334,7 +380,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         delete_key = pop_delete_key(request, slug)
         resp = templates.TemplateResponse(request, "tune.html", {
             "slug": slug, "doc": doc, "tmap": tmap, "m": model, "fgrids": fgrids, "summary": summary,
-            "dials": dials, "readouts": readouts,
+            "dials": dials, "readouts": readouts, "parent": edited_from(slug),
             "family": views.family_label(doc), "tune_label": views.tune_label(doc), "delete_key": delete_key,
             "og_title": og_title, "og_desc": og_desc, "og_url": page_url(request),
         })
@@ -354,6 +400,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         digits = meta_digits(tmap, c)
         ctx = {"slug": slug, "doc": doc, "c": c, "tune_label": views.tune_label(doc), "kind": views.kind_of(c),
                "units": meta_units(tmap, c), "st": None, "dims": "", "nav_groups": None, "prev": None,
+               "editable": editmod.is_editable(c), "edit_digits": editmod.edit_digits(c),
                "next": None, "og_url": page_url(request)}
         if c.is_table:
             idx = next(i for i, v in enumerate(tviews) if v.z.name == name)

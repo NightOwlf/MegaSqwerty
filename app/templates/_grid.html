@@ -1,5 +1,6 @@
 {% from "_macros.html" import icon %}
-<figure class="hm-wrap" data-grid="{{ g.id }}"{% if g.fuel %} data-fuel="{{ g.fuel }}"{% endif %}>
+{% set can_edit = g.editable and not g.is_diff %}
+<figure class="hm-wrap" data-grid="{{ g.id }}"{% if g.fuel %} data-fuel="{{ g.fuel }}"{% endif %}{% if can_edit %} data-edit-name="{{ g.name }}" data-digits="{{ g.edit_digits }}" data-stops="{{ g.stops }}" data-lo-v="{{ g.lo_v }}" data-hi-v="{{ g.hi_v }}"{% endif %}>
   <div class="ed-bar">
     {% if not hide_title %}
     <div class="hm-titles">
@@ -15,6 +16,20 @@
       {% if detail_url %}<a class="tool" href="{{ detail_url }}" title="Open in its own window">{{ icon('expand') }}<span>Open</span></a>{% endif %}
     </div>
   </div>
+  {% if can_edit %}
+  <div class="edtools" role="toolbar" aria-label="Edit cells">
+    <span class="edsel" data-edsel>Select cells: click or drag, shift-click to extend. On a phone, tap a cell, or Range then tap the far corner.</span>
+    <input class="edval" type="text" inputmode="decimal" enterkeyhint="done" data-edval placeholder="Value" aria-label="Value" autocomplete="off">
+    <button type="button" class="tool" data-op="set" title="Set selected cells to the value (Enter)">= Set</button>
+    <button type="button" class="tool" data-op="add" title="Add the value to selected cells (Shift+Enter)">+ Add</button>
+    <button type="button" class="tool" data-op="scale" title="Change selected cells by the value, in percent">± %</button>
+    <button type="button" class="tool" data-op="up" title="Increase by one step (+)">▲</button>
+    <button type="button" class="tool" data-op="down" title="Decrease by one step (−)">▼</button>
+    <button type="button" class="tool" data-op="interp" title="Interpolate between the corners of the selection">Interpolate</button>
+    <button type="button" class="tool" data-op="range" aria-pressed="false" title="Tap a second cell to select everything between">Range</button>
+    <button type="button" class="tool" data-op="undo" title="Undo (Ctrl/Cmd+Z)">Undo</button>
+  </div>
+  {% endif %}
   {% if g.fuel %}
   <div class="fuelbar">
     <div class="seg" role="group" aria-label="Display as">
@@ -50,7 +65,7 @@
     <div class="hm-scroll">
       <table class="hm{{ ' diff' if g.is_diff }}" data-xl="{{ g.x_label }}" data-yl="{{ g.y_label }}" data-units="{{ g.units }}">
         <tbody>
-        {% for row in g.rows %}<tr><th class="ax y" scope="row">{{ row.label }}</th>{% for c in row.cells %}<td{% if c.style %} style="{{ c.style }}"{% endif %}{% if c.cls %} class="{{ c.cls }}"{% endif %}{% if g.is_diff %} data-a="{{ c.a_text }}"{% endif %}>{{ c.text }}{% if c.delta %}<small>{{ c.delta }}</small>{% endif %}</td>{% endfor %}</tr>
+        {% for row in g.rows %}<tr><th class="ax y" scope="row">{{ row.label }}</th>{% for c in row.cells %}<td{% if c.style %} style="{{ c.style }}"{% endif %}{% if c.cls %} class="{{ c.cls }}"{% endif %}{% if g.is_diff %} data-a="{{ c.a_text }}"{% endif %}{% if can_edit %} data-i="{{ row.index * g.x_labels|length + c.c }}"{% endif %}>{{ c.text }}{% if c.delta %}<small>{{ c.delta }}</small>{% endif %}</td>{% endfor %}</tr>
         {% endfor %}
         </tbody>
         <tfoot><tr><th class="ax corner" scope="col"><span>{{ g.y_label or 'Y' }} ↑</span><span>{{ g.x_label or 'X' }} →</span></th>{% for x in g.x_labels %}<th class="ax x" scope="col">{{ x }}</th>{% endfor %}</tr></tfoot>

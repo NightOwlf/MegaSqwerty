@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import icon, readout, dlgfoot %}
+{% from "_macros.html" import icon, readout, dlgfoot, edit_toggle, editbar %}
 {% block title %}{{ label }} · {{ tune_label }} · MSQ Viewer{% endblock %}
 {% block og %}
 <meta property="og:site_name" content="MSQ Viewer">
@@ -10,6 +10,7 @@
 <meta name="twitter:card" content="summary">
 {% endblock %}
 {% block bodyclass %}page-detail{% if prev or next %} has-pager{% endif %}{% endblock %}
+{% block bodyattrs %} data-slug="{{ slug }}"{% endblock %}
 {% block main %}
 <nav class="crumbs"><a href="/t/{{ slug }}#{{ back }}">{{ icon('left') }}<span>{{ tune_label }}</span></a><span class="crumb-sep">/</span><span class="crumb-cur">{{ cat_label }}</span></nav>
 
@@ -25,6 +26,7 @@
       {% if dims %}<span class="chip mono">{{ dims }}</span>{% endif %}
       {% if units %}<span class="chip mono">{{ units }}</span>{% endif %}
     </div>
+    {% if editable %}{{ edit_toggle("Edit") }}{% endif %}
     {% if nav_groups %}
     <label class="navselect">
       {{ icon('list') }}<span class="sr">Jump to another</span>
@@ -46,12 +48,12 @@
       <div class="curve-ed">
         {% if chart %}
         <figure class="plot">
-          <svg class="chart" viewBox="0 0 {{ chart.w }} {{ chart.h }}" role="img" aria-label="{{ label }} chart" data-units="{{ units }}" data-xl="{{ chart.x_label or 'X' }}">
+          <svg class="chart" viewBox="0 0 {{ chart.w }} {{ chart.h }}" role="img" aria-label="{{ label }} chart" data-units="{{ units }}" data-xl="{{ chart.x_label or 'X' }}"{% if editable %} data-edit-chart="{{ c.name }}" data-ylo="{{ chart.ylo }}" data-yhi="{{ chart.yhi }}" data-top="{{ chart.top }}" data-ph="{{ chart.h - chart.top - chart.bottom }}"{% endif %}>
             {% for py, t in chart.yticks %}<line class="gridline" x1="{{ chart.left }}" x2="{{ chart.w - chart.right }}" y1="{{ py }}" y2="{{ py }}"/><text class="tick" x="{{ chart.left - 7 }}" y="{{ py + 4 }}" text-anchor="end">{{ t }}</text>{% endfor %}
             {% for px, t in chart.xticks %}<line class="gridline gridline-v" x1="{{ px }}" x2="{{ px }}" y1="{{ chart.top }}" y2="{{ chart.h - chart.bottom }}"/><text class="tick" x="{{ px }}" y="{{ chart.h - chart.bottom + 17 }}" text-anchor="middle">{{ t }}</text>{% endfor %}
             <polygon class="area" points="{{ chart.area }}"/>
             <polyline class="line" points="{{ chart.line }}"/>
-            {% for p in chart.points %}<circle class="pt" cx="{{ p.px }}" cy="{{ p.py }}" r="4" data-x="{{ p.xl }}" data-y="{{ p.yl }}"/>{% endfor %}
+            {% for p in chart.points %}<circle class="pt" cx="{{ p.px }}" cy="{{ p.py }}" r="4" data-x="{{ p.xl }}" data-y="{{ p.yl }}" data-i="{{ p.i }}"/>{% endfor %}
             {% if chart.x_label %}<text class="axis-title" x="{{ (chart.left + chart.w - chart.right) / 2 }}" y="{{ chart.h - 4 }}" text-anchor="middle">{{ chart.x_label }}</text>{% endif %}
           </svg>
         </figure>
@@ -61,7 +63,7 @@
           <div class="tbl-scroll">
             <table id="values" class="vtable">
               <thead><tr><th>#</th>{% if has_x %}<th>{{ x_label or 'X' }}</th>{% endif %}<th>{{ y_label or 'Value' }}{% if units %} ({{ units }}){% endif %}</th></tr></thead>
-              <tbody>{% for i, x, y in rows %}<tr><td class="i">{{ i }}</td>{% if has_x %}<td class="x">{{ x }}</td>{% endif %}<td class="v">{{ y }}</td></tr>{% endfor %}</tbody>
+              <tbody{% if editable %} data-edit-name="{{ c.name }}" data-digits="{{ edit_digits }}"{% endif %}>{% for i, x, y in rows %}<tr><td class="i">{{ i }}</td>{% if has_x %}<td class="x">{{ x }}</td>{% endif %}<td class="v"{% if editable %} data-i="{{ i }}"{% endif %}>{{ y }}</td></tr>{% endfor %}</tbody>
             </table>
           </div>
         </div>
@@ -72,7 +74,7 @@
     {% else %}
       <fieldset class="group scalar">
         <legend>{{ cat_label }}</legend>
-        <div class="prop-row"><span class="prop-l">{{ c.name }}</span><span class="field field-lg k-{{ kind }}"><span class="mono">{{ value }}</span>{% if units %}<small>{{ units }}</small>{% endif %}</span></div>
+        <div class="prop-row"><span class="prop-l">{{ c.name }}</span><span class="field field-lg k-{{ kind }}"{% if editable %} data-edit-name="{{ c.name }}" data-digits="{{ edit_digits }}"{% endif %}><span class="mono"{% if editable %} data-i="0"{% endif %}>{{ value }}</span>{% if units %}<small>{{ units }}</small>{% endif %}</span></div>
       </fieldset>
     {% endif %}
   </div>
@@ -82,4 +84,5 @@
 
 {% block status %}<span class="led on"></span><span>{{ tune_label }}</span><span class="st-sep"></span><span class="mono">{{ c.name }}</span>{% if dims %}<span class="st-sep"></span><span class="st-dim">{{ dims }}</span>{% endif %}<span class="st-grow"></span><span class="st-dim">← → previous / next</span>{% endblock %}
 
-{% block after %}<div class="bubble" role="status" hidden></div>{% endblock %}
+{% block after %}<div class="bubble" role="status" hidden></div>
+{% if editable %}{{ editbar() }}{% endif %}{% endblock %}

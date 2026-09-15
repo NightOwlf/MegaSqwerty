@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import icon, thumb, spark, tabbar, dock, keybox, readout, dial %}
+{% from "_macros.html" import icon, thumb, spark, tabbar, dock, keybox, readout, dial, edit_toggle, editbar %}
 {% block title %}{{ og_title }} · MSQ Viewer{% endblock %}
 {% block og %}
 <meta property="og:site_name" content="MSQ Viewer">
@@ -12,6 +12,7 @@
 <meta name="twitter:description" content="{{ og_desc }}">
 {% endblock %}
 {% block bodyclass %}page-tune has-dock{% endblock %}
+{% block bodyattrs %} data-slug="{{ slug }}"{% endblock %}
 
 {% block pre %}
 <div class="projbar">
@@ -22,6 +23,7 @@
         <h1 class="tune-title">{{ tune_label }}</h1>
         <p class="proj-meta"><b>{{ family }}</b>{% if doc.version %}<span class="mono">{{ doc.version }}</span>{% endif %}{% if doc.board %}<span class="mono">{{ doc.board }}</span>{% endif %}</p>
       </div>
+      {{ edit_toggle() }}
     </div>
     {% if m.menus %}
     <div class="toolbar" aria-label="Tables and curves by category">
@@ -42,7 +44,21 @@
 {% endblock %}
 
 {% block main %}
-{% if delete_key %}{{ keybox(delete_key, "Tune") }}{% endif %}
+{% if parent %}
+<section class="win win-edited">
+  <header class="win-title">{{ icon('pencil') }}<h2>Edited copy</h2>{% if parent.exists %}<span class="win-sub">of {{ parent.label }}</span>{% endif %}</header>
+  <div class="win-body">
+    <p class="edited-p">{% if parent.exists %}This tune is an edited copy of <a href="/t/{{ parent.slug }}">{{ parent.label }}</a>.{% else %}This tune is an edited copy of a tune that has since been deleted.{% endif %} Send this page's link back: whoever opens it can download the edited <span class="mono">.msq</span> and load it in TunerStudio.</p>
+    <div class="actions">
+      <button class="btn primary" type="button" data-share hidden>{{ icon('share') }}<span>Share</span></button>
+      <button class="btn" type="button" data-copy-link>{{ icon('link') }}<span>Copy link</span></button>
+      <a class="btn" href="/t/{{ slug }}.msq" download>{{ icon('download') }}<span>Download .msq</span></a>
+      {% if parent.exists %}<a class="btn" href="/d/{{ parent.slug }}/{{ slug }}">{{ icon('compare') }}<span>See what changed</span></a>{% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
+{% if delete_key %}{{ keybox(delete_key, "Edited copy" if parent else "Tune") }}{% endif %}
 
 <section id="overview" class="tabpanel" data-tab-panel>
   <div class="dash">
@@ -159,11 +175,12 @@
       {% for id, label, n in m.setting_cats %}<button type="button" class="fchip" data-chip="{{ id }}" aria-pressed="false"><i class="dot c-{{ id }}"></i>{{ label }} <b>{{ n }}</b></button>{% endfor %}
     </div>
   </div>
+  <p class="hint edit-only">Tap a number to change it. Option settings (the ones with ▾) can't be edited: a .msq doesn't list their allowed choices.</p>
   <ul class="slist" data-list="settings" data-label="Settings">
     {% for s in m.settings %}
     <li data-s="{{ s.search }}" data-chip-val="{{ s.cat }}">{% if s.url %}<a class="srow" href="{{ s.url }}">{% else %}<div class="srow">{% endif %}
       <span class="sname">{{ s.name }}</span>
-      <span class="sval">{% if s.line %}{{ spark(s.line, "", "spark spark-sm", 60, 20) }}{% endif %}<span class="field k-{{ s.kind }}"><span class="mono">{{ s.value }}</span>{% if s.units %}<small>{{ s.units }}</small>{% endif %}{% if s.kind == 'option' %}{{ icon('down', 'caret') }}{% endif %}</span></span>
+      <span class="sval">{% if s.line %}{{ spark(s.line, "", "spark spark-sm", 60, 20) }}{% endif %}<span class="field k-{{ s.kind }}"{% if s.editable %} data-edit-name="{{ s.name }}" data-digits="{{ s.digits }}"{% endif %}><span class="mono"{% if s.editable %} data-i="0"{% endif %}>{{ s.value }}</span>{% if s.units %}<small>{{ s.units }}</small>{% endif %}{% if s.kind == 'option' %}{{ icon('down', 'caret') }}{% endif %}</span></span>
       {% if s.url %}<span class="chev">{{ icon('right') }}</span></a>{% else %}</div>{% endif %}
     </li>
     {% endfor %}
@@ -186,4 +203,5 @@
 {% block after %}
 {{ dock([("overview", "Dash", "gauge", none), ("tables", "Tables", "grid", m.tables|length), ("curves", "Curves", "curve", m.curves|length), ("settings", "Settings", "list", m.settings|length)]) }}
 <div class="bubble" role="status" hidden></div>
+{{ editbar() }}
 {% endblock %}

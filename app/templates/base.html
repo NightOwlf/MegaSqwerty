@@ -18,9 +18,10 @@
 <link rel="stylesheet" href="/static/app.css?v={{ asset_v }}">
 <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js" defer></script>
 <script src="/static/app.js?v={{ asset_v }}" defer></script>
+<script src="/static/edit.js?v={{ asset_v }}" defer></script>
 </head>
 {% from "_macros.html" import icon %}
-<body class="{% block bodyclass %}{% endblock %}">
+<body class="{% block bodyclass %}{% endblock %}"{% block bodyattrs %}{% endblock %}>
 <header class="menubar">
   <div class="wrap menubar-in">
     <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="brand-word">MSQ Viewer</span></a>

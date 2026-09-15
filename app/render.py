@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .edit import edit_digits
 from .parser import Constant, fmt_value
 
 # TunerStudio-style table coloring: a light blue→cyan→green→yellow→red ramp that keeps
@@ -104,6 +105,15 @@ class Grid:
     is_diff: bool = False
     fuel: str | None = None
     url: str = ""
+    # editing: every cell is a number, how many decimals to write, and the color scale's range
+    editable: bool = False
+    edit_digits: int = 0
+    lo_v: float = 0.0
+    hi_v: float = 0.0
+
+    @property
+    def stops(self) -> str:
+        return ",".join(palette(self.palette)[0])
 
     @property
     def gradient(self) -> str:
@@ -166,6 +176,8 @@ def build_grid(gid: str, title: str, z: Constant, x: Constant | None = None, y: 
         lo=fmt_value(lo, digits) if nums else "", hi=fmt_value(hi, digits) if nums else "",
         fuel=fuel_mode(z, u, palette_name),
     )
+    grid.editable = z.is_table and len(nums) == len(z.values)
+    grid.edit_digits, grid.lo_v, grid.hi_v = edit_digits(z), lo, hi
     if (x is not None and x_bins is None) or (y is not None and y_bins is None):
         grid.note = "Axis bins don't match the table size; showing cell indexes."
     y_labels = axis_labels(y_bins, z.rows, y.digits if y is not None else None)

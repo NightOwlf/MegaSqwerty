@@ -74,6 +74,24 @@
 </section>
 {%- endmacro %}
 
+{% macro edit_toggle(label="Edit tune") -%}
+<button type="button" class="btn edit-toggle" data-edit-toggle aria-pressed="false" hidden title="Change values, then save them as a new tune with its own link">{{ icon('pencil') }}<span>{{ label }}</span></button>
+{%- endmacro %}
+
+{# Pending-edits bar, driven by edit.js: what's changed, Review / Discard / Done / Save as new tune. #}
+{% macro editbar() -%}
+<div class="editbar" data-editbar hidden>
+  <div class="wrap editbar-in">
+    <span class="editbar-ic">{{ icon('pencil') }}</span>
+    <p class="editbar-msg" data-edit-msg aria-live="polite"></p>
+    <details class="editbar-review" data-edit-review hidden><summary class="btn">Review</summary><div class="editbar-list" data-edit-list></div></details>
+    <button type="button" class="btn" data-edit-discard hidden>Discard</button>
+    <button type="button" class="btn" data-edit-done hidden>Done</button>
+    <button type="button" class="btn primary" data-edit-save hidden>{{ icon('share') }}<span>Save as new tune</span></button>
+  </div>
+</div>
+{%- endmacro %}
+
 {# Dialog button row: previous / next on the left, Close on the right. On phones it pins to the bottom. #}
 {% macro dlgfoot(prev, next, close_url) -%}
 <footer class="dlg-foot">

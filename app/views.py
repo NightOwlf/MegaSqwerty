@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from urllib.parse import quote
 
 from . import diff as diffmod
+from .edit import edit_digits, is_editable
 from .nav import CATEGORY_LABEL, CATEGORY_ORDER, categorize
 from .parser import Constant, TuneDoc, fmt_value, values_equal
 from .render import Grid, axis_labels, build_grid, palette
@@ -73,6 +74,7 @@ ICONS = {
     "chip": '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4'
             'M18 9h4M18 15h4"/>',
     "disk": '<path d="M5 3h11l3 3v15H5z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/>',
+    "pencil": '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
 }
 CAT_ICONS = {"engine": "engine", "fuel": "fuel", "afr": "target", "spark": "ignition", "crank": "key",
              "accel": "accel", "idle": "idle", "boost": "boost", "vvt": "cam", "knock": "shield",
@@ -189,6 +191,7 @@ class ChartPoint:
     py: float
     xl: str
     yl: str
+    i: int = 0
 
 
 @dataclass
@@ -206,6 +209,8 @@ class Chart:
     xticks: list[tuple[float, str]]
     x_label: str
     y_label: str
+    ylo: float = 0.0  # padded value range of the plot area, for moving points while editing
+    yhi: float = 0.0
 
 
 def build_chart(ys, xs=None, x_label: str = "", y_label: str = "", digits: int | None = None) -> Chart | None:
@@ -216,7 +221,7 @@ def build_chart(ys, xs=None, x_label: str = "", y_label: str = "", digits: int |
     for i, y in enumerate(ys):
         x = xs[i] if xs else float(i)
         if isinstance(y, float) and isinstance(x, float):
-            pts.append((x, y, x_text[i], fmt_value(y, digits)))
+            pts.append((x, y, x_text[i], fmt_value(y, digits), i))
     if not pts:
         return None
     xlo, xhi = min(p[0] for p in pts), max(p[0] for p in pts)
@@ -231,7 +236,7 @@ def build_chart(ys, xs=None, x_label: str = "", y_label: str = "", digits: int |
     def py(y):
         return T + (1 - (y - ylo) / (yhi - ylo)) * ph
 
-    points = [ChartPoint(round(px(x), 1), round(py(y), 1), xl, yl) for x, y, xl, yl in pts]
+    points = [ChartPoint(round(px(x), 1), round(py(y), 1), xl, yl, i) for x, y, xl, yl, i in pts]
     line = " ".join(f"{p.px},{p.py}" for p in points)
     base = T + ph
     area = f"{points[0].px},{base} {line} {points[-1].px},{base}"
@@ -240,7 +245,7 @@ def build_chart(ys, xs=None, x_label: str = "", y_label: str = "", digits: int |
     yticks = [(round(py(ylo + span * k / 4), 1), f"{ylo + span * k / 4:.{dec}f}") for k in range(5)]
     step = max(1, -(-len(points) // 7))
     xticks = [(p.px, p.xl) for p in points[::step]]
-    return Chart(W, H, L, R, T, B, line, area, points, yticks, xticks, x_label, y_label)
+    return Chart(W, H, L, R, T, B, line, area, points, yticks, xticks, x_label, y_label, ylo, yhi)
 
 
 # --------------------------------------------------------------- tune page
@@ -289,6 +294,8 @@ class SettingRow:
     url: str
     search: str
     cat: str = "other"
+    editable: bool = False
+    digits: int = 0
 
 
 @dataclass
@@ -371,7 +378,8 @@ def tune_model(slug: str, doc: TuneDoc, tmap: dict) -> TuneModel:
         cat = categorize(c.name)
         settings.append(SettingRow(c.name, k, value, units, line,
                                    c_url(slug, c.name) if k in ("array", "table") else "",
-                                   _search(c.name, value, units, CATEGORY_LABELS[cat]), cat))
+                                   _search(c.name, value, units, CATEGORY_LABELS[cat]), cat,
+                                   k == "number" and is_editable(c), edit_digits(c)))
     return TuneModel(featured, tviews, cvs, tables, curve_cards, settings, _cat_counts(tables),
                      _cat_counts(curve_cards), _cat_counts(settings), _menus(tables, curve_cards, settings))
 

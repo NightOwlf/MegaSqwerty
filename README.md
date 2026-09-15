@@ -65,9 +65,31 @@ The app binds `0.0.0.0:$PORT`. Optional env var: `UPLOADS_PER_HOUR` (default `20
 | `GET /t/{slug}.json` | Parsed tune as JSON |
 | `GET /t/{slug}.msq` | Original file download |
 | `DELETE /t/{slug}?key=…` | Delete with the key from upload (there's also a `POST /t/{slug}/delete` form fallback) |
+| `POST /t/{slug}/save` | Save edited values as a new tune. JSON `{"changes": {name: {index: number}}}` → `{"url", "slug"}` |
 | `GET /compare`, `POST /compare` | Pick two tunes, or paste A and upload B |
 | `GET /d/{a}/{b}` | Cell-by-cell diff, plus a list of settings that differ |
 | `GET /healthz` | Healthcheck |
+
+## Editing a tune and sending it back
+
+Anyone with a tune's link can edit it and send a new link back. Press **Edit tune** (or **Edit** on a table,
+curve or setting page):
+
+- **Tables** work like TunerStudio's table editor. Select cells by clicking, dragging or shift-clicking (on
+  a phone, tap a cell, or tap **Range** and then the far corner). Then type a value and **Set**, **Add**,
+  **± %**, step **▲ / ▼**, **Interpolate** across the selection, or **Undo**. Keyboard: arrows move,
+  Shift+arrows extend, typing a number starts a value, Enter sets, + / − step, Ctrl/Cmd+Z undoes.
+- **Curves, axis bins and numeric settings**: tap the number and type.
+- Edits stay in the browser until **Save as new tune**. Saving never changes the original. It creates a new
+  tune with its own link and delete key, marked **Edited copy**, with a **See what changed** diff. Send that
+  link back; the other person downloads the `.msq` and loads it in TunerStudio.
+- The saved file is the original `.msq` with only the edited numbers rewritten, using the file's own digits.
+  Everything else is byte-for-byte identical. The server re-parses the result and refuses the save if any
+  other value would change (`app/edit.py`).
+- Option settings (quoted choices like `"Speed Density"`) can't be edited, because a `.msq` doesn't record
+  which choices are valid; that lives in the firmware's ini. A `.msq` has no min/max limits either, so
+  TunerStudio's own limits apply when the file is loaded.
+- Saving counts toward the upload rate limit.
 
 ## Adding a new firmware
 

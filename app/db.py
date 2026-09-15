@@ -77,6 +77,9 @@ class Store:
                 CREATE INDEX IF NOT EXISTS uploads_ip_ts ON uploads(ip_hash, ts);
                 """
             )
+            # Added with tune editing: the slug an edited copy was saved from.
+            if "parent" not in {r["name"] for r in c.execute("PRAGMA table_info(tunes)")}:
+                c.execute("ALTER TABLE tunes ADD COLUMN parent TEXT")
 
     @contextmanager
     def conn(self):
@@ -99,7 +102,7 @@ class Store:
     def _hash_key(key: str) -> str:
         return hashlib.sha256(key.encode()).hexdigest()
 
-    def create_tune(self, raw: bytes, doc: TuneDoc) -> tuple[str, str]:
+    def create_tune(self, raw: bytes, doc: TuneDoc, parent: str | None = None) -> tuple[str, str]:
         delete_key = secrets.token_urlsafe(18)
         now = int(time.time())
         parsed = json.dumps(doc.to_dict(), separators=(",", ":"))
@@ -114,9 +117,10 @@ class Store:
             try:
                 with self.conn() as c:
                     c.execute(
-                        "INSERT INTO tunes VALUES (?,?,?,?,?,?,?,?,?)",
+                        "INSERT INTO tunes (slug, created_at, last_viewed_at, delete_key_hash, sha256, size, "
+                        "signature, family, parsed_json, parent) VALUES (?,?,?,?,?,?,?,?,?,?)",
                         (slug, now, now, self._hash_key(delete_key), hashlib.sha256(raw).hexdigest(),
-                         len(raw), doc.signature, doc.family, parsed),
+                         len(raw), doc.signature, doc.family, parsed, parent),
                     )
             except sqlite3.IntegrityError:
                 path.unlink(missing_ok=True)
@@ -132,7 +136,7 @@ class Store:
             return None
         with self.conn() as c:
             return c.execute(
-                "SELECT slug, created_at, last_viewed_at, size, signature, family FROM tunes WHERE slug=?",
+                "SELECT slug, created_at, last_viewed_at, size, signature, family, parent FROM tunes WHERE slug=?",
                 (slug,),
             ).fetchone()
 
