@@ -1,7 +1,7 @@
 """Axis names/units, what load measures, and axis bins guessed by name."""
 import pytest
 
-from app.axes import axis_info, axis_text, guess_axes, load_source
+from app.axes import axis_info, axis_text, gauge_text, guess_axes, load_source
 from app.parser import Constant, TuneDoc, parse_msq
 from app.tablemaps import all_tables, resolve_map
 
@@ -37,6 +37,38 @@ def bins(name, units=None, n=4):
 ])
 def test_axis_info(label, name, units, expected):
     assert axis_info(label, bins(name, units), units or "") == expected
+
+
+def test_gauge_text():
+    assert gauge_text(150) == "7.1 psi boost" and gauge_text(390) == "41.9 psi boost"
+    assert gauge_text(80) == "6.3 inHg vacuum" and gauge_text(40) == "18.1 inHg vacuum"
+    assert gauge_text(102) == "atmospheric" and gauge_text(100) == "atmospheric"
+
+
+def _ve_grid(load_bins, y_label="Load", y_units="kPa"):
+    from app.render import build_grid
+
+    n = len(load_bins)
+    z = Constant("veTable", "table", [50.0] * (n * 4), n, 4, "%")
+    x = Constant("rpmBins", "array", [1000.0, 2000.0, 3000.0, 4000.0], 4, 1, "RPM")
+    y = Constant("fuelLoadBins", "array", [float(v) for v in load_bins], n, 1, y_units)
+    return build_grid("ve", "VE", z, x, y, "ve", "%", "RPM", y_label, y_units=y_units)
+
+
+def test_boost_rows_are_marked():
+    g = _ve_grid([40, 100, 150, 200])
+    rows = {r.label: r for r in g.rows}
+    assert rows["150"].boost_edge and not rows["200"].boost_edge and not rows["100"].boost_edge
+    assert rows["40"].gauge == "18.1 inHg vacuum" and rows["100"].gauge == "atmospheric"
+    assert g.boost_line and g.pressure_note.startswith("Rows above the orange line are boost.")
+    assert "200 kPa, is about 14.3 psi boost" in g.pressure_note
+
+
+def test_tables_without_boost_rows_say_so():
+    g = _ve_grid([12, 52, 98, 102])  # the shape of a Speeduino tune that tops out at atmospheric
+    assert not g.boost_line and g.pressure_note.startswith("No boost rows: the top load bin is 102 kPa")
+    tps = _ve_grid([0, 30, 60, 100], y_label="TPS", y_units="%")
+    assert tps.pressure_note == "" and not any(r.gauge for r in tps.rows)
 
 
 def test_axis_text():

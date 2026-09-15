@@ -60,6 +60,7 @@
     {% endif %}
   </div>
   {% if g.load %}<p class="loadsrc" title="What this table's load axis measures, from the tune's own setting">{{ icon('info') }}<span>{% if g.load.known %}Load is <b>{{ g.load.measure }}{% if g.load.units %} ({{ g.load.units }}){% endif %}</b>{% else %}Load is set by{% endif %} · <span class="mono">{{ g.load.setting }}</span> = “{{ g.load.choice }}”</span></p>{% endif %}
+  {% if g.pressure_note %}<p class="hint pressure-note{{ ' has-line' if g.boost_line }}">{{ g.pressure_note }}</p>{% endif %}
   {% if g.note %}<p class="hint">{{ g.note }}</p>{% endif %}
   {% if g.axes_note %}<p class="hint">{{ g.axes_note }}</p>{% endif %}
   {% for n in notes or [] %}<p class="hint">{{ n }}</p>{% endfor %}
@@ -67,7 +68,7 @@
     <div class="hm-scroll">
       <table class="hm{{ ' diff' if g.is_diff }}" data-xl="{{ g.x_label }}" data-yl="{{ g.y_label }}" data-xu="{{ g.x_units }}" data-yu="{{ g.y_units }}" data-units="{{ g.units }}">
         <tbody>
-        {% for row in g.rows %}<tr><th class="ax y" scope="row">{{ row.label }}</th>{% for c in row.cells %}<td{% if c.style %} style="{{ c.style }}"{% endif %}{% if c.cls %} class="{{ c.cls }}"{% endif %}{% if g.is_diff %} data-a="{{ c.a_text }}"{% endif %}{% if can_edit %} data-i="{{ row.index * g.x_labels|length + c.c }}"{% endif %}>{{ c.text }}{% if c.delta %}<small>{{ c.delta }}</small>{% endif %}</td>{% endfor %}</tr>
+        {% for row in g.rows %}<tr{% if row.boost_edge %} class="boost-edge"{% endif %}><th class="ax y" scope="row"{% if row.gauge %} data-g="{{ row.gauge }}" title="{{ row.label }} kPa ≈ {{ row.gauge }} (at sea level)"{% endif %}>{{ row.label }}</th>{% for c in row.cells %}<td{% if c.style %} style="{{ c.style }}"{% endif %}{% if c.cls %} class="{{ c.cls }}"{% endif %}{% if g.is_diff %} data-a="{{ c.a_text }}"{% endif %}{% if can_edit %} data-i="{{ row.index * g.x_labels|length + c.c }}"{% endif %}>{{ c.text }}{% if c.delta %}<small>{{ c.delta }}</small>{% endif %}</td>{% endfor %}</tr>
         {% endfor %}
         </tbody>
         <tfoot><tr><th class="ax corner" scope="col"><span>{{ g.y_text }} ↑</span><span>{{ g.x_text }} →</span></th>{% for x in g.x_labels %}<th class="ax x" scope="col">{{ x }}</th>{% endfor %}</tr></tfoot>

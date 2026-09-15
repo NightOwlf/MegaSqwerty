@@ -582,6 +582,7 @@
     }
     parts.push(line("xy", (table.dataset.xl || "Column") + " " + withUnits(xTh ? xTh.textContent : String(col - 1), table.dataset.xu) +
       " · " + (table.dataset.yl || "Row") + " " + withUnits(yTh.textContent, table.dataset.yu)));
+    if (yTh.dataset.g) parts.push(line("gauge", "≈ " + yTh.dataset.g + " (at sea level)"));
     td.classList.add("sel"); yTh.classList.add("hl"); selected = [td, yTh];
     if (xTh) { xTh.classList.add("hl"); selected.push(xTh); }
     showBubble(td, parts);

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .axes import axis_info, axis_text
+from .axes import BOOST_EDGE_KPA, axis_info, axis_text, gauge_text, is_pressure_axis
 from .edit import edit_digits
 from .parser import Constant, fmt_value
 
@@ -87,6 +87,8 @@ class Row:
     label: str
     index: int
     cells: list[Cell]
+    gauge: str = ""  # what a boost gauge reads for this load bin, on a MAP axis
+    boost_edge: bool = False  # the lowest row in boost; the line is drawn under it
 
 
 @dataclass
@@ -116,6 +118,11 @@ class Grid:
     y_units: str = ""
     load: object = None
     axes_note: str = ""
+    pressure_note: str = ""
+
+    @property
+    def boost_line(self) -> bool:
+        return any(r.boost_edge for r in self.rows)
 
     @property
     def x_text(self) -> str:
@@ -209,5 +216,31 @@ def build_grid(gid: str, title: str, z: Constant, x: Constant | None = None, y: 
             else:
                 cells.append(Cell(str(v), r, c, cls="nan"))
         grid.rows.append(Row(y_labels[r], r, cells))
+    apply_pressure(grid, y_bins)
     return grid
+
+
+def apply_pressure(grid: Grid, y_bins) -> None:
+    """On a MAP (absolute kPa) load axis: each row's boost/vacuum reading, where boost starts, and a note."""
+    if not y_bins or not is_pressure_axis(grid.y_label, grid.y_units, grid.load):
+        return
+    nums = [v for v in y_bins if isinstance(v, float)]
+    if not nums:
+        return
+    for row in grid.rows:
+        if isinstance(y_bins[row.index], float):
+            row.gauge = gauge_text(y_bins[row.index])
+    top = max(nums)
+    boost = [r for r in grid.rows if isinstance(y_bins[r.index], float) and y_bins[r.index] > BOOST_EDGE_KPA]
+    if not boost:
+        grid.pressure_note = (f"No boost rows: the top load bin is {top:g} kPa, about atmospheric. That's normal for a "
+                              "naturally aspirated engine; a turbo or supercharged engine needs load bins above ~101 kPa.")
+        return
+    ascending = len(nums) == len(y_bins) and all(a < b for a, b in zip(nums, nums[1:]))
+    if ascending and len(boost) < len(grid.rows):
+        min(boost, key=lambda r: y_bins[r.index]).boost_edge = True
+        where = "Rows above the orange line are boost."
+    else:
+        where = f"{len(boost)} of {len(grid.rows)} rows are boost."
+    grid.pressure_note = f"{where} The top load bin, {top:g} kPa, is about {gauge_text(top)} at sea level."
 

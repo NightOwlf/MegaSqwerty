@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .parser import Constant, TuneDoc, fmt_value, values_equal
-from .render import Cell, Grid, Row, axis_labels, ink_for, mix
+from .render import Cell, Grid, Row, apply_pressure, axis_labels, ink_for, mix
 from .tablemaps import TableView, all_tables
 
 
@@ -102,6 +102,7 @@ def diff_grid(gid: str, title: str, za: Constant, zb: Constant, x: Constant | No
         grid.rows.append(Row(y_labels[r], r, cells))
     grid.lo = f"−{fmt_value(max_abs, digits)}" if max_abs else "0"
     grid.hi = f"+{fmt_value(max_abs, digits)}" if max_abs else "0"
+    apply_pressure(grid, y_bins)
     return grid
 
 

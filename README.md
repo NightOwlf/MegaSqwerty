@@ -147,6 +147,10 @@ hand-written for now.
   (kPa) · algorithm = “Speed Density”**. Speed Density/MAP → MAP, Alpha-N/TPS → TPS, Percent Baro, IMAP/EMAP,
   MAF and ITB are recognised; anything else is shown as the tune spells it. Set `"load_from": ["settingName"]`
   on any table to name the setting that decides its load. Values are never converted.
+- Boost and vacuum: on a MAP load axis in kPa (absolute pressure), each load bin shows what a boost gauge
+  reads at sea level (hover the bin, or tap a cell): 150 kPa ≈ 7.1 psi boost, 80 kPa ≈ 6.3 inHg vacuum, using
+  psi = (kPa − 101.3) × 0.145. An orange line marks where boost starts. A table whose bins stop at about
+  atmospheric says it has no boost rows, which is normal for a naturally aspirated engine.
 - Tables with no map entry get axis bins matched by name when it's unambiguous (`sparkMap` with
   `sparkMapRpmBins` and `sparkMapLoadBins`), and the page says the axes were matched by name.
 - Tables with `afr` palette or lambda/AFR units get the **λ / AFR toggle**. Lambda is shown by default when

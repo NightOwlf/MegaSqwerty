@@ -83,6 +83,27 @@ def axis_text(label: str, units: str, fallback: str = "") -> str:
     return label or units or fallback
 
 
+# ------------------------------------------------------------------ boost / vacuum
+
+ATMOSPHERE_KPA = 101.325  # sea level; a boost gauge reads relative to the air outside
+BOOST_EDGE_KPA = 103.0  # load bins above this are meaningfully in boost (~0.25 psi)
+
+
+def gauge_text(kpa: float) -> str:
+    """Absolute kPa as a boost gauge reads it at sea level: '7.1 psi boost', '6.3 inHg vacuum', 'atmospheric'."""
+    d = kpa - ATMOSPHERE_KPA
+    if abs(d) < 1.5:
+        return "atmospheric"
+    return f"{d * 0.1450377:.1f} psi boost" if d > 0 else f"{-d * 0.2953:.1f} inHg vacuum"
+
+
+def is_pressure_axis(label: str, units: str, load=None) -> bool:
+    """A load axis holding absolute manifold pressure (MAP) in kPa."""
+    if (units or "").lower() != "kpa":
+        return False
+    return label in ("Load", "MAP", "") or bool(load is not None and load.known and load.measure == "MAP")
+
+
 # ------------------------------------------------------------------ load source
 
 # Option text of a fuel/ignition algorithm setting -> what the load axis measures, and its usual units.
