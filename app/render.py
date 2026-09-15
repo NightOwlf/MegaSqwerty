@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .axes import axis_info, axis_text
 from .edit import edit_digits
 from .parser import Constant, fmt_value
 
@@ -110,6 +111,19 @@ class Grid:
     edit_digits: int = 0
     lo_v: float = 0.0
     hi_v: float = 0.0
+    # axes: units shown next to the names, what load measures (axes.LoadSource), how the bins were found
+    x_units: str = ""
+    y_units: str = ""
+    load: object = None
+    axes_note: str = ""
+
+    @property
+    def x_text(self) -> str:
+        return axis_text(self.x_label, self.x_units, "Column")
+
+    @property
+    def y_text(self) -> str:
+        return axis_text(self.y_label, self.y_units, "Row")
 
     @property
     def stops(self) -> str:
@@ -160,8 +174,13 @@ def axis_labels(bins: list | None, n: int, digits: int | None = None) -> list[st
 
 def build_grid(gid: str, title: str, z: Constant, x: Constant | None = None, y: Constant | None = None,
                palette_name: str = "default", units: str | None = None,
-               x_label: str = "", y_label: str = "", digits: int | None = None) -> Grid:
+               x_label: str = "", y_label: str = "", digits: int | None = None,
+               x_units: str = "", y_units: str = "", load=None) -> Grid:
     digits = z.digits if digits is None else digits
+    if not (x_label or x_units) and x is not None:
+        x_label, x_units = axis_info("", x, x.units or "")
+    if not (y_label or y_units) and y is not None:
+        y_label, y_units = axis_info("", y, y.units or "")
     nums = [v for v in z.values if isinstance(v, float)]
     lo, hi = (min(nums), max(nums)) if nums else (0.0, 0.0)
     span = hi - lo
@@ -170,8 +189,7 @@ def build_grid(gid: str, title: str, z: Constant, x: Constant | None = None, y: 
     u = units if units is not None else (z.units or "")
     grid = Grid(
         id=gid, title=title, units=u, palette=palette_name, name=z.name,
-        x_label=x_label or (x.units or "" if x is not None else ""),
-        y_label=y_label or (y.units or "" if y is not None else ""),
+        x_label=x_label, y_label=y_label, x_units=x_units, y_units=y_units, load=load,
         x_labels=axis_labels(x_bins, z.cols, x.digits if x is not None else None),
         lo=fmt_value(lo, digits) if nums else "", hi=fmt_value(hi, digits) if nums else "",
         fuel=fuel_mode(z, u, palette_name),

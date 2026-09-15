@@ -139,6 +139,16 @@ hand-written for now.
 - `palette`: `ve`, `spark` and `default` use a TunerStudio-style blue→green→yellow→red ramp (low→high); `afr` runs
   it the other way, so rich is red and lean is blue. The palette also sets the legend words (low/high,
   retard/advance, rich/lean).
+- Axis names and units (`app/axes.py`): the `x_label`/`y_label` plus the bins' units give names like
+  **Load (kPa)**. Generic, blank or unit-only labels are tidied: `"L"` and a units slot of `"Load"` become
+  Load, `"%"` moves to the units, and a blank label is named from the bins (`fuelTrimLoadBins` → Load).
+- What load measures: for `ve`, `ve2` and `spark` tables the viewer reads the tune's algorithm setting
+  (`algorithm`/`fuelAlgorithm`, `algorithm2`, `IgnAlgorithm`/`ignAlgorithm`) and shows e.g. **Load is MAP
+  (kPa) · algorithm = “Speed Density”**. Speed Density/MAP → MAP, Alpha-N/TPS → TPS, Percent Baro, IMAP/EMAP,
+  MAF and ITB are recognised; anything else is shown as the tune spells it. Set `"load_from": ["settingName"]`
+  on any table to name the setting that decides its load. Values are never converted.
+- Tables with no map entry get axis bins matched by name when it's unambiguous (`sparkMap` with
+  `sparkMapRpmBins` and `sparkMapLoadBins`), and the page says the axes were matched by name.
 - Tables with `afr` palette or lambda/AFR units get the **λ / AFR toggle**. Lambda is shown by default when
   the table is stored as lambda (units say lambda, or values fall in 0.6–1.3), and AFR is computed from a
   selectable stoich (14.7 gasoline, 9.76 E85, …). The page always says which one it is showing.

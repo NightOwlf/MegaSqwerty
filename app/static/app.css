@@ -752,3 +752,8 @@ body.editing [contenteditable=true]:focus { outline: 2px solid var(--sel); backg
   .edval { flex: 1 1 6em; height: 36px; font-size: 16px; }
   .proj .edit-toggle { min-height: 36px; }
 }
+
+/* what a table's load axis measures */
+.loadsrc { display: flex; align-items: flex-start; gap: 6px; margin: -2px 0 8px; color: var(--muted); font-size: 12.5px; }
+.loadsrc .ic { width: 15px; height: 15px; margin-top: 1px; color: var(--link); }
+.loadsrc b { color: var(--text); }

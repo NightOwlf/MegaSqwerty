@@ -68,7 +68,8 @@ def _axis_note(label: str, a: Constant | None, b: Constant | None) -> str | None
 
 
 def diff_grid(gid: str, title: str, za: Constant, zb: Constant, x: Constant | None, y: Constant | None,
-              units: str = "", x_label: str = "", y_label: str = "") -> Grid:
+              units: str = "", x_label: str = "", y_label: str = "", x_units: str = "", y_units: str = "",
+              load=None) -> Grid:
     """Assumes compare_tables(...) returned changed/same (matching dims)."""
     digits = za.digits if za.digits is not None else zb.digits
     deltas = [b - a for a, b in zip(za.values, zb.values) if isinstance(a, float) and isinstance(b, float)]
@@ -76,7 +77,7 @@ def diff_grid(gid: str, title: str, za: Constant, zb: Constant, x: Constant | No
     x_bins = x.values if x is not None and len(x.values) == zb.cols else None
     y_bins = y.values if y is not None and len(y.values) == zb.rows else None
     grid = Grid(id=gid, title=title, units=units or zb.units or "", palette="diff", name=zb.name, is_diff=True,
-                x_label=x_label, y_label=y_label,
+                x_label=x_label, y_label=y_label, x_units=x_units, y_units=y_units, load=load,
                 x_labels=axis_labels(x_bins, zb.cols, x.digits if x is not None else None))
     y_labels = axis_labels(y_bins, zb.rows, y.digits if y is not None else None)
     for r in reversed(range(zb.rows)):
@@ -108,8 +109,16 @@ def grid_for(td: TableDiff) -> Grid | None:
     if td.status not in ("changed", "same") or td.va is None or td.zb is None:
         return None
     v = td.vb or td.va
-    return diff_grid(td.id, td.label, td.va.z, td.zb, v.x, v.y, units=v.units, x_label=v.x_label,
-                     y_label=v.y_label)
+    g = diff_grid(td.id, td.label, td.va.z, td.zb, v.x, v.y, units=v.units, x_label=v.x_label,
+                  y_label=v.y_label, x_units=v.x_units, y_units=v.y_units, load=v.load)
+    g.axes_note = axes_note(v)
+    return g
+
+
+def axes_note(v: TableView) -> str:
+    if not v.guessed:
+        return ""
+    return "Axis bins matched by name: " + " × ".join(c.name for c in (v.x, v.y) if c is not None) + "."
 
 
 def _setting_text(c: Constant) -> str:

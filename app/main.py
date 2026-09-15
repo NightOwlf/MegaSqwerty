@@ -20,6 +20,7 @@ from starlette.exceptions import HTTPException
 from starlette.middleware.gzip import GZipMiddleware
 
 from . import diff as diffmod
+from .axes import axis_text
 from . import edit as editmod
 from . import views
 from .db import SLUG_RE, Store
@@ -230,14 +231,16 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         return slug, key, None, 200
 
     def grid_for_view(v: TableView, tmap: dict):
-        return build_grid(v.id, v.label, v.z, v.x, v.y, v.palette, v.units, v.x_label, v.y_label,
-                          digits=meta_digits(tmap, v.z))
+        g = build_grid(v.id, v.label, v.z, v.x, v.y, v.palette, v.units, v.x_label, v.y_label,
+                       digits=meta_digits(tmap, v.z), x_units=v.x_units, y_units=v.y_units, load=v.load)
+        g.axes_note = diffmod.axes_note(v)
+        return g
 
     def summary_rows(doc: TuneDoc, tmap: dict):
         return [(label, views.display_value(c, tmap), meta_units(tmap, c)) for label, c in summary_fields(doc, tmap)]
 
-    def og_for(doc: TuneDoc, summary) -> tuple[str, str]:
-        title = f"{views.family_label(doc)} {doc.version}".strip() + " tune"
+    def og_for(doc: TuneDoc, summary, edited: bool = False) -> tuple[str, str]:
+        title = ("Edited copy · " if edited else "") + f"{views.family_label(doc)} {doc.version}".strip() + " tune"
         if doc.tune_comment:
             title += f" · {doc.tune_comment[:80]}"
         bits = [f"{label} {val}{(' ' + units) if units else ''}" for label, val, units in summary[:6]]
@@ -306,8 +309,12 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         raw = store.read_raw(slug)
         if raw is None:
             raise HTTPException(404)
+        # A readable name for the downloads folder; the slug keeps copies of the same tune apart.
+        doc = store.get_doc(slug)
+        base = re.sub(r"[^A-Za-z0-9._-]+", "-", views.tune_label(doc) if doc else "").strip("-._")[:60]
+        filename = f"{base}-{slug}.msq" if base else f"{slug}.msq"
         return Response(raw, media_type="application/xml",
-                        headers={"Content-Disposition": f'attachment; filename="{slug}.msq"'})
+                        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
     @app.delete("/t/{slug}")
     def tune_delete(request: Request, slug: str, key: str = ""):
@@ -376,11 +383,13 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             fgrids.append(g)
         summary = summary_rows(doc, tmap)
         dials, readouts = views.gauges(summary)
-        og_title, og_desc = og_for(doc, summary)
+        parent = edited_from(slug)
+        og_title, og_desc = og_for(doc, summary, edited=parent is not None)
         delete_key = pop_delete_key(request, slug)
         resp = templates.TemplateResponse(request, "tune.html", {
             "slug": slug, "doc": doc, "tmap": tmap, "m": model, "fgrids": fgrids, "summary": summary,
-            "dials": dials, "readouts": readouts, "parent": edited_from(slug),
+            "dials": dials, "readouts": readouts, "parent": parent,
+            "load": next((v.load for v in model.featured if v.load is not None), None),
             "family": views.family_label(doc), "tune_label": views.tune_label(doc), "delete_key": delete_key,
             "og_title": og_title, "og_desc": og_desc, "og_url": page_url(request),
         })
@@ -422,8 +431,8 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
                         if x.x is not None and x.x.name == name]
             ctx.update(label=label, cat=views.categorize(label, name), dims=f"{len(c.values)} values",
                        st=views.stats(c.values, digits), used_by=used_by, has_x=bool(xs),
-                       x_label=cv.x_label if cv else "", y_label=cv.y_label if cv else "",
-                       chart=views.build_chart(c.values, xs, cv.x_label if cv else "",
+                       x_label=axis_text(cv.x_label, cv.x_units) if cv else "", y_label=cv.y_label if cv else "",
+                       chart=views.build_chart(c.values, xs, axis_text(cv.x_label, cv.x_units) if cv else "",
                                                cv.y_label if cv else "", digits),
                        rows=[(i, x_text[i] if x_text else "", fmt_value(val, digits))
                              for i, val in enumerate(c.values)],
@@ -501,9 +510,16 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         store.touch(b)
         dm = views.diff_model(a, b, da, db_, resolve_map(da))
         delete_key = pop_delete_key(request, b)
+        # An edited copy has the same name as its original; say which side is which.
+        a_label, b_label = views.tune_label(da), views.tune_label(db_)
+        meta_a, meta_b = store.get_meta(a), store.get_meta(b)
+        if meta_b is not None and meta_b["parent"] == a:
+            b_label += " (edited copy)"
+        elif meta_a is not None and meta_a["parent"] == b:
+            a_label += " (edited copy)"
         resp = templates.TemplateResponse(request, "diff.html", {
             "a": a, "b": b, "da": da, "db": db_, "dm": dm, "delete_key": delete_key,
-            "a_label": views.tune_label(da), "b_label": views.tune_label(db_), "og_url": page_url(request),
+            "a_label": a_label, "b_label": b_label, "og_url": page_url(request),
         })
         if delete_key:
             resp.delete_cookie(f"dk_{b}", path="/")

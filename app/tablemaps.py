@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from .axes import LoadSource, axis_info, guess_axes, load_source
 from .parser import Constant, TuneDoc
 
 log = logging.getLogger(__name__)
@@ -118,6 +119,10 @@ class TableView:
     units: str
     featured: bool = True
     mapped: bool = True
+    x_units: str = ""
+    y_units: str = ""
+    load: LoadSource | None = None  # what the load axis measures, when the tune records it
+    guessed: bool = False  # axis bins matched by name (axes.guess_axes), not named by a tablemap
 
 
 def _safe_id(s: str) -> str:
@@ -128,17 +133,32 @@ def _spec_view(doc: TuneDoc, tmap: dict, t: dict) -> TableView | None:
     z = first_present(doc, t.get("z"))
     if z is None or not z.is_table:
         return None
+    tid = _safe_id(str(t.get("id") or z.name))
+    x, y = first_present(doc, t.get("x")), first_present(doc, t.get("y"))
+    guessed = False
+    if x is None and y is None:
+        x, y = guess_axes(doc, z)
+        guessed = x is not None or y is not None
+    x_label, x_units = axis_info(str(t.get("x_label") or ""), x, meta_units(tmap, x))
+    y_label, y_units = axis_info(str(t.get("y_label") or ""), y, meta_units(tmap, y))
+    load = load_source(doc, t.get("load_from"), tid)
+    if load is not None and load.known and not y_units:
+        y_units = load.units
     return TableView(
-        id=_safe_id(str(t.get("id") or z.name)),
+        id=tid,
         label=str(t.get("label") or z.name),
         palette=str(t.get("palette") or "default"),
         z=z,
-        x=first_present(doc, t.get("x")),
-        y=first_present(doc, t.get("y")),
-        x_label=str(t.get("x_label") or ""),
-        y_label=str(t.get("y_label") or ""),
+        x=x,
+        y=y,
+        x_label=x_label,
+        y_label=y_label,
         units=str(t.get("units") or meta_units(tmap, z)),
         featured=t.get("featured", True) is not False,
+        x_units=x_units,
+        y_units=y_units,
+        load=load,
+        guessed=guessed,
     )
 
 
@@ -156,8 +176,13 @@ def all_tables(doc: TuneDoc, tmap: dict) -> tuple[list[TableView], list[TableVie
     for name, c in doc.constants.items():
         if c.is_table and name not in seen:
             seen.add(name)
-            other.append(TableView(id=_safe_id(name), label=name, palette="default", z=c, x=None, y=None,
-                                   x_label="", y_label="", units=c.units or "", featured=False, mapped=False))
+            x, y = guess_axes(doc, c)
+            x_label, x_units = axis_info("", x, meta_units(tmap, x))
+            y_label, y_units = axis_info("", y, meta_units(tmap, y))
+            other.append(TableView(id=_safe_id(name), label=name, palette="default", z=c, x=x, y=y,
+                                   x_label=x_label, y_label=y_label, units=c.units or "", featured=False,
+                                   mapped=False, x_units=x_units, y_units=y_units,
+                                   guessed=x is not None or y is not None))
     return featured, other
 
 
@@ -178,6 +203,8 @@ class CurveView:
     y: Constant
     x_label: str
     y_label: str
+    x_units: str = ""
+    y_units: str = ""
 
 
 def curves(doc: TuneDoc, tmap: dict) -> list[CurveView]:
@@ -193,8 +220,11 @@ def curves(doc: TuneDoc, tmap: dict) -> list[CurveView]:
         x = first_present(doc, c.get("x"))
         if x is not None and len(x.values) != len(y.values):
             x = None
+        x_label, x_units = axis_info(str(c.get("x_label") or ""), x, meta_units(tmap, x))
+        # No bins for the name guess on y: the values' own name ("cltFuelCorr") says nothing about their units.
+        y_label, y_units = axis_info(str(c.get("y_label") or ""), None, meta_units(tmap, y))
         out.append(CurveView(_safe_id(str(c.get("id") or y.name)), str(c.get("label") or y.name), x, y,
-                             str(c.get("x_label") or ""), str(c.get("y_label") or "")))
+                             x_label, y_label, x_units, y_units))
     return out
 
 

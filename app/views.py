@@ -474,7 +474,8 @@ def demo_grid() -> Grid:
             vals.append(float(round(28 + 52 * (p / 100) ** 0.85 * (0.55 + 0.45 * torque))))
     z = Constant("veTable", "table", vals, len(kpa), len(rpm), "%", 0)
     return build_grid("demo", "VE Table", z, Constant("rpmBins", "array", [float(n) for n in rpm]),
-                      Constant("mapBins", "array", [float(p) for p in kpa]), "ve", "%", "RPM", "kPa")
+                      Constant("mapBins", "array", [float(p) for p in kpa]), "ve", "%", "RPM", "MAP",
+                      y_units="kPa")
 
 
 def table_nav(slug: str, tviews: list[TableView]) -> tuple[list[dict], list[tuple[str, list[dict]]]]:

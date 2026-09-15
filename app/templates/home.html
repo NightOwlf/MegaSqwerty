@@ -33,9 +33,9 @@
       <div class="win-body">
         <div class="legend"><span class="mono">{{ demo.lo }}</span><i class="ramp" style="background:{{ demo.gradient }}"></i><span class="mono">{{ demo.hi }}</span><span class="dim">%</span></div>
         <div class="hm-scroll">
-          <table class="hm hm-demo" data-xl="RPM" data-yl="kPa" data-units="%">
+          <table class="hm hm-demo" data-xl="RPM" data-yl="MAP" data-yu="kPa" data-units="%">
             <tbody>{% for row in demo.rows %}<tr><th class="ax y">{{ row.label }}</th>{% for c in row.cells %}<td style="{{ c.style }}">{{ c.text }}</td>{% endfor %}</tr>{% endfor %}</tbody>
-            <tfoot><tr><th class="ax corner"><span>kPa ↑</span><span>RPM →</span></th>{% for x in demo.x_labels %}<th class="ax x">{{ x }}</th>{% endfor %}</tr></tfoot>
+            <tfoot><tr><th class="ax corner"><span>{{ demo.y_text }} ↑</span><span>{{ demo.x_text }} →</span></th>{% for x in demo.x_labels %}<th class="ax x">{{ x }}</th>{% endfor %}</tr></tfoot>
           </table>
         </div>
       </div>

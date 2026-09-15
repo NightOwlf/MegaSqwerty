@@ -59,16 +59,18 @@
     <span class="dim">{{ g.legend[0] }} → {{ g.legend[1] }}</span>
     {% endif %}
   </div>
+  {% if g.load %}<p class="loadsrc" title="What this table's load axis measures, from the tune's own setting">{{ icon('info') }}<span>{% if g.load.known %}Load is <b>{{ g.load.measure }}{% if g.load.units %} ({{ g.load.units }}){% endif %}</b>{% else %}Load is set by{% endif %} · <span class="mono">{{ g.load.setting }}</span> = “{{ g.load.choice }}”</span></p>{% endif %}
   {% if g.note %}<p class="hint">{{ g.note }}</p>{% endif %}
+  {% if g.axes_note %}<p class="hint">{{ g.axes_note }}</p>{% endif %}
   {% for n in notes or [] %}<p class="hint">{{ n }}</p>{% endfor %}
   <div class="ed-main">
     <div class="hm-scroll">
-      <table class="hm{{ ' diff' if g.is_diff }}" data-xl="{{ g.x_label }}" data-yl="{{ g.y_label }}" data-units="{{ g.units }}">
+      <table class="hm{{ ' diff' if g.is_diff }}" data-xl="{{ g.x_label }}" data-yl="{{ g.y_label }}" data-xu="{{ g.x_units }}" data-yu="{{ g.y_units }}" data-units="{{ g.units }}">
         <tbody>
         {% for row in g.rows %}<tr><th class="ax y" scope="row">{{ row.label }}</th>{% for c in row.cells %}<td{% if c.style %} style="{{ c.style }}"{% endif %}{% if c.cls %} class="{{ c.cls }}"{% endif %}{% if g.is_diff %} data-a="{{ c.a_text }}"{% endif %}{% if can_edit %} data-i="{{ row.index * g.x_labels|length + c.c }}"{% endif %}>{{ c.text }}{% if c.delta %}<small>{{ c.delta }}</small>{% endif %}</td>{% endfor %}</tr>
         {% endfor %}
         </tbody>
-        <tfoot><tr><th class="ax corner" scope="col"><span>{{ g.y_label or 'Y' }} ↑</span><span>{{ g.x_label or 'X' }} →</span></th>{% for x in g.x_labels %}<th class="ax x" scope="col">{{ x }}</th>{% endfor %}</tr></tfoot>
+        <tfoot><tr><th class="ax corner" scope="col"><span>{{ g.y_text }} ↑</span><span>{{ g.x_text }} →</span></th>{% for x in g.x_labels %}<th class="ax x" scope="col">{{ x }}</th>{% endfor %}</tr></tfoot>
       </table>
     </div>
     <div class="ed-3d" hidden>

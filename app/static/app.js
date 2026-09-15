@@ -281,6 +281,13 @@
     }).join("\n");
   }
 
+  /* "Load (kPa)", "RPM", or the fallback — same rule as axes.axis_text on the server. */
+  function axisName(label, units, fallback) {
+    if (label && units) return label + " (" + units + ")";
+    return label || units || fallback;
+  }
+  function withUnits(value, units) { return units ? value + " " + units : value; }
+
   /* ---------- 3D table view ---------- */
   function num(t) {
     var n = parseFloat(String(t || "").replace(/−/g, "-").replace(/[^0-9eE+\-.]/g, ""));
@@ -305,7 +312,7 @@
         rgb: trs.map(function (tr) { return slice(tr.cells, 1).map(rgbOf); }),
         xs: table.tFoot ? slice(table.tFoot.rows[0].cells, 1).map(function (c) { return c.textContent; }) : [],
         ys: trs.map(function (tr) { return tr.cells[0].textContent; }),
-        xl: table.dataset.xl || "X", yl: table.dataset.yl || "Y",
+        xl: axisName(table.dataset.xl, table.dataset.xu, "Column"), yl: axisName(table.dataset.yl, table.dataset.yu, "Row"),
         units: fig.dataset.showUnits || table.dataset.units || ""
       };
     }
@@ -573,7 +580,8 @@
       var small = td.querySelector("small");
       parts.push(line("ab", "A " + (td.dataset.a || "?") + " → B " + (td.dataset.b || value) + (small ? "  (" + small.textContent + ")" : "")));
     }
-    parts.push(line("xy", (table.dataset.xl || "X") + " " + (xTh ? xTh.textContent : col - 1) + " · " + (table.dataset.yl || "Y") + " " + yTh.textContent));
+    parts.push(line("xy", (table.dataset.xl || "Column") + " " + withUnits(xTh ? xTh.textContent : String(col - 1), table.dataset.xu) +
+      " · " + (table.dataset.yl || "Row") + " " + withUnits(yTh.textContent, table.dataset.yu)));
     td.classList.add("sel"); yTh.classList.add("hl"); selected = [td, yTh];
     if (xTh) { xTh.classList.add("hl"); selected.push(xTh); }
     showBubble(td, parts);

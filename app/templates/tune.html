@@ -85,6 +85,7 @@
             {% if doc.write_date %}<div><dt>Saved</dt><dd>{{ doc.write_date }}</dd></div>{% endif %}
             {% if doc.author %}<div><dt>Author</dt><dd>{{ doc.author }}</dd></div>{% endif %}
             <div><dt>Layout</dt><dd>{{ tmap.name }}</dd></div>
+            {% if load %}<div class="prop-wide"><dt>Load</dt><dd>{% if load.known %}{{ load.measure }}{% if load.units %} ({{ load.units }}){% endif %} <span class="dim">·</span> {% endif %}<span class="mono">{{ load.setting }}</span> = “{{ load.choice }}”</dd></div>{% endif %}
           </dl>
           <div class="actions">
             <button class="btn primary" type="button" data-share hidden>{{ icon('share') }}<span>Share</span></button>

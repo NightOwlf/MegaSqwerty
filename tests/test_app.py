@@ -72,6 +72,14 @@ def test_upload_view_json_download_delete(client, fx):
 
     dl = client.get(f"/t/{slug}.msq")
     assert dl.content == raw and "attachment" in dl.headers["content-disposition"]
+    assert f'filename="Synthetic-FOME-VTHPNP-{slug}.msq"' in dl.headers["content-disposition"]
+
+    # Axis names carry units, blank labels get a name, and the VE table says what load is.
+    assert "Load is <b>MAP (kPa)</b>" in html and "<dt>Load</dt>" in html
+    lam = client.get(f"/t/{slug}/c/lambdaTable").text
+    assert "<span>Load ↑</span>" in lam and "<span>Y ↑</span>" not in lam
+    assert 'data-yl="Load" data-xu="" data-yu="kPa"' in client.get(f"/t/{slug}/c/veTable").text
+    assert "Coolant (°C)" in client.get(f"/t/{slug}/c/cltFuelCorr").text
 
     part = client.get(f"/t/{slug}/c/luaScratchTable")
     assert part.status_code == 200 and "luaScratchTable" in part.text and '<table class="hm' in part.text
