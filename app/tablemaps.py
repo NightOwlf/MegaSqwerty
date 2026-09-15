@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from .axes import LoadSource, axis_info, guess_axes, load_source
+from .axes import LoadSource, axis_info, guess_axes, load_source, placeholder_parts
 from .parser import Constant, TuneDoc
 
 log = logging.getLogger(__name__)
@@ -172,6 +172,8 @@ def all_tables(doc: TuneDoc, tmap: dict) -> tuple[list[TableView], list[TableVie
         if v is None or v.z.name in seen:
             continue
         seen.add(v.z.name)
+        if v.featured and placeholder_parts(v.z, v.x, v.y):
+            v.featured = False  # a feature that was never set up isn't a main table
         (featured if v.featured else other).append(v)
     for name, c in doc.constants.items():
         if c.is_table and name not in seen:

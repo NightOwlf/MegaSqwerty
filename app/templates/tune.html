@@ -135,7 +135,7 @@
   <div class="gallery" data-list="tables" data-label="Tables">
     {% for t in m.tables %}
     <a class="tcard" href="{{ t.url }}" data-s="{{ t.search }}" data-chip-val="{{ t.cat }}">
-      <span class="tcard-title"><i class="dot c-{{ t.cat }}"></i><span class="tcard-label">{{ t.label }}</span>{% if t.featured %}<span class="badge">Main</span>{% endif %}</span>
+      <span class="tcard-title"><i class="dot c-{{ t.cat }}"></i><span class="tcard-label">{{ t.label }}</span>{% if t.featured %}<span class="badge">Main</span>{% endif %}{% if t.setup %}<span class="badge s-mismatch">not set up</span>{% endif %}</span>
       <span class="tcard-thumb">{{ thumb(t) }}</span>
       <span class="tcard-meta"><span class="mono">{{ t.dims }}{% if t.units %} · {{ t.units }}{% endif %}</span>{% if t.label != t.name %}<code class="tcard-name">{{ t.name }}</code>{% endif %}</span>
     </a>

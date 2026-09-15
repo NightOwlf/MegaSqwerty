@@ -159,6 +159,33 @@ def load_source(doc: TuneDoc, load_from, table_id: str) -> LoadSource | None:
     return None
 
 
+# ------------------------------------------------------------------ never-configured tables
+
+# Values an ECU leaves in memory for settings that were never written (0xFF scaled: 255, 510 kPa, 25500 RPM, …).
+PLACEHOLDERS = {127.0, 127.5, 255.0, 510.0, 1020.0, 25500.0, 65535.0}
+
+
+def placeholder_parts(z: Constant, x: Constant | None = None, y: Constant | None = None,
+                      x_name: str = "column", y_name: str = "row") -> list[str]:
+    """What gives a table away as never set up: an axis whose bins are all one value, or every cell a placeholder."""
+    parts = []
+    for bins, name in ((x, x_name), (y, y_name)):
+        nums = [v for v in (bins.values if bins is not None else []) if isinstance(v, float)]
+        if len(nums) > 1 and len(set(nums)) == 1:
+            parts.append(f"every {name} bin is {nums[0]:g}")
+    cells = [v for v in z.values if isinstance(v, float)]
+    if len(cells) > 1 and len(set(cells)) == 1 and cells[0] in PLACEHOLDERS:
+        parts.append(f"every cell is {cells[0]:g}")
+    return parts
+
+
+def setup_text(parts: list[str]) -> str:
+    if not parts:
+        return ""
+    listed = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+    return f"Not set up yet: {listed}. That's what a table looks like when its feature has never been configured."
+
+
 # ------------------------------------------------------------------ axis guessing
 
 def guess_axes(doc: TuneDoc, z: Constant) -> tuple[Constant | None, Constant | None]:

@@ -60,6 +60,7 @@
     {% endif %}
   </div>
   {% if g.load %}<p class="loadsrc" title="What this table's load axis measures, from the tune's own setting">{{ icon('info') }}<span>{% if g.load.known %}Load is <b>{{ g.load.measure }}{% if g.load.units %} ({{ g.load.units }}){% endif %}</b>{% else %}Load is set by{% endif %} · <span class="mono">{{ g.load.setting }}</span> = “{{ g.load.choice }}”</span></p>{% endif %}
+  {% if g.setup_note %}<p class="setup-note">{{ icon('warn') }}<span>{{ g.setup_note }}</span></p>{% endif %}
   {% if g.pressure_note %}<p class="hint pressure-note{{ ' has-line' if g.boost_line }}">{{ g.pressure_note }}</p>{% endif %}
   {% if g.note %}<p class="hint">{{ g.note }}</p>{% endif %}
   {% if g.axes_note %}<p class="hint">{{ g.axes_note }}</p>{% endif %}

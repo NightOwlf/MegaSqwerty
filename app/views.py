@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from urllib.parse import quote
 
 from . import diff as diffmod
+from .axes import placeholder_parts
 from .edit import edit_digits, is_editable
 from .nav import CATEGORY_LABEL, CATEGORY_ORDER, categorize
 from .parser import Constant, TuneDoc, fmt_value, values_equal
@@ -263,6 +264,7 @@ class TableCard:
     url: str
     search: str
     featured: bool = False
+    setup: bool = False  # still holds never-configured placeholder values
 
     @property
     def dims(self) -> str:
@@ -359,7 +361,8 @@ def tune_model(slug: str, doc: TuneDoc, tmap: dict) -> TuneModel:
         cat = categorize(v.label, v.z.name)
         tables.append(TableCard(v.z.name, v.label, cat, v.z.rows, v.z.cols, v.units, thumb(v.z),
                                 ",".join(palette(v.palette)[0]), c_url(slug, v.z.name),
-                                _search(v.label, v.z.name, v.units, CATEGORY_LABELS[cat]), v.featured))
+                                _search(v.label, v.z.name, v.units, CATEGORY_LABELS[cat]), v.featured,
+                                bool(placeholder_parts(v.z, v.x, v.y))))
     cvs = curve_views(doc, tmap, tviews)
     curve_cards = []
     for cv in cvs:

@@ -287,6 +287,12 @@
     return label || units || fallback;
   }
   function withUnits(value, units) { return units ? value + " " + units : value; }
+  /* Same as axes.gauge_text: absolute kPa as a boost gauge reads it at sea level. */
+  function gaugeText(kpa) {
+    var d = kpa - 101.325;
+    if (Math.abs(d) < 1.5) return "atmospheric";
+    return d > 0 ? (d * 0.1450377).toFixed(1) + " psi boost" : (-d * 0.2953).toFixed(1) + " inHg vacuum";
+  }
 
   /* ---------- 3D table view ---------- */
   function num(t) {
@@ -576,6 +582,8 @@
     var units = (fig && fig.dataset.showUnits) || table.dataset.units || "";
     var value = cellText(td);
     var parts = [valueLine(value, units)];
+    // A cell value in absolute kPa (a boost target, say) also reads as boost or vacuum.
+    if (/^kpa$/i.test(units) && isFinite(parseFloat(value))) parts.push(line("gauge", "≈ " + gaugeText(parseFloat(value)) + " (at sea level)"));
     if (table.classList.contains("diff")) {
       var small = td.querySelector("small");
       parts.push(line("ab", "A " + (td.dataset.a || "?") + " → B " + (td.dataset.b || value) + (small ? "  (" + small.textContent + ")" : "")));

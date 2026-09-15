@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .parser import Constant, TuneDoc, fmt_value, values_equal
+from .axes import placeholder_parts, setup_text
 from .render import Cell, Grid, Row, apply_pressure, axis_labels, ink_for, mix
 from .tablemaps import TableView, all_tables
 
@@ -69,7 +70,7 @@ def _axis_note(label: str, a: Constant | None, b: Constant | None) -> str | None
 
 def diff_grid(gid: str, title: str, za: Constant, zb: Constant, x: Constant | None, y: Constant | None,
               units: str = "", x_label: str = "", y_label: str = "", x_units: str = "", y_units: str = "",
-              load=None) -> Grid:
+              load=None, pressure_note: bool = True) -> Grid:
     """Assumes compare_tables(...) returned changed/same (matching dims)."""
     digits = za.digits if za.digits is not None else zb.digits
     deltas = [b - a for a, b in zip(za.values, zb.values) if isinstance(a, float) and isinstance(b, float)]
@@ -102,7 +103,8 @@ def diff_grid(gid: str, title: str, za: Constant, zb: Constant, x: Constant | No
         grid.rows.append(Row(y_labels[r], r, cells))
     grid.lo = f"−{fmt_value(max_abs, digits)}" if max_abs else "0"
     grid.hi = f"+{fmt_value(max_abs, digits)}" if max_abs else "0"
-    apply_pressure(grid, y_bins)
+    grid.setup_note = setup_text(placeholder_parts(zb, x, y, x_label or "column", y_label or "row"))
+    apply_pressure(grid, y_bins, note=pressure_note and not grid.setup_note)
     return grid
 
 
@@ -111,7 +113,7 @@ def grid_for(td: TableDiff) -> Grid | None:
         return None
     v = td.vb or td.va
     g = diff_grid(td.id, td.label, td.va.z, td.zb, v.x, v.y, units=v.units, x_label=v.x_label,
-                  y_label=v.y_label, x_units=v.x_units, y_units=v.y_units, load=v.load)
+                  y_label=v.y_label, x_units=v.x_units, y_units=v.y_units, load=v.load, pressure_note=v.featured)
     g.axes_note = axes_note(v)
     return g
 

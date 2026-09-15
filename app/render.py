@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .axes import BOOST_EDGE_KPA, axis_info, axis_text, gauge_text, is_pressure_axis
+from .axes import (BOOST_EDGE_KPA, axis_info, axis_text, gauge_text, is_pressure_axis, placeholder_parts,
+                   setup_text)
 from .edit import edit_digits
 from .parser import Constant, fmt_value
 
@@ -119,6 +120,7 @@ class Grid:
     load: object = None
     axes_note: str = ""
     pressure_note: str = ""
+    setup_note: str = ""  # the table still holds never-configured placeholder values
 
     @property
     def boost_line(self) -> bool:
@@ -182,7 +184,7 @@ def axis_labels(bins: list | None, n: int, digits: int | None = None) -> list[st
 def build_grid(gid: str, title: str, z: Constant, x: Constant | None = None, y: Constant | None = None,
                palette_name: str = "default", units: str | None = None,
                x_label: str = "", y_label: str = "", digits: int | None = None,
-               x_units: str = "", y_units: str = "", load=None) -> Grid:
+               x_units: str = "", y_units: str = "", load=None, pressure_note: bool = True) -> Grid:
     digits = z.digits if digits is None else digits
     if not (x_label or x_units) and x is not None:
         x_label, x_units = axis_info("", x, x.units or "")
@@ -216,12 +218,16 @@ def build_grid(gid: str, title: str, z: Constant, x: Constant | None = None, y: 
             else:
                 cells.append(Cell(str(v), r, c, cls="nan"))
         grid.rows.append(Row(y_labels[r], r, cells))
-    apply_pressure(grid, y_bins)
+    grid.setup_note = setup_text(placeholder_parts(z, x, y, grid.x_label or "column", grid.y_label or "row"))
+    apply_pressure(grid, y_bins, note=pressure_note and not grid.setup_note)
     return grid
 
 
-def apply_pressure(grid: Grid, y_bins) -> None:
-    """On a MAP (absolute kPa) load axis: each row's boost/vacuum reading, where boost starts, and a note."""
+def apply_pressure(grid: Grid, y_bins, note: bool = True) -> None:
+    """On a MAP (absolute kPa) load axis: each row's boost/vacuum reading, where boost starts, and a note.
+
+    The note is for main tables (VE, ignition, AFR), where "no boost rows" is worth saying.
+    """
     if not y_bins or not is_pressure_axis(grid.y_label, grid.y_units, grid.load):
         return
     nums = [v for v in y_bins if isinstance(v, float)]
@@ -233,8 +239,10 @@ def apply_pressure(grid: Grid, y_bins) -> None:
     top = max(nums)
     boost = [r for r in grid.rows if isinstance(y_bins[r.index], float) and y_bins[r.index] > BOOST_EDGE_KPA]
     if not boost:
-        grid.pressure_note = (f"No boost rows: the top load bin is {top:g} kPa, about atmospheric. That's normal for a "
-                              "naturally aspirated engine; a turbo or supercharged engine needs load bins above ~101 kPa.")
+        if note:
+            grid.pressure_note = (f"No boost rows: the top load bin is {top:g} kPa, about atmospheric. That's normal for a "
+                                  "naturally aspirated engine; a turbo or supercharged engine needs load bins above "
+                                  "~101 kPa.")
         return
     ascending = len(nums) == len(y_bins) and all(a < b for a, b in zip(nums, nums[1:]))
     if ascending and len(boost) < len(grid.rows):
@@ -242,5 +250,6 @@ def apply_pressure(grid: Grid, y_bins) -> None:
         where = "Rows above the orange line are boost."
     else:
         where = f"{len(boost)} of {len(grid.rows)} rows are boost."
-    grid.pressure_note = f"{where} The top load bin, {top:g} kPa, is about {gauge_text(top)} at sea level."
+    if note:
+        grid.pressure_note = f"{where} The top load bin, {top:g} kPa, is about {gauge_text(top)} at sea level."
 

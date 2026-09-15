@@ -232,7 +232,8 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
 
     def grid_for_view(v: TableView, tmap: dict):
         g = build_grid(v.id, v.label, v.z, v.x, v.y, v.palette, v.units, v.x_label, v.y_label,
-                       digits=meta_digits(tmap, v.z), x_units=v.x_units, y_units=v.y_units, load=v.load)
+                       digits=meta_digits(tmap, v.z), x_units=v.x_units, y_units=v.y_units, load=v.load,
+                       pressure_note=v.featured)
         g.axes_note = diffmod.axes_note(v)
         return g
 
