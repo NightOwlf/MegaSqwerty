@@ -20,10 +20,11 @@ from starlette.exceptions import HTTPException
 from starlette.middleware.gzip import GZipMiddleware
 
 from . import diff as diffmod
+from . import views
 from .db import SLUG_RE, Store
-from .parser import MAX_BYTES, Constant, MsqError, TuneDoc, fmt_value, parse_msq
-from .render import build_curve_grid, build_grid
-from .tablemaps import TableView, all_tables, curves, find_table, meta_digits, meta_units, resolve_map, summary_fields
+from .parser import MAX_BYTES, MsqError, TuneDoc, fmt_value, parse_msq
+from .render import axis_labels, build_grid
+from .tablemaps import TableView, all_tables, meta_digits, meta_units, resolve_map, summary_fields
 
 log = logging.getLogger("msq")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -44,8 +45,6 @@ MESSAGES = {
     429: "Too many uploads from your connection. Try again in an hour.",
     500: "Something went wrong on our end. Try again in a moment.",
 }
-
-TAB_NAMES = {"ve": "VE", "spark": "Spark", "afr": "AFR", "ve2": "VE 2"}
 
 
 class BodyTooLarge(Exception):
@@ -113,22 +112,17 @@ def slug_from(text: str | None) -> str | None:
     return s if SLUG_RE.match(s) else None
 
 
-def display_value(c: Constant, tmap: dict | None = None) -> str:
-    if c.kind in ("scalar", "string"):
-        return fmt_value(c.value, meta_digits(tmap, c) if tmap else c.digits)
-    if c.is_table:
-        return f"{c.rows}×{c.cols} table"
-    return f"{len(c.values)} values"
-
-
 def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None = None) -> FastAPI:
     store = Store(data_dir)
     limit = uploads_per_hour if uploads_per_hour is not None else int(os.environ.get("UPLOADS_PER_HOUR", "20"))
 
     templates = Jinja2Templates(directory=HERE / "templates")
-    asset_v = hashlib.sha1(b"".join((HERE / "static" / f).read_bytes() for f in ("app.css", "app.js"))).hexdigest()[:8]
-    templates.env.globals.update(asset_v=asset_v, max_mb=MAX_MB, max_bytes=MAX_BYTES)
-    templates.env.filters["cval"] = display_value
+    asset_v = hashlib.sha1(b"".join((HERE / "static" / f).read_bytes()
+                                    for f in ("app.css", "app.js", "theme.js"))).hexdigest()[:8]
+    templates.env.globals.update(asset_v=asset_v, max_mb=MAX_MB, max_bytes=MAX_BYTES, icons=views.ICONS,
+                                 tab_names=views.TAB_NAMES, cat_labels=views.CATEGORY_LABELS,
+                                 cat_icons=views.CAT_ICONS)
+    demo = views.demo_grid()
 
     async def purge_loop():
         while True:
@@ -209,7 +203,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         resp.set_cookie(f"dk_{slug}", key, max_age=900, httponly=True, samesite="lax", path="/",
                         secure=request.url.scheme == "https")
 
-    async def read_upload(request: Request, form, field: str = "file", required: bool = True):
+    async def read_upload(form, field: str = "file", required: bool = True):
         """-> (bytes | None, error message | None, status)."""
         f = form.get(field)
         if not isinstance(f, UploadFile) or not f.filename:
@@ -237,18 +231,19 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         return build_grid(v.id, v.label, v.z, v.x, v.y, v.palette, v.units, v.x_label, v.y_label,
                           digits=meta_digits(tmap, v.z))
 
+    def summary_rows(doc: TuneDoc, tmap: dict):
+        return [(label, views.display_value(c, tmap), meta_units(tmap, c)) for label, c in summary_fields(doc, tmap)]
+
     def og_for(doc: TuneDoc, summary) -> tuple[str, str]:
-        fam = doc.family if doc.family != "unknown" else "Unknown firmware"
-        title = f"{fam} {doc.version}".strip() + " tune"
+        title = f"{views.family_label(doc)} {doc.version}".strip() + " tune"
         if doc.tune_comment:
             title += f" · {doc.tune_comment[:80]}"
         bits = [f"{label} {val}{(' ' + units) if units else ''}" for label, val, units in summary[:6]]
         desc = " · ".join(bits) or "TunerStudio .msq tune"
-        desc = f"{desc}. Signature: {doc.signature or 'none'}"
-        return title, desc[:300]
+        return title, f"{desc}. Signature: {doc.signature or 'none'}"[:300]
 
-    def summary_rows(doc: TuneDoc, tmap: dict):
-        return [(label, display_value(c, tmap), meta_units(tmap, c)) for label, c in summary_fields(doc, tmap)]
+    def page_url(request: Request) -> str:
+        return str(request.url.replace(query="", fragment=""))
 
     # ------------------------------------------------------------- pages
     @app.get("/healthz")
@@ -257,10 +252,12 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
 
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request):
-        return templates.TemplateResponse(request, "home.html", {"deleted": request.query_params.get("deleted")})
+        return templates.TemplateResponse(request, "home.html", {"deleted": request.query_params.get("deleted"),
+                                                                 "demo": demo})
 
     def home_error(request: Request, message: str, status: int):
-        return templates.TemplateResponse(request, "home.html", {"error": message}, status_code=status)
+        return templates.TemplateResponse(request, "home.html", {"error": message, "demo": demo},
+                                          status_code=status)
 
     @app.post("/upload")
     async def upload(request: Request):
@@ -274,7 +271,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             raise
         except Exception:
             return home_error(request, "The upload didn't come through. Try again.", 400)
-        data, err, status = await read_upload(request, form)
+        data, err, status = await read_upload(form)
         if err:
             return home_error(request, err, status)
         slug, key, err, status = await store_upload(request, data)
@@ -299,29 +296,6 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             raise HTTPException(404)
         return Response(raw, media_type="application/xml",
                         headers={"Content-Disposition": f'attachment; filename="{slug}.msq"'})
-
-    @app.get("/t/{slug}/table", response_class=HTMLResponse)
-    def tune_table_partial(request: Request, slug: str, name: str = ""):
-        doc = load_doc(slug)
-        tmap = resolve_map(doc)
-        v = find_table(doc, tmap, name)
-        if v is None:
-            return HTMLResponse('<p class="flash err">Table not found.</p>', status_code=404)
-        return templates.TemplateResponse(request, "_grid.html", {"g": grid_for_view(v, tmap)})
-
-    @app.get("/t/{slug}/const", response_class=HTMLResponse)
-    def tune_const_partial(request: Request, slug: str, name: str = ""):
-        doc = load_doc(slug)
-        tmap = resolve_map(doc)
-        c = doc.get(name)
-        if c is None:
-            return HTMLResponse('<p class="flash err">Setting not found.</p>', status_code=404)
-        if c.is_table:
-            v = find_table(doc, tmap, name)
-            return templates.TemplateResponse(request, "_grid.html", {"g": grid_for_view(v, tmap)})
-        digits = meta_digits(tmap, c)
-        return templates.TemplateResponse(request, "_array.html", {
-            "c": c, "values": [fmt_value(x, digits) for x in c.values]})
 
     @app.delete("/t/{slug}")
     def tune_delete(request: Request, slug: str, key: str = ""):
@@ -348,28 +322,75 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         doc = load_doc(slug)
         store.touch(slug)
         tmap = resolve_map(doc)
-        featured, other = all_tables(doc, tmap)
-        fgrids = [grid_for_view(v, tmap) for v in featured]
-        cgrids = [build_curve_grid(cv.id, cv.label, cv.y, cv.x, cv.x_label, cv.y_label, meta_units(tmap, cv.y))
-                  for cv in curves(doc, tmap)]
+        model = views.tune_model(slug, doc, tmap)
+        fgrids = []
+        for v in model.featured:
+            g = grid_for_view(v, tmap)
+            g.url = views.c_url(slug, v.z.name)
+            fgrids.append(g)
         summary = summary_rows(doc, tmap)
-        tabs = [{"id": g.id, "label": TAB_NAMES.get(g.id, g.title[:12])} for g in fgrids]
-        if other:
-            tabs.append({"id": "other", "label": "Other tables" if not fgrids else "Other"})
-        if cgrids:
-            tabs.append({"id": "curves", "label": "Curves"})
-        tabs.append({"id": "all", "label": "All settings" if len(tabs) < 3 else "All"})
+        dials, readouts = views.gauges(summary)
         og_title, og_desc = og_for(doc, summary)
         delete_key = pop_delete_key(request, slug)
         resp = templates.TemplateResponse(request, "tune.html", {
-            "slug": slug, "doc": doc, "tmap": tmap, "fgrids": fgrids, "other": other, "cgrids": cgrids,
-            "summary": summary, "tabs": tabs, "delete_key": delete_key, "og_title": og_title,
-            "og_desc": og_desc, "og_url": str(request.url.replace(query="", fragment="")),
-            "settings": list(doc.constants.values()),
+            "slug": slug, "doc": doc, "tmap": tmap, "m": model, "fgrids": fgrids, "summary": summary,
+            "dials": dials, "readouts": readouts,
+            "family": views.family_label(doc), "tune_label": views.tune_label(doc), "delete_key": delete_key,
+            "og_title": og_title, "og_desc": og_desc, "og_url": page_url(request),
         })
         if delete_key:
             resp.delete_cookie(f"dk_{slug}", path="/")
         return resp
+
+    @app.get("/t/{slug}/c/{name}", response_class=HTMLResponse)
+    def constant_view(request: Request, slug: str, name: str):
+        doc = load_doc(slug)
+        c = doc.get(name)
+        if c is None:
+            raise HTTPException(404)
+        tmap = resolve_map(doc)
+        featured, other = all_tables(doc, tmap)
+        tviews = featured + other
+        digits = meta_digits(tmap, c)
+        ctx = {"slug": slug, "doc": doc, "c": c, "tune_label": views.tune_label(doc), "kind": views.kind_of(c),
+               "units": meta_units(tmap, c), "st": None, "dims": "", "nav_groups": None, "prev": None,
+               "next": None, "og_url": page_url(request)}
+        if c.is_table:
+            idx = next(i for i, v in enumerate(tviews) if v.z.name == name)
+            v = tviews[idx]
+            items, groups = views.table_nav(slug, tviews)
+            ctx.update(label=v.label, cat=items[idx]["cat"], g=grid_for_view(v, tmap), units=v.units,
+                       dims=f"{c.rows}×{c.cols}", st=views.stats(c.values, digits), nav_groups=groups,
+                       prev=items[idx - 1] if idx > 0 else None,
+                       next=items[idx + 1] if idx + 1 < len(items) else None, back="tables")
+        elif c.is_array:
+            cvs = views.curve_views(doc, tmap, tviews)
+            cv = next((x for x in cvs if x.y.name == name), None)
+            xs = cv.x.values if cv and cv.x else None
+            label = cv.label if cv else name
+            x_text = axis_labels(xs, len(c.values)) if xs else None
+            used_by = [{"label": t.label, "url": views.c_url(slug, t.z.name)} for t in tviews
+                       if name in ((t.x.name if t.x else None), (t.y.name if t.y else None))]
+            used_by += [{"label": x.label, "url": views.c_url(slug, x.y.name)} for x in cvs
+                        if x.x is not None and x.x.name == name]
+            ctx.update(label=label, cat=views.categorize(label, name), dims=f"{len(c.values)} values",
+                       st=views.stats(c.values, digits), used_by=used_by, has_x=bool(xs),
+                       x_label=cv.x_label if cv else "", y_label=cv.y_label if cv else "",
+                       chart=views.build_chart(c.values, xs, cv.x_label if cv else "",
+                                               cv.y_label if cv else "", digits),
+                       rows=[(i, x_text[i] if x_text else "", fmt_value(val, digits))
+                             for i, val in enumerate(c.values)],
+                       back="curves" if cv else "settings")
+            if cv:
+                items = [{"name": x.y.name, "label": x.label, "url": views.c_url(slug, x.y.name)} for x in cvs]
+                j = cvs.index(cv)
+                ctx.update(nav_groups=[("Curves", items)], prev=items[j - 1] if j > 0 else None,
+                           next=items[j + 1] if j + 1 < len(items) else None)
+        else:
+            ctx.update(label=name, cat=views.categorize(name), value=views.display_value(c, tmap), back="settings")
+        ctx["cat_label"] = views.CATEGORY_LABELS[ctx["cat"]]
+        ctx["kind_label"] = views.KIND_LABEL[ctx["kind"]]
+        return templates.TemplateResponse(request, "constant.html", ctx)
 
     # ------------------------------------------------------------ compare
     @app.get("/compare", response_class=HTMLResponse)
@@ -407,7 +428,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         a = slug_from(a_raw)
         if not a or store.get_doc(a) is None:
             return again("Tune A wasn't found. Paste a tune link or its 10-character code.", 400, a_raw, b_raw)
-        data, err, status = await read_upload(request, form, required=False)
+        data, err, status = await read_upload(form, required=False)
         if err:
             return again(err, status, a_raw, b_raw)
         key = None
@@ -426,43 +447,40 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             set_key_cookie(resp, request, b, key)
         return resp
 
-    @app.get("/d/{a}/{b}/table", response_class=HTMLResponse)
-    def diff_table_partial(request: Request, a: str, b: str, name: str = ""):
-        da, db_ = load_doc(a), load_doc(b)
-        td = next((t for t in diffmod.diff_tables(da, db_, resolve_map(da)) if t.name == name), None)
-        if td is None:
-            return HTMLResponse('<p class="flash err">Table not found.</p>', status_code=404)
-        g = diffmod.grid_for(td)
-        if g is None:
-            return HTMLResponse(f'<p class="flash warn">{_esc(td.message)}</p>')
-        return templates.TemplateResponse(request, "_grid.html", {"g": g, "notes": td.axis_notes})
-
     @app.get("/d/{a}/{b}", response_class=HTMLResponse)
     def diff_view(request: Request, a: str, b: str):
         da, db_ = load_doc(a), load_doc(b)
         store.touch(a)
         store.touch(b)
-        tmap = resolve_map(da)
-        tds = diffmod.diff_tables(da, db_, tmap)
-        featured = [t for t in tds if t.featured]
-        grids = {t.id: diffmod.grid_for(t) for t in featured}
-        others = [t for t in tds if not t.featured and t.status != "same"]
-        same_others = sum(1 for t in tds if not t.featured and t.status == "same")
-        settings = diffmod.diff_settings(da, db_)
-        tabs = [{"id": t.id, "label": TAB_NAMES.get(t.id, t.label[:12])} for t in featured]
-        tabs.append({"id": "other", "label": "Other"})
-        tabs.append({"id": "settings", "label": "Settings"})
+        dm = views.diff_model(a, b, da, db_, resolve_map(da))
         delete_key = pop_delete_key(request, b)
         resp = templates.TemplateResponse(request, "diff.html", {
-            "a": a, "b": b, "da": da, "db": db_, "featured": featured, "grids": grids, "others": others,
-            "same_others": same_others, "settings": settings, "tabs": tabs, "delete_key": delete_key,
-            "tables_changed": sum(1 for t in tds if t.status != "same"),
-            "cells_changed": sum(t.changed for t in tds),
-            "og_url": str(request.url.replace(query="", fragment="")),
+            "a": a, "b": b, "da": da, "db": db_, "dm": dm, "delete_key": delete_key,
+            "a_label": views.tune_label(da), "b_label": views.tune_label(db_), "og_url": page_url(request),
         })
         if delete_key:
             resp.delete_cookie(f"dk_{b}", path="/")
         return resp
+
+    @app.get("/d/{a}/{b}/c/{name}", response_class=HTMLResponse)
+    def diff_constant_view(request: Request, a: str, b: str, name: str):
+        da, db_ = load_doc(a), load_doc(b)
+        tds = diffmod.diff_tables(da, db_, resolve_map(da))
+        td = next((t for t in tds if t.name == name), None)
+        if td is None:
+            raise HTTPException(404)
+        nav = [t for t in tds if t.status == "changed" or t is td]
+        j = nav.index(td)
+
+        def link(t):
+            return {"name": t.name, "label": t.label, "url": views.d_url(a, b, t.name)}
+
+        return templates.TemplateResponse(request, "diff_constant.html", {
+            "a": a, "b": b, "da": da, "db": db_, "td": td, "g": diffmod.grid_for(td), "st": views.diff_stats(td),
+            "cat": views.categorize(td.label, td.name), "nav": [link(t) for t in nav],
+            "prev": link(nav[j - 1]) if j > 0 else None, "next": link(nav[j + 1]) if j + 1 < len(nav) else None,
+            "og_url": page_url(request),
+        })
 
     return app
 

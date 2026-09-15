@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .parser import Constant, TuneDoc, fmt_value, values_equal
-from .render import Cell, Grid, Row, axis_labels
+from .render import Cell, Grid, Row, axis_labels, ink_for, mix
 from .tablemaps import TableView, all_tables
 
 
@@ -88,10 +88,11 @@ def diff_grid(gid: str, title: str, za: Constant, zb: Constant, x: Constant | No
             elif isinstance(a, float) and isinstance(b, float):
                 d = b - a
                 mag = abs(d) / max_abs if max_abs else 1.0
-                alpha = 0.35 + 0.65 * mag
-                rgb = "255,86,48" if d > 0 else "56,142,255"
+                # Solid colors (not alpha) so cells read the same on the light and dark themes.
+                rgb = mix(*(("#ffd3c8", "#e2401f") if d > 0 else ("#cfe0ff", "#2b62d9")), 0.15 + 0.85 * mag)
                 sign = "+" if d > 0 else "−"
-                cells.append(Cell(b_text, r, c, style=f"background:rgba({rgb},{alpha:.2f});color:#fff",
+                cells.append(Cell(b_text, r, c, style=f"background:#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x};"
+                                                      f"color:{ink_for(*rgb)}",
                                   cls="up" if d > 0 else "down", delta=f"{sign}{fmt_value(abs(d), digits)}",
                                   a_text=a_text))
             else:

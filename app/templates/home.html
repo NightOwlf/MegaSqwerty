@@ -1,38 +1,56 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
+{% block bodyclass %}page-home{% endblock %}
 {% block main %}
-<section class="hero">
-  <p class="eyebrow mono">TunerStudio .msq · MS1/MS2/MS3 · Speeduino · rusEFI · FOME</p>
-  <h1>Read a tune file on your phone.</h1>
+<div class="home">
+  <section class="home-main">
+    <p class="eyebrow">TunerStudio .msq viewer</p>
+    <h1>Read your tune on any&nbsp;screen.</h1>
+    <p class="lede">Open a <span class="mono">.msq</span> from MegaSquirt, Speeduino, rusEFI or FOME. Tables open in an editor-style view with a 3D mode, every curve and setting is there, and you get a link to share.</p>
+
+    {% if deleted %}<p class="flash ok" role="status">Tune deleted.</p>{% endif %}
+    {% if error %}<p class="flash err" role="alert">{{ icon('warn') }}<span>{{ error }}</span></p>{% endif %}
+
+    <section class="win win-open">
+      <header class="win-title">{{ icon('folder') }}<h2>Open Tune File</h2></header>
+      <form class="win-body upload-card" method="post" action="/upload" enctype="multipart/form-data" data-max="{{ max_bytes }}" data-autosubmit>
+        <label class="dropzone">
+          <input type="file" name="file" required>
+          <span class="dz-icon">{{ icon('upload') }}</span>
+          <span class="dz-main">Choose a .msq file</span>
+          <span class="dz-sub">or drop it here · up to {{ max_mb }} MB</span>
+        </label>
+        <p class="upload-status mono" aria-live="polite"></p>
+        <noscript><button class="btn primary big" type="submit">Upload &amp; view</button></noscript>
+        <div class="notice">{{ icon('warn') }}<p><strong>ANYONE WITH THE LINK CAN SEE THIS TUNE.</strong> Do not upload anything private.</p></div>
+      </form>
+    </section>
+  </section>
+
+  <aside class="home-preview" aria-hidden="true">
+    <section class="win">
+      <header class="win-title">{{ icon('grid') }}<h2>{{ demo.title }}</h2><span class="win-sub">Example</span></header>
+      <div class="win-body">
+        <div class="legend"><span class="mono">{{ demo.lo }}</span><i class="ramp" style="background:{{ demo.gradient }}"></i><span class="mono">{{ demo.hi }}</span><span class="dim">%</span></div>
+        <div class="hm-scroll">
+          <table class="hm hm-demo" data-xl="RPM" data-yl="kPa" data-units="%">
+            <tbody>{% for row in demo.rows %}<tr><th class="ax y">{{ row.label }}</th>{% for c in row.cells %}<td style="{{ c.style }}">{{ c.text }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+            <tfoot><tr><th class="ax corner"><span>kPa ↑</span><span>RPM →</span></th>{% for x in demo.x_labels %}<th class="ax x">{{ x }}</th>{% endfor %}</tr></tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+  </aside>
+</div>
+
+<section class="home-groups">
+  <div class="group"><h3 class="group-t">{{ icon('grid') }}Table editors</h3><p>VE, spark and AFR/lambda open first, in TunerStudio-style colors, with a 3D view you can spin. Every other table is one tap away.</p></div>
+  <div class="group"><h3 class="group-t">{{ icon('search') }}Menus and search</h3><p>Browse by menu (Fuel, Ignition, Idle and so on), or search every table, curve and setting by name or value.</p></div>
+  <div class="group"><h3 class="group-t">{{ icon('compare') }}Compare two tunes</h3><p>See which cells went up, which went down, and by how much. <a href="/compare">Start a comparison</a></p></div>
 </section>
-
-{% if deleted %}<p class="flash ok" role="status">Tune deleted.</p>{% endif %}
-{% if error %}<p class="flash err" role="alert">{{ error }}</p>{% endif %}
-
-<form class="upload" method="post" action="/upload" enctype="multipart/form-data" data-max="{{ max_bytes }}" data-autosubmit>
-  <label class="dropzone">
-    <input type="file" name="file" required>
-    <span class="dz-icon" aria-hidden="true">▲</span>
-    <span class="dz-main">Choose .msq file</span>
-    <span class="dz-sub">or drop it here · {{ max_mb }} MB max</span>
-  </label>
-  <p class="upload-status mono" aria-live="polite"></p>
-  <noscript><button class="btn primary big" type="submit">Upload &amp; view</button></noscript>
-</form>
-
-<aside class="warning" role="note">
-  <strong>ANYONE WITH THE LINK CAN SEE THIS TUNE.</strong>
-  <span>Do not upload anything private.</span>
-</aside>
-
-<section class="about">
-  <h2 class="panel-title">What is this?</h2>
-  <p>MSQ Viewer opens the <span class="mono">.msq</span> tune files that TunerStudio saves for MegaSquirt, Speeduino, rusEFI and FOME ECUs. You get VE, spark and AFR/lambda tables as heatmaps, every other setting in a searchable list, and a link you can post in a forum or Discord.</p>
-  <ul class="specs mono">
-    <li>No account, nothing to install</li>
-    <li>Tap any cell for its RPM/load and value</li>
-    <li>Compare two tunes cell by cell</li>
-    <li>You get a delete key after uploading. Tunes nobody views for 180 days are removed.</li>
-  </ul>
-  <p><a class="btn" href="/compare">Compare two tunes →</a></p>
+<section class="group works">
+  <h3 class="group-t">Works with</h3>
+  <ul class="pill-list"><li>MegaSquirt MS1 / MS2 / MS3</li><li>Speeduino</li><li>rusEFI</li><li>FOME · Vato Tuned VTHPNP</li><li>Any other TunerStudio tune</li></ul>
+  <p class="fine">After uploading you get a one-time delete key. Tunes nobody views for 180 days are removed automatically.</p>
 </section>
 {% endblock %}

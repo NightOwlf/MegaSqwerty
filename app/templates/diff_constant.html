@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, readout, dlgfoot %}
+{% block title %}{{ td.label }} diff · MSQ Viewer{% endblock %}
+{% block bodyclass %}page-detail{% if prev or next %} has-pager{% endif %}{% endblock %}
+{% block main %}
+<nav class="crumbs"><a href="/d/{{ a }}/{{ b }}#tables">{{ icon('left') }}<span>Back to diff</span></a></nav>
+
+<article class="win dialog">
+  <header class="win-title dlg-title">
+    {{ icon(cat_icons[cat]) }}<h1>{{ td.label }}</h1>{% if td.label != td.name %}<span class="win-sub mono">{{ td.name }}</span>{% endif %}
+    <a class="win-x" href="/d/{{ a }}/{{ b }}#tables" aria-label="Close" title="Close">{{ icon('x') }}</a>
+  </header>
+  <div class="dlg-tools">
+    <div class="chips">
+      <span class="chip"><i class="dot c-{{ cat }}"></i>{{ cat_labels[cat] }}</span>
+      <span class="chip">Diff</span>
+      {% if g %}<span class="chip mono">{{ g.dims }}</span>{% endif %}
+    </div>
+    {% if nav|length > 1 %}
+    <label class="navselect">{{ icon('list') }}<span class="sr">Jump to another changed table</span>
+      <select data-nav>{% for it in nav %}<option value="{{ it.url }}"{% if it.name == td.name %} selected{% endif %}>{{ it.label }}</option>{% endfor %}</select>
+    </label>
+    {% endif %}
+  </div>
+
+  <div class="win-body dlg-body" id="diffgrid">
+    {% if st %}
+    <div class="cluster cluster-strip">{{ readout('Cells changed', st.changed ~ ' / ' ~ st.total) }}{{ readout('Share', st.pct) }}{{ readout('Biggest ↑', st.up, cls='ro-up') }}{{ readout('Biggest ↓', st.down, cls='ro-down') }}</div>
+    {% endif %}
+    {% if g %}
+      <div class="modebar">
+        <span class="dim">Cells show</span>
+        <div class="seg" data-diff-modes="#diffgrid">
+          <button type="button" data-mode="b" aria-pressed="true">B value</button>
+          <button type="button" data-mode="a" aria-pressed="false">A value</button>
+          <button type="button" data-mode="d" aria-pressed="false">Δ change</button>
+        </div>
+      </div>
+      {% set notes = td.axis_notes %}{% set detail_url = none %}{% set hide_title = true %}{% include "_grid.html" %}
+    {% else %}
+      <p class="flash warn">{{ icon('warn') }}<span>{{ td.message }}</span></p>
+    {% endif %}
+    <p class="hint"><a href="/t/{{ a }}">Open tune A</a> · <a href="/t/{{ b }}">Open tune B</a></p>
+  </div>
+  {{ dlgfoot(prev, next, "/d/" ~ a ~ "/" ~ b ~ "#tables") }}
+</article>
+{% endblock %}
+
+{% block status %}<span class="led on"></span><span>Comparing</span><span class="st-sep"></span><span class="mono">{{ td.name }}</span>{% if st %}<span class="st-sep"></span><span class="st-dim">{{ st.changed }} of {{ st.total }} cells changed</span>{% endif %}{% endblock %}
+
+{% block after %}<div class="bubble" role="status" hidden></div>{% endblock %}

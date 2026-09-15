@@ -96,3 +96,19 @@ def test_fuel_mode_detection():
     assert fuel_mode(afr, "AFR", "afr") == "afr"
     assert fuel_mode(afr, "", "ve") is None
     assert build_grid("x", "x", lam, palette_name="afr").fuel == "lambda"
+
+
+def test_views_model_and_thumbs(fx):
+    from app import views
+    doc = parse_msq(fx("fome_vthpnp.msq"))
+    m = views.tune_model("abcdefghij", doc, resolve_map(doc))
+    cards = {t.name: t for t in m.tables}
+    assert cards["veTable"].cat == "fuel" and cards["ignitionTable"].cat == "ignition"
+    assert cards["lambdaTable"].cat == "target" and cards["vvtTable1"].cat == "cam"
+    assert cards["boostTableOpenLoop"].cat == "boost"
+    assert len(cards["veTable"].thumb) == 256 and set(cards["veTable"].thumb) <= set(views.THUMB_ALPHABET)
+    assert [c.name for c in m.curves] == ["cltFuelCorr"] and m.curves[0].line
+    kinds = dict((k, n) for k, _, n in m.kinds)
+    assert kinds["table"] == len(m.tables) and kinds["number"] >= 4
+    chart = views.build_chart(doc.get("cltFuelCorr").values, doc.get("cltFuelCorrBins").values, "Coolant")
+    assert len(chart.points) == 16 and chart.xticks[0][1] == "-40.0"

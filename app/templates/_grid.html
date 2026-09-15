@@ -1,16 +1,27 @@
+{% from "_macros.html" import icon %}
 <figure class="hm-wrap" data-grid="{{ g.id }}"{% if g.fuel %} data-fuel="{{ g.fuel }}"{% endif %}>
-  <figcaption class="hm-head">
-    <span class="hm-title">{{ g.title }}</span>
-    {% if g.name and g.name != g.title %}<code class="hm-name">{{ g.name }}</code>{% endif %}
-    <span class="hm-dims mono">{{ g.dims }}</span>
-  </figcaption>
+  <div class="ed-bar">
+    {% if not hide_title %}
+    <div class="hm-titles">
+      <h3 class="hm-title">{% if detail_url %}<a href="{{ detail_url }}">{{ g.title }}</a>{% else %}{{ g.title }}{% endif %}</h3>
+      <p class="hm-sub mono">{% if g.name and g.name != g.title %}{{ g.name }} · {% endif %}{{ g.dims }}{% if g.units %} · <span data-units>{{ g.units }}</span>{% endif %}</p>
+    </div>
+    {% endif %}
+    <div class="hm-tools" role="toolbar" aria-label="Table view">
+      <button type="button" class="tool" data-hm-3d aria-pressed="false" title="3D view of the table">{{ icon('cube') }}<span>3D</span></button>
+      <button type="button" class="tool" data-hm-fit aria-pressed="false" title="Fit the whole table to the screen width">{{ icon('fit') }}<span>Fit</span></button>
+      <button type="button" class="tool" data-hm-vals aria-pressed="true" title="Show numbers in cells">{{ icon('eye') }}<span>Values</span></button>
+      <button type="button" class="tool" data-hm-copy title="Copy as spreadsheet (TSV)">{{ icon('copy') }}<span>Copy</span></button>
+      {% if detail_url %}<a class="tool" href="{{ detail_url }}" title="Open in its own window">{{ icon('expand') }}<span>Open</span></a>{% endif %}
+    </div>
+  </div>
   {% if g.fuel %}
   <div class="fuelbar">
     <div class="seg" role="group" aria-label="Display as">
       <button type="button" data-fuel-show="lambda" aria-pressed="{{ 'true' if g.fuel == 'lambda' else 'false' }}">λ Lambda</button>
       <button type="button" data-fuel-show="afr" aria-pressed="{{ 'true' if g.fuel == 'afr' else 'false' }}">AFR</button>
     </div>
-    <label class="stoich">Stoich
+    <label class="stoich"><span>Stoich</span>
       <select data-stoich>
         <option value="14.7">Gasoline 14.7</option>
         <option value="9.76">E85 9.76</option>
@@ -21,29 +32,33 @@
       </select>
       <input type="number" inputmode="decimal" step="0.01" min="3" max="25" data-stoich-custom placeholder="14.7" hidden>
     </label>
-    <p class="showing">Showing: <b data-showing>{{ 'Lambda (λ), as stored in the tune' if g.fuel == 'lambda' else 'AFR, as stored in the tune' }}</b></p>
+    <p class="showing">Showing <b data-showing>{{ 'Lambda (λ), as stored in the tune' if g.fuel == 'lambda' else 'AFR, as stored in the tune' }}</b></p>
   </div>
   {% endif %}
   <div class="legend">
     {% if g.is_diff %}
-    <span class="sw down"></span><span>lower in B</span><span class="sw up"></span><span>higher in B</span><span class="sw same"></span><span>same</span>
-    <span class="mono dim">max Δ {{ g.hi }}</span>
+    <span class="lg"><i class="sw down"></i>lower in B</span><span class="lg"><i class="sw up"></i>higher in B</span><span class="lg"><i class="sw same"></i>same</span>
+    {% if g.hi and g.hi != '0' %}<span class="mono dim">max Δ {{ g.hi }}</span>{% endif %}
     {% else %}
     <span class="mono" data-lo>{{ g.lo }}</span><i class="ramp" style="background:{{ g.gradient }}"></i><span class="mono" data-hi>{{ g.hi }}</span>
     <span class="dim">{{ g.legend[0] }} → {{ g.legend[1] }}</span>
     {% endif %}
-    {% if g.units %}<span class="units mono" data-units>{{ g.units }}</span>{% endif %}
   </div>
-  {% if g.note %}<p class="note">{{ g.note }}</p>{% endif %}
-  {% for n in notes or [] %}<p class="note">{{ n }}</p>{% endfor %}
-  <div class="hm-scroll">
-    <table class="hm{{ ' diff' if g.is_diff }}" data-xl="{{ g.x_label }}" data-yl="{{ g.y_label }}" data-units="{{ g.units }}">
-      <thead><tr><th class="ax corner" scope="col">{{ g.y_label or 'Y' }}<br>╲ {{ g.x_label or 'X' }}</th>{% for x in g.x_labels %}<th class="ax x" scope="col">{{ x }}</th>{% endfor %}<th class="ax end"></th></tr></thead>
-      <tbody>
-      {% for row in g.rows %}<tr><th class="ax y" scope="row">{{ row.label }}</th>{% for c in row.cells %}<td{% if c.style %} style="{{ c.style }}"{% endif %}{% if c.cls %} class="{{ c.cls }}"{% endif %}{% if g.is_diff %} data-a="{{ c.a_text }}"{% endif %}>{{ c.text }}{% if c.delta %}<small>{{ c.delta }}</small>{% endif %}</td>{% endfor %}<th class="ax end">{{ row.label }}</th></tr>
-      {% endfor %}
-      </tbody>
-      <tfoot><tr><th class="ax corner"></th>{% for x in g.x_labels %}<th class="ax x">{{ x }}</th>{% endfor %}<th class="ax end"></th></tr></tfoot>
-    </table>
+  {% if g.note %}<p class="hint">{{ g.note }}</p>{% endif %}
+  {% for n in notes or [] %}<p class="hint">{{ n }}</p>{% endfor %}
+  <div class="ed-main">
+    <div class="hm-scroll">
+      <table class="hm{{ ' diff' if g.is_diff }}" data-xl="{{ g.x_label }}" data-yl="{{ g.y_label }}" data-units="{{ g.units }}">
+        <tbody>
+        {% for row in g.rows %}<tr><th class="ax y" scope="row">{{ row.label }}</th>{% for c in row.cells %}<td{% if c.style %} style="{{ c.style }}"{% endif %}{% if c.cls %} class="{{ c.cls }}"{% endif %}{% if g.is_diff %} data-a="{{ c.a_text }}"{% endif %}>{{ c.text }}{% if c.delta %}<small>{{ c.delta }}</small>{% endif %}</td>{% endfor %}</tr>
+        {% endfor %}
+        </tbody>
+        <tfoot><tr><th class="ax corner" scope="col"><span>{{ g.y_label or 'Y' }} ↑</span><span>{{ g.x_label or 'X' }} →</span></th>{% for x in g.x_labels %}<th class="ax x" scope="col">{{ x }}</th>{% endfor %}</tr></tfoot>
+      </table>
+    </div>
+    <div class="ed-3d" hidden>
+      <canvas class="plot3d" role="img" aria-label="3D view of {{ g.title }}"></canvas>
+      <span class="plot3d-hint">Drag to rotate · double-tap to reset</span>
+    </div>
   </div>
 </figure>

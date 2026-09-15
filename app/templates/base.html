@@ -1,31 +1,43 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#07090b">
-<meta name="color-scheme" content="dark">
-<title>{% block title %}MSQ Viewer · read .msq tune files on your phone{% endblock %}</title>
-<meta name="description" content="Open MegaSquirt, Speeduino, rusEFI and FOME .msq tune files on your phone as heatmaps, and share a link.">
+<meta name="theme-color" content="#2b2d30">
+<meta name="color-scheme" content="dark light">
+<script src="/static/theme.js?v={{ asset_v }}"></script>
+<title>{% block title %}MSQ Viewer · read .msq tune files on any screen{% endblock %}</title>
+<meta name="description" content="Open MegaSquirt, Speeduino, rusEFI and FOME .msq tune files on your phone or desktop as TunerStudio-style tables, and share a link.">
 {% block og %}
 <meta property="og:site_name" content="MSQ Viewer">
 <meta property="og:type" content="website">
 <meta property="og:title" content="MSQ Viewer">
 <meta property="og:description" content="Open MegaSquirt, Speeduino, rusEFI and FOME .msq tune files on your phone and share a link.">
 {% endblock %}
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23ffb020'/%3E%3Crect x='3' y='3' width='4' height='4' fill='%2312a150'/%3E%3Crect x='9' y='3' width='4' height='4' fill='%23f2d100'/%3E%3Crect x='3' y='9' width='4' height='4' fill='%23f08a00'/%3E%3Crect x='9' y='9' width='4' height='4' fill='%23e0301e'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%232b2d30'/%3E%3Crect x='2.5' y='2.5' width='5' height='5' fill='%23f0604c'/%3E%3Crect x='8.5' y='2.5' width='5' height='5' fill='%23f0e25a'/%3E%3Crect x='2.5' y='8.5' width='5' height='5' fill='%2386e07a'/%3E%3Crect x='8.5' y='8.5' width='5' height='5' fill='%237b9bff'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/app.css?v={{ asset_v }}">
 <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js" defer></script>
 <script src="/static/app.js?v={{ asset_v }}" defer></script>
 </head>
+{% from "_macros.html" import icon %}
 <body class="{% block bodyclass %}{% endblock %}">
-<header class="topbar">
-  <a class="brand" href="/"><span class="brand-mark">MSQ</span><span class="brand-word">Viewer</span></a>
-  <nav><a href="/compare">Compare</a><a href="/">Upload</a></nav>
+<header class="menubar">
+  <div class="wrap menubar-in">
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="brand-word">MSQ Viewer</span></a>
+    <nav class="menu" aria-label="Main">
+      <a href="/">{{ icon('folder') }}<span>Open tune</span></a>
+      <a href="/compare">{{ icon('compare') }}<span>Compare</span></a>
+      <button type="button" class="menu-theme" data-theme-toggle hidden title="Switch between dark and light theme" aria-label="Switch between dark and light theme">{{ icon('sun', 'ic-sun') }}{{ icon('moon', 'ic-moon') }}</button>
+    </nav>
+  </div>
 </header>
-<main>
+{% block pre %}{% endblock %}
+<main class="wrap main">
 {% block main %}{% endblock %}
 </main>
+<footer class="statusbar" aria-label="Status">
+  <div class="wrap statusbar-in">{% block status %}<span class="led"></span><span>Ready</span><span class="st-sep"></span><span class="st-dim">No tune loaded</span>{% endblock %}</div>
+</footer>
 {% block after %}{% endblock %}
 </body>
 </html>

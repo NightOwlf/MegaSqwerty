@@ -1,0 +1,84 @@
+{% macro icon(name, cls="") -%}
+<svg class="ic{{ ' ' ~ cls if cls }}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">{{ icons[name]|safe }}</svg>
+{%- endmacro %}
+
+{% macro thumb(t) -%}
+<canvas class="thumb" width="{{ t.cols }}" height="{{ t.rows }}" data-thumb="{{ t.thumb }}" data-cols="{{ t.cols }}" data-rows="{{ t.rows }}" data-stops="{{ t.stops }}" aria-hidden="true"></canvas>
+{%- endmacro %}
+
+{% macro spark(line, area="", cls="spark", w=100, h=40) -%}
+<svg class="{{ cls }}" viewBox="0 0 {{ w }} {{ h }}" preserveAspectRatio="none" aria-hidden="true">{% if area %}<polygon class="spark-area" points="{{ area }}"/>{% endif %}<polyline class="spark-line" points="{{ line }}"/></svg>
+{%- endmacro %}
+
+{# TunerStudio-style tab strip (desktop) with the search box beside it. Phones get `dock` instead. #}
+{% macro tabbar(items, placeholder, aria) -%}
+<div class="tabbar">
+  <div class="wrap tabbar-in">
+    <nav class="tabstrip" aria-label="Sections">
+      {% for id, label, ic, count in items %}<a href="#{{ id }}" data-tab="{{ id }}">{{ icon(ic) }}<span>{{ label }}</span>{% if count is not none %}<b data-dock-count="{{ id }}">{{ count }}</b>{% endif %}</a>{% endfor %}
+    </nav>
+    <div class="search-field" role="search">
+      {{ icon('search') }}
+      <input type="search" data-global-search placeholder="{{ placeholder }}" aria-label="{{ aria }}" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
+      <kbd class="kbd">/</kbd>
+      <button type="button" class="search-clear" data-search-clear hidden aria-label="Clear search">{{ icon('x') }}</button>
+    </div>
+  </div>
+  <div class="wrap search-summary" data-search-summary hidden></div>
+</div>
+{%- endmacro %}
+
+{% macro dock(items) -%}
+<nav class="dock" aria-label="Sections">
+  {% for id, label, ic, count in items %}
+  <a href="#{{ id }}" data-tab="{{ id }}"><span class="dock-ic">{{ icon(ic) }}{% if count is not none %}<b data-dock-count="{{ id }}">{{ count }}</b>{% endif %}</span><span class="dock-l">{{ label }}</span></a>
+  {% endfor %}
+  <button type="button" data-focus-search><span class="dock-ic">{{ icon('search') }}</span><span class="dock-l">Search</span></button>
+</nav>
+{%- endmacro %}
+
+{# A digital readout gauge: label on top, big value, small units. #}
+{% macro readout(label, value, units="", cls="") -%}
+{% set v = value|string %}
+<div class="readout{{ ' ro-text' if v[:1] not in '+-−0123456789.' or not v }}{{ ' ' ~ cls if cls }}"><span class="ro-l">{{ label }}</span><span class="ro-v">{{ v }}{% if units %}<small>{{ units }}</small>{% endif %}</span></div>
+{%- endmacro %}
+
+{# An analog dial for a limit setting. Geometry comes from views.build_dial. #}
+{% macro dial(d) -%}
+<figure class="dial" role="img" aria-label="{{ d.label }}: {{ d.value }} {{ d.units }}">
+  <svg viewBox="0 0 200 200" aria-hidden="true">
+    <circle class="dial-rim" cx="100" cy="100" r="97"/>
+    <circle class="dial-face" cx="100" cy="100" r="91"/>
+    <path class="dial-red" d="{{ d.red }}"/>
+    {% for t in d.ticks %}<line class="{{ 'tk-major' if t.major else 'tk-minor' }}" x1="{{ t.x1 }}" y1="{{ t.y1 }}" x2="{{ t.x2 }}" y2="{{ t.y2 }}"/>{% if t.label %}<text class="tk-label" x="{{ t.lx }}" y="{{ t.ly }}" text-anchor="middle" dominant-baseline="central">{{ t.label }}</text>{% endif %}{% endfor %}
+    <text class="dial-scale" x="100" y="76" text-anchor="middle">{{ d.scale }}</text>
+    <g transform="rotate({{ d.angle }} 100 100)"><path class="dial-needle" d="M84 100 100 96.6 178 100 100 103.4z"/></g>
+    <circle class="dial-hub" cx="100" cy="100" r="7.5"/>
+    <text class="dial-val" x="100" y="146" text-anchor="middle">{{ d.value }}</text>
+    <text class="dial-label" x="100" y="166" text-anchor="middle">{{ d.label }}</text>
+  </svg>
+</figure>
+{%- endmacro %}
+
+{% macro keybox(key, what) -%}
+<section class="win keybox" role="status">
+  <header class="win-title">{{ icon('key') }}<h2>Delete key</h2></header>
+  <div class="win-body keybox-body">
+    <span class="alert-ic">{{ icon('warn') }}</span>
+    <div class="keybox-text">
+      <p class="keybox-h">{{ what }} uploaded. Save your delete key.</p>
+      <p>It's shown <b>once</b>, and it's the only way to remove this tune later.</p>
+      <div class="keyrow"><code id="dkey" class="mono">{{ key }}</code><button class="btn" type="button" data-copy="#dkey">{{ icon('copy') }}<span>Copy key</span></button></div>
+    </div>
+  </div>
+</section>
+{%- endmacro %}
+
+{# Dialog button row: previous / next on the left, Close on the right. On phones it pins to the bottom. #}
+{% macro dlgfoot(prev, next, close_url) -%}
+<footer class="dlg-foot">
+  {% if prev %}<a class="btn pg" href="{{ prev.url }}" data-prev>{{ icon('left') }}<span><small>Previous</small>{{ prev.label }}</span></a>{% endif %}
+  {% if next %}<a class="btn pg pg-next" href="{{ next.url }}" data-next><span><small>Next</small>{{ next.label }}</span>{{ icon('right') }}</a>{% endif %}
+  <a class="btn pg-close" href="{{ close_url }}">Close</a>
+</footer>
+{%- endmacro %}

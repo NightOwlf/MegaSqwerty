@@ -109,7 +109,9 @@ hand-written for now.
 
 - Any constant reference (`z`, `x`, `y`, a summary `name`) can be a string or a list of candidates. The first
   one present in the tune wins.
-- `palette`: `ve` (green→red), `spark` (blue→red), `afr` (rich→lean), or `default`.
+- `palette`: `ve`, `spark` and `default` use a TunerStudio-style blue→green→yellow→red ramp (low→high); `afr` runs
+  it the other way, so rich is red and lean is blue. The palette also sets the legend words (low/high,
+  retard/advance, rich/lean).
 - Tables with `afr` palette or lambda/AFR units get the **λ / AFR toggle**. Lambda is shown by default when
   the table is stored as lambda (units say lambda, or values fall in 0.6–1.3), and AFR is computed from a
   selectable stoich (14.7 gasoline, 9.76 E85, …). The page always says which one it is showing.

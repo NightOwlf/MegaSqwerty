@@ -1,30 +1,43 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 {% block title %}Compare tunes · MSQ Viewer{% endblock %}
+{% block bodyclass %}page-compare{% endblock %}
 {% block main %}
-<section class="hero">
-  <p class="eyebrow mono">diff</p>
-  <h1>Compare two tunes.</h1>
-  <p class="lede">Paste two tune links (or their 10-character codes), or paste one and upload the other.</p>
-</section>
-{% if error %}<p class="flash err" role="alert">{{ error }}</p>{% endif %}
-<form class="compare" method="post" action="/compare" enctype="multipart/form-data" data-max="{{ max_bytes }}">
-  <div class="field">
-    <label for="fa">Tune A <span class="dim">(before)</span></label>
-    <input id="fa" name="a" value="{{ a }}" placeholder="…/t/Ab3dE6gH9k" autocomplete="off" autocapitalize="off" spellcheck="false" hx-get="/compare/check" hx-trigger="input changed delay:350ms, load" hx-target="#ca">
-    <output id="ca" class="check"></output>
-  </div>
-  <div class="field">
-    <label for="fb">Tune B <span class="dim">(after)</span></label>
-    <input id="fb" name="b" value="{{ b }}" placeholder="…/t/Zx9yW8vU7t" autocomplete="off" autocapitalize="off" spellcheck="false" hx-get="/compare/check" hx-trigger="input changed delay:350ms, load" hx-target="#cb">
-    <output id="cb" class="check"></output>
-  </div>
-  <p class="or mono">or upload tune B</p>
-  <label class="dropzone small">
-    <input type="file" name="file">
-    <span class="dz-main">Choose .msq for B</span>
-    <span class="dz-sub">{{ max_mb }} MB max. It's saved as a new shareable tune.</span>
-  </label>
-  <p class="upload-status mono" aria-live="polite"></p>
-  <button class="btn primary big" type="submit">Compare</button>
-</form>
+<div class="narrow">
+  <section class="page-intro">
+    <p class="eyebrow">Diff</p>
+    <h1>Compare two tunes</h1>
+    <p class="lede">Paste two tune links (or their 10-character codes), or paste one and upload the other.</p>
+  </section>
+  {% if error %}<p class="flash err" role="alert">{{ icon('warn') }}<span>{{ error }}</span></p>{% endif %}
+  <section class="win">
+    <header class="win-title">{{ icon('compare') }}<h2>Compare Tunes</h2></header>
+    <form class="win-body compare-card" method="post" action="/compare" enctype="multipart/form-data" data-max="{{ max_bytes }}">
+      <fieldset class="group">
+        <legend>Tunes</legend>
+        <div class="formrow">
+          <label for="fa"><span class="tag">A</span> Before</label>
+          <input id="fa" name="a" value="{{ a }}" placeholder="…/t/Ab3dE6gH9k" autocomplete="off" autocapitalize="off" spellcheck="false" hx-get="/compare/check" hx-trigger="input changed delay:350ms, load" hx-target="#ca">
+          <output id="ca" class="check"></output>
+        </div>
+        <div class="formrow">
+          <label for="fb"><span class="tag tag-b">B</span> After</label>
+          <input id="fb" name="b" value="{{ b }}" placeholder="…/t/Zx9yW8vU7t" autocomplete="off" autocapitalize="off" spellcheck="false" hx-get="/compare/check" hx-trigger="input changed delay:350ms, load" hx-target="#cb">
+          <output id="cb" class="check"></output>
+        </div>
+      </fieldset>
+      <fieldset class="group">
+        <legend>Or upload tune B</legend>
+        <label class="dropzone dropzone-sm">
+          <input type="file" name="file">
+          <span class="dz-icon">{{ icon('upload') }}</span>
+          <span class="dz-main">Choose .msq for B</span>
+          <span class="dz-sub">{{ max_mb }} MB max. It's saved as a new shareable tune.</span>
+        </label>
+        <p class="upload-status mono" aria-live="polite"></p>
+      </fieldset>
+      <div class="dlg-actions"><button class="btn primary" type="submit">{{ icon('compare') }}<span>Compare</span></button></div>
+    </form>
+  </section>
+</div>
 {% endblock %}

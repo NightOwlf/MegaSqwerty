@@ -51,8 +51,12 @@ def test_upload_view_json_download_delete(client, fx):
     html = page.text
     assert "rusEFI (FOME) Vthpnp.2026.03.19.vthpnp.3616320453" in html
     assert 'property="og:title"' in html and "FOME 2026.03.19 tune" in html
-    assert 'data-tab="ve"' in html and 'data-tab="other"' in html and 'data-tab="all"' in html
+    assert 'data-switch="ve"' in html and 'id="tables"' in html and 'id="curves"' in html and 'id="settings"' in html
     assert 'data-fuel="lambda"' in html
+    assert f'href="/t/{slug}/c/luaScratchTable"' in html  # unmapped table still gets a card
+    assert "data-thumb=" in html and "data-global-search" in html
+    assert 'class="tbmenu" data-cat="fuel"' in html and 'data-tab="curves"' in html  # toolbar menus + tabs
+    assert 'class="dial"' in html and "Rev limit" in html and "data-hm-3d" in html  # rev-limit gauge, 3D tool
     key = re.search(r'<code id="dkey" class="mono">([^<]+)</code>', html).group(1)
     assert page.headers["x-robots-tag"] == "noindex"
 
@@ -66,10 +70,17 @@ def test_upload_view_json_download_delete(client, fx):
     dl = client.get(f"/t/{slug}.msq")
     assert dl.content == raw and "attachment" in dl.headers["content-disposition"]
 
-    part = client.get(f"/t/{slug}/table", params={"name": "luaScratchTable"})
-    assert part.status_code == 200 and "luaScratchTable" in part.text and "<table" in part.text
-    arr = client.get(f"/t/{slug}/const", params={"name": "cltFuelCorr"})
-    assert arr.status_code == 200 and "<ol" in arr.text
+    part = client.get(f"/t/{slug}/c/luaScratchTable")
+    assert part.status_code == 200 and "luaScratchTable" in part.text and '<table class="hm' in part.text
+    ve = client.get(f"/t/{slug}/c/veTable").text
+    assert "VE Table" in ve and "data-next" in ve and "<optgroup" in ve
+    arr = client.get(f"/t/{slug}/c/cltFuelCorr")
+    assert arr.status_code == 200 and 'class="chart"' in arr.text and "Warmup fuel manual Multiplier" in arr.text
+    axis = client.get(f"/t/{slug}/c/veRpmBins").text
+    assert "Axis for" in axis and "VE Table" in axis
+    scalar = client.get(f"/t/{slug}/c/rpmHardLimit")
+    assert scalar.status_code == 200 and "7200" in scalar.text
+    assert client.get(f"/t/{slug}/c/doesNotExist").status_code == 404
 
     assert client.delete(f"/t/{slug}", params={"key": "wrong"}).status_code == 403
     assert client.delete(f"/t/{slug}", params={"key": key}).json() == {"deleted": True}
@@ -124,6 +135,8 @@ def test_diff_page_mismatched_dims(client, fx):
     r = client.get(f"/d/{a}/{b}")
     assert r.status_code == 200
     assert "Table dimensions differ (16×16 vs 12×12)" in r.text
+    mismatch = client.get(f"/d/{a}/{b}/c/veTable1")
+    assert mismatch.status_code == 200 and "Table dimensions differ" in mismatch.text
 
 
 def test_compare_with_uploaded_b(client, fx):
@@ -136,8 +149,9 @@ def test_compare_with_uploaded_b(client, fx):
     page = client.get(loc)
     assert page.status_code == 200 and "21" in page.text and 'id="dkey"' in page.text
     b = loc.rsplit("/", 1)[1]
-    part = client.get(f"/d/{a}/{b}/table", params={"name": "mysteryTable"})
-    assert part.status_code == 200
+    detail = client.get(f"/d/{a}/{b}/c/veTable1")
+    assert detail.status_code == 200 and "data-diff-modes" in detail.text and "+4.0" in detail.text
+    assert client.get(f"/d/{a}/{b}/c/mysteryTable").status_code == 200
 
 
 def test_compare_errors(client):

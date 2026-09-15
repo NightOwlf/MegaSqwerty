@@ -1,9 +1,16 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 {% block title %}{{ status }} · MSQ Viewer{% endblock %}
 {% block main %}
-<section class="hero errorpage">
-  <p class="code mono">{{ status }}</p>
-  <h1>{{ message }}</h1>
-  <p><a class="btn primary big" href="/">Upload a tune</a></p>
-</section>
+<div class="narrow errorpage">
+  <section class="win" role="alert">
+    <header class="win-title">{{ icon('warn') }}<h2>Error {{ status }}</h2></header>
+    <div class="win-body alert-body">
+      <span class="alert-ic">{{ icon('warn') }}</span>
+      <h1>{{ message }}</h1>
+    </div>
+    <footer class="dlg-actions"><a class="btn primary" href="/">{{ icon('folder') }}<span>Open a tune</span></a></footer>
+  </section>
+</div>
 {% endblock %}
+{% block status %}<span class="led bad"></span><span>Error {{ status }}</span>{% endblock %}

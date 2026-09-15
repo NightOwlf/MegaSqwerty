@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, readout, dlgfoot %}
+{% block title %}{{ label }} · {{ tune_label }} · MSQ Viewer{% endblock %}
+{% block og %}
+<meta property="og:site_name" content="MSQ Viewer">
+<meta property="og:type" content="website">
+<meta property="og:title" content="{{ label }} · {{ tune_label }}">
+<meta property="og:description" content="{{ kind_label }} {{ c.name }}{% if dims %} ({{ dims }}){% endif %} from a {{ doc.family }} tune. Signature: {{ doc.signature or 'none' }}">
+<meta property="og:url" content="{{ og_url }}">
+<meta name="twitter:card" content="summary">
+{% endblock %}
+{% block bodyclass %}page-detail{% if prev or next %} has-pager{% endif %}{% endblock %}
+{% block main %}
+<nav class="crumbs"><a href="/t/{{ slug }}#{{ back }}">{{ icon('left') }}<span>{{ tune_label }}</span></a><span class="crumb-sep">/</span><span class="crumb-cur">{{ cat_label }}</span></nav>
+
+<article class="win dialog">
+  <header class="win-title dlg-title">
+    {{ icon(cat_icons[cat]) }}<h1>{{ label }}</h1>{% if label != c.name %}<span class="win-sub mono">{{ c.name }}</span>{% endif %}
+    <a class="win-x" href="/t/{{ slug }}#{{ back }}" aria-label="Close" title="Close">{{ icon('x') }}</a>
+  </header>
+  <div class="dlg-tools">
+    <div class="chips">
+      <span class="chip"><i class="dot c-{{ cat }}"></i>{{ cat_label }}</span>
+      <span class="chip">{{ kind_label }}</span>
+      {% if dims %}<span class="chip mono">{{ dims }}</span>{% endif %}
+      {% if units %}<span class="chip mono">{{ units }}</span>{% endif %}
+    </div>
+    {% if nav_groups %}
+    <label class="navselect">
+      {{ icon('list') }}<span class="sr">Jump to another</span>
+      <select data-nav>
+        {% for glabel, items in nav_groups %}<optgroup label="{{ glabel }}">{% for it in items %}<option value="{{ it.url }}"{% if it.name == c.name %} selected{% endif %}>{{ it.label }}</option>{% endfor %}</optgroup>{% endfor %}
+      </select>
+    </label>
+    {% endif %}
+  </div>
+
+  <div class="win-body dlg-body">
+    {% if st %}
+    <div class="cluster cluster-strip">{{ readout('Min', st.lo) }}{{ readout('Max', st.hi) }}{{ readout('Mean', st.mean) }}{{ readout('Cells' if kind == 'table' else 'Points', st.count) }}</div>
+    {% endif %}
+
+    {% if kind == 'table' %}
+      {% set detail_url = none %}{% set hide_title = true %}{% include "_grid.html" %}
+    {% elif kind == 'array' %}
+      <div class="curve-ed">
+        {% if chart %}
+        <figure class="plot">
+          <svg class="chart" viewBox="0 0 {{ chart.w }} {{ chart.h }}" role="img" aria-label="{{ label }} chart" data-units="{{ units }}" data-xl="{{ chart.x_label or 'X' }}">
+            {% for py, t in chart.yticks %}<line class="gridline" x1="{{ chart.left }}" x2="{{ chart.w - chart.right }}" y1="{{ py }}" y2="{{ py }}"/><text class="tick" x="{{ chart.left - 7 }}" y="{{ py + 4 }}" text-anchor="end">{{ t }}</text>{% endfor %}
+            {% for px, t in chart.xticks %}<line class="gridline gridline-v" x1="{{ px }}" x2="{{ px }}" y1="{{ chart.top }}" y2="{{ chart.h - chart.bottom }}"/><text class="tick" x="{{ px }}" y="{{ chart.h - chart.bottom + 17 }}" text-anchor="middle">{{ t }}</text>{% endfor %}
+            <polygon class="area" points="{{ chart.area }}"/>
+            <polyline class="line" points="{{ chart.line }}"/>
+            {% for p in chart.points %}<circle class="pt" cx="{{ p.px }}" cy="{{ p.py }}" r="4" data-x="{{ p.xl }}" data-y="{{ p.yl }}"/>{% endfor %}
+            {% if chart.x_label %}<text class="axis-title" x="{{ (chart.left + chart.w - chart.right) / 2 }}" y="{{ chart.h - 4 }}" text-anchor="middle">{{ chart.x_label }}</text>{% endif %}
+          </svg>
+        </figure>
+        {% endif %}
+        <div class="curve-vals">
+          <div class="subbar"><h2>Values</h2><button type="button" class="tool" data-copy-table="#values">{{ icon('copy') }}<span>Copy</span></button></div>
+          <div class="tbl-scroll">
+            <table id="values" class="vtable">
+              <thead><tr><th>#</th>{% if has_x %}<th>{{ x_label or 'X' }}</th>{% endif %}<th>{{ y_label or 'Value' }}{% if units %} ({{ units }}){% endif %}</th></tr></thead>
+              <tbody>{% for i, x, y in rows %}<tr><td class="i">{{ i }}</td>{% if has_x %}<td class="x">{{ x }}</td>{% endif %}<td class="v">{{ y }}</td></tr>{% endfor %}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      {% if used_by %}
+      <div class="usedby"><span class="dim">Axis for</span>{% for u in used_by %}<a class="chip chip-link" href="{{ u.url }}">{{ u.label }}</a>{% endfor %}</div>
+      {% endif %}
+    {% else %}
+      <fieldset class="group scalar">
+        <legend>{{ cat_label }}</legend>
+        <div class="prop-row"><span class="prop-l">{{ c.name }}</span><span class="field field-lg k-{{ kind }}"><span class="mono">{{ value }}</span>{% if units %}<small>{{ units }}</small>{% endif %}</span></div>
+      </fieldset>
+    {% endif %}
+  </div>
+  {{ dlgfoot(prev, next, "/t/" ~ slug ~ "#" ~ back) }}
+</article>
+{% endblock %}
+
+{% block status %}<span class="led on"></span><span>{{ tune_label }}</span><span class="st-sep"></span><span class="mono">{{ c.name }}</span>{% if dims %}<span class="st-sep"></span><span class="st-dim">{{ dims }}</span>{% endif %}<span class="st-grow"></span><span class="st-dim">← → previous / next</span>{% endblock %}
+
+{% block after %}<div class="bubble" role="status" hidden></div>{% endblock %}

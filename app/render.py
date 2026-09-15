@@ -5,13 +5,17 @@ from dataclasses import dataclass, field
 
 from .parser import Constant, fmt_value
 
+# TunerStudio-style table coloring: a light blue→cyan→green→yellow→red ramp that keeps
+# black cell text readable everywhere. AFR runs the other way so rich reads red.
+TS_RAMP = ["#7b9bff", "#6fd6e6", "#86e07a", "#f0e25a", "#f7a54a", "#f0604c"]
+
 # name -> (color stops low..high, low label, high label)
 PALETTES: dict[str, tuple[list[str], str, str]] = {
-    "ve": (["#12a150", "#8fcf2f", "#f2d100", "#f08a00", "#e0301e"], "low", "high"),
-    "spark": (["#2456ff", "#5a4dff", "#9b3ff0", "#e0337a", "#ff3b1f"], "retard", "advance"),
-    "afr": (["#ff3b30", "#ff9500", "#ffd60a", "#34c759", "#0a84ff"], "rich", "lean"),
-    "default": (["#1b3a8a", "#1f7fa8", "#22b39a", "#b9d23a", "#f5c518"], "low", "high"),
-    "diff": (["#388eff", "#1a2127", "#ff5630"], "lower", "higher"),
+    "ve": (TS_RAMP, "low", "high"),
+    "spark": (TS_RAMP, "retard", "advance"),
+    "afr": (TS_RAMP[::-1], "rich", "lean"),
+    "default": (TS_RAMP, "low", "high"),
+    "diff": (["#3d7bf0", "#8a9099", "#f0583a"], "lower", "higher"),
 }
 
 
@@ -31,8 +35,17 @@ def color_at(t: float, name: str) -> tuple[str, str]:
     i = min(int(pos), len(stops) - 2)
     f = pos - i
     r, g, b = (round(a + (bb - a) * f) for a, bb in zip(stops[i], stops[i + 1]))
+    return f"#{r:02x}{g:02x}{b:02x}", ink_for(r, g, b)
+
+
+def ink_for(r: int, g: int, b: int) -> str:
     lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
-    return f"#{r:02x}{g:02x}{b:02x}", ("#000" if lum > 0.55 else "#fff")
+    return "#000" if lum > 0.42 else "#fff"
+
+
+def mix(c1: str, c2: str, t: float) -> tuple[int, int, int]:
+    a, b = _hex(c1), _hex(c2)
+    return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
 
 
 def gradient_css(name: str) -> str:
@@ -90,6 +103,7 @@ class Grid:
     note: str = ""
     is_diff: bool = False
     fuel: str | None = None
+    url: str = ""
 
     @property
     def gradient(self) -> str:
@@ -167,14 +181,3 @@ def build_grid(gid: str, title: str, z: Constant, x: Constant | None = None, y: 
         grid.rows.append(Row(y_labels[r], r, cells))
     return grid
 
-
-def build_curve_grid(gid: str, title: str, y: Constant, x: Constant | None, x_label: str = "",
-                     y_label: str = "", units: str = "") -> Grid:
-    """A 1D curve as a one-row heatmap with its bins across the top."""
-    flat = Constant(y.name, "table", list(y.values), 1, len(y.values), y.units, y.digits, y.page)
-    g = build_grid(gid, title, flat, x=x, palette_name="default", units=units or y.units or "",
-                   x_label=x_label, y_label="")
-    if g.rows:
-        g.rows[0].label = y_label or "value"
-    g.name = y.name
-    return g

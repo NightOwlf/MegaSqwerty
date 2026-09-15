@@ -181,13 +181,15 @@ class CurveView:
 
 
 def curves(doc: TuneDoc, tmap: dict) -> list[CurveView]:
-    out = []
+    out, seen = [], set()
     for c in tmap.get("curves", []):
         if not isinstance(c, dict):
             continue
         y = first_present(doc, c.get("y"))
-        if y is None or y.is_table or len(y.values) < 2:
+        # inis often define several editors over the same data (e.g. a gauge variant); show it once.
+        if y is None or y.is_table or len(y.values) < 2 or y.name in seen:
             continue
+        seen.add(y.name)
         x = first_present(doc, c.get("x"))
         if x is not None and len(x.values) != len(y.values):
             x = None
