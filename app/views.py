@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from urllib.parse import quote
 
 from . import diff as diffmod
+from .nav import CATEGORY_LABEL, CATEGORY_ORDER, categorize
 from .parser import Constant, TuneDoc, fmt_value, values_equal
 from .render import Grid, axis_labels, build_grid, palette
 from .tablemaps import CurveView, TableView, all_tables, curves, meta_digits, meta_units
@@ -15,19 +16,12 @@ from .tablemaps import CurveView, TableView, all_tables, curves, meta_digits, me
 # 64 intensity levels, one character per cell; "." marks a non-numeric cell.
 THUMB_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 
-# Order matters: the first pattern that matches the label + constant name wins.
-CATEGORIES: list[tuple[str, str, str]] = [
-    ("target", "AFR / Lambda", r"afr|lambda|\bego|stoich"),
-    ("boost", "Boost", r"boost|wastegate|turbo"),
-    ("cam", "VVT / Cam", r"vvt|\bcam"),
-    ("idle", "Idle", r"idle|\biac"),
-    ("ignition", "Ignition", r"ign|spark|advance|\badv|timing|dwell|knock|trailing"),
-    ("fuel", "Fuel", r"\bve\b|\bve[a-z]|fuel|inj|crank|prime|warmup|\bwue|accel|reqfuel"),
-    ("throttle", "Throttle", r"etb|throttle|pedal|\btps"),
-    ("other", "Other", ""),
-]
-CATEGORY_LABELS = {cid: label for cid, label, _ in CATEGORIES}
-KINDS = [("number", "Numbers"), ("option", "Options"), ("array", "Arrays"), ("table", "Tables")]
+# Categories (Engine, Fuel, AFR/Lambda, Ignition, Cranking, …) come from app/nav.py.
+CATEGORY_LABELS = CATEGORY_LABEL
+# Toolbar buttons are narrow; the full label is in the menu header and tooltips.
+CAT_SHORT = {"engine": "Engine", "fuel": "Fuel", "afr": "AFR / λ", "spark": "Ignition", "crank": "Cranking",
+             "accel": "Accel", "idle": "Idle", "boost": "Boost", "vvt": "VVT / Cam", "knock": "Protection",
+             "sensors": "Sensors", "io": "I/O", "log": "Logging", "script": "Scripting", "other": "Other"}
 KIND_LABEL = {"number": "Number", "option": "Option", "array": "Array", "table": "Table"}
 TAB_NAMES = {"ve": "VE", "spark": "Spark", "afr": "AFR", "ve2": "VE 2"}
 
@@ -72,9 +66,17 @@ ICONS = {
     "folder": '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
     "info": '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/>',
     "down": '<path d="m6 9 6 6 6-6"/>',
+    "engine": '<path d="M4 10h2V8h4V6h4v2h3l2 2h1v6h-1l-2 2H9l-3-3H4z"/>',
+    "thermo": '<path d="M10 14.5V4a2 2 0 0 1 4 0v10.5a4 4 0 1 1-4 0z"/><path d="M12 9v8"/>',
+    "accel": '<path d="m3 17 6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
+    "shield": '<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="M12 8v5M12 16h.01"/>',
+    "chip": '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4'
+            'M18 9h4M18 15h4"/>',
+    "disk": '<path d="M5 3h11l3 3v15H5z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/>',
 }
-CAT_ICONS = {"target": "target", "boost": "boost", "cam": "cam", "idle": "idle", "ignition": "ignition",
-             "fuel": "fuel", "throttle": "throttle", "other": "other"}
+CAT_ICONS = {"engine": "engine", "fuel": "fuel", "afr": "target", "spark": "ignition", "crank": "key",
+             "accel": "accel", "idle": "idle", "boost": "boost", "vvt": "cam", "knock": "shield",
+             "sensors": "thermo", "io": "chip", "log": "disk", "script": "code", "other": "other"}
 
 
 # ------------------------------------------------------------------ helpers
@@ -105,14 +107,6 @@ def display_value(c: Constant, tmap: dict | None = None) -> str:
 
 def kind_of(c: Constant) -> str:
     return {"scalar": "number", "string": "option", "array": "array", "table": "table"}.get(c.kind, "option")
-
-
-def categorize(*texts: str) -> str:
-    s = " ".join(t for t in texts if t).lower()
-    for cid, _, pat in CATEGORIES:
-        if pat and re.search(pat, s):
-            return cid
-    return "other"
 
 
 def _search(*parts: str) -> str:
@@ -294,6 +288,7 @@ class SettingRow:
     line: str
     url: str
     search: str
+    cat: str = "other"
 
 
 @dataclass
@@ -306,25 +301,34 @@ class TuneModel:
     settings: list[SettingRow]
     table_cats: list[tuple[str, str, int]]
     curve_cats: list[tuple[str, str, int]]
-    kinds: list[tuple[str, str, int]]
-    menus: list[tuple[str, str, list[dict]]] = None
+    setting_cats: list[tuple[str, str, int]]
+    menus: list[tuple[str, str, str, int, list[dict]]]
 
 
-def _menus(tables: list[TableCard], curve_cards: list[CurveCard]) -> list[tuple[str, str, list[dict]]]:
-    """TunerStudio-style toolbar menus: every table and curve, grouped by category."""
+def _menus(tables: list[TableCard], curve_cards: list[CurveCard],
+           settings: list[SettingRow]) -> list[tuple[str, str, str, int, list[dict]]]:
+    """TunerStudio-style toolbar menus, one per category: its tables and curves, then its settings.
+
+    -> (category, label, short label, tables + curves, items). Every table and curve is in exactly one menu.
+    """
+    n_settings = Counter(s.cat for s in settings)
     out = []
-    for cid, label, _ in CATEGORIES:
+    for cid in CATEGORY_ORDER:
         items = [{"label": t.label, "url": t.url, "kind": "grid", "meta": t.dims} for t in tables if t.cat == cid]
         items += [{"label": c.label, "url": c.url, "kind": "curve", "meta": f"{c.n} pts"}
                   for c in curve_cards if c.cat == cid]
+        n = len(items)
+        if n_settings[cid]:
+            items.append({"label": "Settings", "url": "#settings", "kind": "list", "meta": str(n_settings[cid]),
+                          "chip": cid})
         if items:
-            out.append((cid, label, items))
+            out.append((cid, CATEGORY_LABEL[cid], CAT_SHORT[cid], n, items))
     return out
 
 
 def _cat_counts(items) -> list[tuple[str, str, int]]:
     counts = Counter(i.cat for i in items)
-    return [(cid, label, counts[cid]) for cid, label, _ in CATEGORIES if counts[cid]]
+    return [(cid, CATEGORY_LABEL[cid], counts[cid]) for cid in CATEGORY_ORDER if counts[cid]]
 
 
 def curve_views(doc: TuneDoc, tmap: dict, table_views: list[TableView]) -> list[CurveView]:
@@ -364,13 +368,12 @@ def tune_model(slug: str, doc: TuneDoc, tmap: dict) -> TuneModel:
         k = kind_of(c)
         value, units = display_value(c, tmap), meta_units(tmap, c)
         line = spark(c.values, w=60, h=20)[0] if k == "array" and len(c.values) <= 512 else ""
+        cat = categorize(c.name)
         settings.append(SettingRow(c.name, k, value, units, line,
                                    c_url(slug, c.name) if k in ("array", "table") else "",
-                                   _search(c.name, value, units)))
-    kc = Counter(s.kind for s in settings)
+                                   _search(c.name, value, units, CATEGORY_LABELS[cat]), cat))
     return TuneModel(featured, tviews, cvs, tables, curve_cards, settings, _cat_counts(tables),
-                     _cat_counts(curve_cards), [(k, label, kc[k]) for k, label in KINDS if kc[k]],
-                     _menus(tables, curve_cards))
+                     _cat_counts(curve_cards), _cat_counts(settings), _menus(tables, curve_cards, settings))
 
 
 # ------------------------------------------------------------------ gauges
@@ -469,7 +472,7 @@ def demo_grid() -> Grid:
 def table_nav(slug: str, tviews: list[TableView]) -> tuple[list[dict], list[tuple[str, list[dict]]]]:
     items = [{"name": v.z.name, "label": v.label, "cat": categorize(v.label, v.z.name), "url": c_url(slug, v.z.name)}
              for v in tviews]
-    groups = [(label, [i for i in items if i["cat"] == cid]) for cid, label, _ in CATEGORIES]
+    groups = [(CATEGORY_LABEL[cid], [i for i in items if i["cat"] == cid]) for cid in CATEGORY_ORDER]
     return items, [(label, g) for label, g in groups if g]
 
 

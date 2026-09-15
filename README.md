@@ -2,8 +2,13 @@
 
 An online viewer for TunerStudio `.msq` tune files: MegaSquirt (MS1/MS2/MS3), Speeduino, rusEFI and FOME
 (including vendor boards such as the Vato Tuned VTHPNP). Upload a tune from your phone and you get a
-shareable link. The page shows VE, spark and AFR/lambda heatmaps, every other table and curve, and a
-searchable list of all settings. It can also diff two tunes cell by cell.
+shareable link. It can also diff two tunes cell by cell.
+
+The viewer is laid out to be familiar to a TunerStudio user: a toolbar of tuning-category menus (Fuel,
+Ignition, Idle, Boost, Cam/VVT, Sensors…), Dash / Tables / Curves / Settings tabs, windows that read like
+TunerStudio's dialogs, a gauge cluster of key settings, and a status bar. Tables use TunerStudio-style
+blue→red cells with load up the left and RPM along the bottom, and have a 3D view. There's a dark and a
+light theme. On a phone the tabs move to a bottom bar and menus open as bottom sheets.
 
 No login, no accounts, no secrets. **Anyone with a link can see that tune.**
 
@@ -77,8 +82,8 @@ adding a firmware means adding one JSON file.
 
 - Reads `[TableEditor]` for each table's z constant, x/y bins, title and axis labels; `[Constants]` for units
   and digits; `[CurveEditor]` for 1D curves; and the ini's `signature`.
-- Features the main VE, ignition and target AFR/lambda tables as tabs. Every other table is written with
-  `"featured": false` and shows up, labelled, under **Other tables**.
+- Features the main VE, ignition and target AFR/lambda tables on the Dash. Every other table is written with
+  `"featured": false`; it still shows up, labelled, under **Tables** and in its category menu.
 - `#if NAME` blocks take their first branch by default. Use `--else LAMBDA` (repeatable) to take the `#else`
   branch instead.
 - `--no-signature` leaves out the ini's exact signature, for a map meant to cover a whole family.
@@ -125,8 +130,18 @@ Resolution order for an uploaded tune:
    change.
 4. The generic fallback: every 2D table rendered with its raw name and index axes.
 
-Constants the map doesn't mention are never dropped. Every 2D constant renders under **Other tables**, and
-every constant is listed in **All settings**.
+Constants the map doesn't mention are never dropped. Every 2D constant is listed under **Tables** and in a
+category menu, and every constant is listed under **Settings**.
+
+### Categories
+
+`app/nav.py` sorts every table, curve and setting into a TunerStudio-style category from its name and its
+label in the tablemap: Engine, Fuel, AFR/Lambda, Ignition, Cranking & Warmup, Accel Enrichment, Idle,
+Boost, Cam/VVT, Knock & Protection, Sensors, I/O, Logging, Scripting, and Other for anything unmatched.
+Matching is an ordered keyword scan (the first category that matches wins, so `idleVeTable` is Idle rather
+than Fuel), and nothing is ever dropped. Categories drive the toolbar menus and the Tables, Curves and
+Settings filters. To move something, add a keyword to `CATEGORIES`; to change the order, edit
+`CATEGORY_ORDER`.
 
 ## Abuse controls
 

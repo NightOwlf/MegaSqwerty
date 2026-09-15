@@ -4,7 +4,7 @@
     {% if not hide_title %}
     <div class="hm-titles">
       <h3 class="hm-title">{% if detail_url %}<a href="{{ detail_url }}">{{ g.title }}</a>{% else %}{{ g.title }}{% endif %}</h3>
-      <p class="hm-sub mono">{% if g.name and g.name != g.title %}{{ g.name }} · {% endif %}{{ g.dims }}{% if g.units %} · <span data-units>{{ g.units }}</span>{% endif %}</p>
+      <p class="hm-sub mono">{% if g.name and g.name != g.title %}{{ g.name }} · {% endif %}{{ g.dims }}{% if g.units %} · <span data-units-label>{{ g.units }}</span>{% endif %}</p>
     </div>
     {% endif %}
     <div class="hm-tools" role="toolbar" aria-label="Table view">

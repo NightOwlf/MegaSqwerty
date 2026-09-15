@@ -173,16 +173,19 @@
     runSearch();
   }
 
+  function setChip(key, val) {
+    var bar = $('[data-chips="' + key + '"]');
+    if (!bar || !$('[data-chip="' + val + '"]', bar)) val = "all";
+    chipState[key] = val;
+    if (bar) $$("[data-chip]", bar).forEach(function (x) { x.setAttribute("aria-pressed", x.dataset.chip === val ? "true" : "false"); });
+    applyFilters();
+  }
   $$("[data-chips]").forEach(function (bar) {
-    var key = bar.dataset.chips;
     var on = $("[data-chip][aria-pressed=true]", bar);
-    chipState[key] = on ? on.dataset.chip : "all";
+    chipState[bar.dataset.chips] = on ? on.dataset.chip : "all";
     bar.addEventListener("click", function (e) {
       var b = e.target.closest("[data-chip]");
-      if (!b) return;
-      chipState[key] = b.dataset.chip;
-      $$("[data-chip]", bar).forEach(function (x) { x.setAttribute("aria-pressed", x === b ? "true" : "false"); });
-      applyFilters();
+      if (b) setChip(bar.dataset.chips, b.dataset.chip);
     });
   });
 
@@ -245,6 +248,8 @@
         return;
       }
       clearSearch();
+      // a menu's "Settings" entry opens the Settings tab filtered to that category
+      if (a.dataset.gotoChip) setChip("settings", a.dataset.gotoChip);
       history.replaceState(null, "", "#" + id);
       showTab(id, true);
     });
@@ -483,10 +488,24 @@
   }
 
   /* ---------- tap tooltip ---------- */
+  var bubbleAnchor = null;
   function hideBubble() {
     if (bubble) bubble.hidden = true;
+    bubbleAnchor = null;
     selected.forEach(function (el) { el.classList.remove("sel", "hl"); });
     selected = [];
+  }
+  // Follows its cell while the page or table scrolls, and only goes away once the cell is off screen.
+  // (Scroll events queued before a tap arrive after the click, so hiding on any scroll lost fresh taps.)
+  function placeBubble() {
+    if (!bubble || bubble.hidden || !bubbleAnchor) return;
+    var r = bubbleAnchor.getBoundingClientRect();
+    if (r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth) { hideBubble(); return; }
+    var bw = bubble.offsetWidth, bh = bubble.offsetHeight;
+    var top = r.top - bh - 10;
+    if (top < 8) top = r.bottom + 10;
+    bubble.style.left = Math.min(Math.max(8, r.left + r.width / 2 - bw / 2), window.innerWidth - bw - 8) + "px";
+    bubble.style.top = top + "px";
   }
   function line(cls, text) {
     var d = document.createElement("div");
@@ -498,12 +517,8 @@
     bubble.textContent = "";
     parts.forEach(function (p) { bubble.appendChild(p); });
     bubble.hidden = false;
-    var r = anchor.getBoundingClientRect(), bw = bubble.offsetWidth, bh = bubble.offsetHeight;
-    var left = Math.min(Math.max(8, r.left + r.width / 2 - bw / 2), window.innerWidth - bw - 8);
-    var top = r.top - bh - 10;
-    if (top < 8) top = r.bottom + 10;
-    bubble.style.left = left + "px";
-    bubble.style.top = top + "px";
+    bubbleAnchor = anchor;
+    placeBubble();
   }
   function valueLine(value, units) {
     var v = line("val", value);
@@ -562,7 +577,8 @@
     if (xTh) { xTh.classList.add("hl"); selected.push(xTh); }
     showBubble(td, parts);
   });
-  document.addEventListener("scroll", function () { if (bubble && !bubble.hidden) hideBubble(); }, { capture: true, passive: true });
+  document.addEventListener("scroll", placeBubble, { capture: true, passive: true });
+  window.addEventListener("resize", placeBubble);
 
   /* ---------- diff cell modes ---------- */
   $$("[data-diff-modes]").forEach(function (group) {
@@ -611,7 +627,8 @@
     var stored = fig.dataset.fuel, mode = stored;
     var cells = $$("tbody td", fig);
     cells.forEach(function (td) { td.dataset.v = td.textContent; });
-    var lo = $("[data-lo]", fig), hi = $("[data-hi]", fig), unitsEl = $("[data-units]", fig);
+    // Not [data-units]: the <table> carries that too, and writing to it would wipe every row.
+    var lo = $("[data-lo]", fig), hi = $("[data-hi]", fig), unitsEl = $("[data-units-label]", fig);
     [lo, hi].forEach(function (el) { if (el) el.dataset.v = el.textContent; });
     var sel = $("[data-stoich]", fig), custom = $("[data-stoich-custom]", fig);
     var showing = $("[data-showing]", fig), bar = $(".fuelbar", fig);

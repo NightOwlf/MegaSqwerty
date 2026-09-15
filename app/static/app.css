@@ -152,10 +152,16 @@ p { margin: 0; }
 .chip.mono { font-weight: 500; }
 .chip-link { text-decoration: none; }
 .chip-link:hover { border-color: var(--sel-line); }
-.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
-.c-fuel { background: #3fbf5f; } .c-ignition { background: #a78bfa; } .c-target { background: #38bdf8; }
-.c-boost { background: #fb923c; } .c-cam { background: #f472b6; } .c-idle { background: #eab308; }
-.c-throttle { background: #2dd4bf; } .c-other { background: #94a3b8; } .c-changed { background: var(--up); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--cat, var(--faint)); flex: none; }
+/* one color per app/nav.py category, used by dots and toolbar icons */
+.c-engine, [data-cat=engine] { --cat: #60a5fa; } .c-fuel, [data-cat=fuel] { --cat: #3fbf5f; }
+.c-afr, [data-cat=afr] { --cat: #38bdf8; } .c-spark, [data-cat=spark] { --cat: #a78bfa; }
+.c-crank, [data-cat=crank] { --cat: #fb7185; } .c-accel, [data-cat=accel] { --cat: #facc15; }
+.c-idle, [data-cat=idle] { --cat: #2dd4bf; } .c-boost, [data-cat=boost] { --cat: #fb923c; }
+.c-vvt, [data-cat=vvt] { --cat: #f472b6; } .c-knock, [data-cat=knock] { --cat: #ef4444; }
+.c-sensors, [data-cat=sensors] { --cat: #a3e635; } .c-io, [data-cat=io] { --cat: #818cf8; }
+.c-log, [data-cat=log] { --cat: #cbd5e1; } .c-script, [data-cat=script] { --cat: #e879f9; }
+.c-other, [data-cat=other] { --cat: #94a3b8; } .c-changed { --cat: var(--up); }
 .s-changed { background: var(--up); } .s-mismatch { background: #d69e2e; } .s-only_a { background: var(--down); }
 .s-only_b { background: #8b5cf6; } .s-same { background: var(--faint); }
 .tag { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 3px; font: 800 11px var(--mono); background: var(--down); color: #fff; flex: none; }
@@ -278,10 +284,8 @@ fieldset.group { padding-top: 6px; }
 .tbbtn-ic .ic { width: 22px; height: 22px; }
 .tbbtn-ic b { position: absolute; top: -3px; left: calc(50% + 8px); min-width: 15px; padding: 0 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--win); color: var(--muted); font: 700 9.5px/13px var(--mono); text-align: center; }
 .tbbtn-l { white-space: nowrap; }
-.tbmenu[data-cat=fuel] .tbbtn-ic .ic { color: #3fbf5f; } .tbmenu[data-cat=ignition] .tbbtn-ic .ic { color: #a78bfa; }
-.tbmenu[data-cat=target] .tbbtn-ic .ic { color: #38bdf8; } .tbmenu[data-cat=boost] .tbbtn-ic .ic { color: #fb923c; }
-.tbmenu[data-cat=cam] .tbbtn-ic .ic { color: #f472b6; } .tbmenu[data-cat=idle] .tbbtn-ic .ic { color: #eab308; }
-.tbmenu[data-cat=throttle] .tbbtn-ic .ic { color: #2dd4bf; } .tbmenu[data-cat=other] .tbbtn-ic .ic { color: var(--muted); }
+.tbbtn-ic .ic { color: var(--cat, var(--muted)); }
+.tbpop a.tbpop-settings { margin-top: 4px; border-top: 1px solid var(--line); }
 .tbmenu[open] .tbbtn-ic .ic { color: #fff !important; }
 /* Invisible full-screen layer behind an open menu: tapping outside closes it, no script needed. */
 .tbmenu[open] > .tbbtn::before { content: ""; position: fixed; inset: 0; z-index: 50; cursor: default; }

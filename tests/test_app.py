@@ -57,6 +57,9 @@ def test_upload_view_json_download_delete(client, fx):
     assert "data-thumb=" in html and "data-global-search" in html
     assert 'class="tbmenu" data-cat="fuel"' in html and 'data-tab="curves"' in html  # toolbar menus + tabs
     assert 'class="dial"' in html and "Rev limit" in html and "data-hm-3d" in html  # rev-limit gauge, 3D tool
+    # nav.py categories: every table and curve card is also in a toolbar menu, and settings filter by category
+    assert html.count('role="menuitem" href="/t/') == html.count('<a class="tcard')
+    assert 'data-goto-chip="fuel"' in html and 'data-chip="engine"' in html and 'data-chip-val="knock"' in html
     key = re.search(r'<code id="dkey" class="mono">([^<]+)</code>', html).group(1)
     assert page.headers["x-robots-tag"] == "noindex"
 

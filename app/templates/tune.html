@@ -25,12 +25,12 @@
     </div>
     {% if m.menus %}
     <div class="toolbar" aria-label="Tables and curves by category">
-      {% for cid, label, items in m.menus %}
+      {% for cid, label, short, n, items in m.menus %}
       <details class="tbmenu" data-cat="{{ cid }}">
-        <summary class="tbbtn" title="{{ label }}"><span class="tbbtn-ic">{{ icon(cat_icons[cid]) }}<b>{{ items|length }}</b></span><span class="tbbtn-l">{{ label }}</span></summary>
+        <summary class="tbbtn" title="{{ label }}"><span class="tbbtn-ic">{{ icon(cat_icons[cid]) }}{% if n %}<b>{{ n }}</b>{% endif %}</span><span class="tbbtn-l">{{ short }}</span></summary>
         <div class="tbpop" role="menu" aria-label="{{ label }}">
-          <p class="tbpop-h"><i class="dot c-{{ cid }}"></i>{{ label }}<small>{{ items|length }}</small></p>
-          {% for it in items %}<a role="menuitem" href="{{ it.url }}">{{ icon(it.kind) }}<span>{{ it.label }}</span><small>{{ it.meta }}</small></a>{% endfor %}
+          <p class="tbpop-h"><i class="dot c-{{ cid }}"></i>{{ label }}{% if n %}<small>{{ n }}</small>{% endif %}</p>
+          {% for it in items %}<a role="menuitem" href="{{ it.url }}"{% if it.chip %} class="tbpop-settings" data-goto-chip="{{ it.chip }}"{% endif %}>{{ icon(it.kind) }}<span>{{ it.label }}</span><small>{{ it.meta }}</small></a>{% endfor %}
         </div>
       </details>
       {% endfor %}
@@ -156,12 +156,12 @@
     <h2>{{ icon('list') }}Settings <span class="count" data-count="settings">{{ m.settings|length }}</span></h2>
     <div class="chipbar" data-chips="settings">
       <button type="button" class="fchip" data-chip="all" aria-pressed="true">All <b>{{ m.settings|length }}</b></button>
-      {% for id, label, n in m.kinds %}<button type="button" class="fchip" data-chip="{{ id }}" aria-pressed="false">{{ label }} <b>{{ n }}</b></button>{% endfor %}
+      {% for id, label, n in m.setting_cats %}<button type="button" class="fchip" data-chip="{{ id }}" aria-pressed="false"><i class="dot c-{{ id }}"></i>{{ label }} <b>{{ n }}</b></button>{% endfor %}
     </div>
   </div>
   <ul class="slist" data-list="settings" data-label="Settings">
     {% for s in m.settings %}
-    <li data-s="{{ s.search }}" data-chip-val="{{ s.kind }}">{% if s.url %}<a class="srow" href="{{ s.url }}">{% else %}<div class="srow">{% endif %}
+    <li data-s="{{ s.search }}" data-chip-val="{{ s.cat }}">{% if s.url %}<a class="srow" href="{{ s.url }}">{% else %}<div class="srow">{% endif %}
       <span class="sname">{{ s.name }}</span>
       <span class="sval">{% if s.line %}{{ spark(s.line, "", "spark spark-sm", 60, 20) }}{% endif %}<span class="field k-{{ s.kind }}"><span class="mono">{{ s.value }}</span>{% if s.units %}<small>{{ s.units }}</small>{% endif %}{% if s.kind == 'option' %}{{ icon('down', 'caret') }}{% endif %}</span></span>
       {% if s.url %}<span class="chev">{{ icon('right') }}</span></a>{% else %}</div>{% endif %}
