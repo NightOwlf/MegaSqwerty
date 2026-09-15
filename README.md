@@ -2,8 +2,22 @@
 
 An online viewer for TunerStudio `.msq` tune files: MegaSquirt (MS1/MS2/MS3), Speeduino, rusEFI and FOME
 (including vendor boards such as the Vato Tuned VTHPNP). Upload a tune from your phone and you get a
-shareable link. The page shows VE, spark and AFR/lambda heatmaps, every other table and curve, and a
-searchable list of all settings. It can also diff two tunes cell by cell.
+shareable link. It can also diff two tunes cell by cell.
+
+The viewer is laid out to be familiar to a TunerStudio user: a menu bar of tuning categories (Fuel,
+Ignition, Idle, Boost, Cam/VVT, Sensors…), a project tree down the left, panels that read like
+TunerStudio's dialogs, a status bar along the bottom, and tables in TunerStudio's blue→red scale with
+load ascending up the left and RPM across the bottom.
+
+- **Everything is filed under the menu you'd expect.** Tables, curves and settings are sorted into
+  categories by name, so a tune with 84 tables and 1200 settings is still one click deep. See
+  `app/nav.py`.
+- **One search box for the whole tune.** It filters the tree and lists matching settings with their
+  values; click a result to jump to it.
+- **Tap a cell** for its RPM, load and value — as a bubble, in the table's readout, and with the axis
+  headers highlighted.
+- **λ / AFR toggle** on target-mixture tables, with a selectable stoichiometric ratio.
+- Collapse individual tables or all of them at once, and switch to compact cells for dense tables.
 
 No login, no accounts, no secrets. **Anyone with a link can see that tune.**
 
@@ -77,8 +91,9 @@ adding a firmware means adding one JSON file.
 
 - Reads `[TableEditor]` for each table's z constant, x/y bins, title and axis labels; `[Constants]` for units
   and digits; `[CurveEditor]` for 1D curves; and the ini's `signature`.
-- Features the main VE, ignition and target AFR/lambda tables as tabs. Every other table is written with
-  `"featured": false` and shows up, labelled, under **Other tables**.
+- Features the main VE, ignition and target AFR/lambda tables. Every other table is written with
+  `"featured": false`; it still appears, labelled, under its category, but it is drawn lazily as you
+  scroll to it rather than up front.
 - `#if NAME` blocks take their first branch by default. Use `--else LAMBDA` (repeatable) to take the `#else`
   branch instead.
 - `--no-signature` leaves out the ini's exact signature, for a map meant to cover a whole family.
@@ -109,7 +124,7 @@ hand-written for now.
 
 - Any constant reference (`z`, `x`, `y`, a summary `name`) can be a string or a list of candidates. The first
   one present in the tune wins.
-- `palette`: `ve` (green→red), `spark` (blue→red), `afr` (rich→lean), or `default`.
+- `palette`: `ve`, `spark` and `default` all use TunerStudio's blue→red scale; `afr` is rich→lean.
 - Tables with `afr` palette or lambda/AFR units get the **λ / AFR toggle**. Lambda is shown by default when
   the table is stored as lambda (units say lambda, or values fall in 0.6–1.3), and AFR is computed from a
   selectable stoich (14.7 gasoline, 9.76 E85, …). The page always says which one it is showing.
@@ -123,8 +138,17 @@ Resolution order for an uploaded tune:
    change.
 4. The generic fallback: every 2D table rendered with its raw name and index axes.
 
-Constants the map doesn't mention are never dropped. Every 2D constant renders under **Other tables**, and
-every constant is listed in **All settings**.
+Constants the map doesn't mention are never dropped. Every 2D constant is rendered, and every constant is
+listed under some category.
+
+### Categories
+
+`app/nav.py` sorts every table, curve and setting into a TunerStudio-style category from its name and its
+label in the tablemap — Engine, Fuel, AFR/Lambda, Ignition, Cranking & Warmup, Accel Enrichment, Idle,
+Boost, Cam/VVT, Knock & Protection, Sensors, I/O, Logging, Scripting, and Other for anything unmatched.
+Matching is an ordered keyword scan (the first category that matches wins, so `idleVeTable` is Idle rather
+than Fuel), and nothing is ever dropped. To move something, add a keyword to `CATEGORIES`; to change the
+order the categories appear in, edit `CATEGORY_ORDER`.
 
 ## Abuse controls
 

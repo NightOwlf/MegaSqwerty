@@ -6,11 +6,14 @@ from dataclasses import dataclass, field
 from .parser import Constant, fmt_value
 
 # name -> (color stops low..high, low label, high label)
+# TunerStudio's table editors ramp cold blue -> green -> yellow -> hot red,
+# and tuners read that ramp by muscle memory, so VE, spark and the generic
+# tables all use it. AFR keeps its own rich->lean ramp.
 PALETTES: dict[str, tuple[list[str], str, str]] = {
-    "ve": (["#12a150", "#8fcf2f", "#f2d100", "#f08a00", "#e0301e"], "low", "high"),
-    "spark": (["#2456ff", "#5a4dff", "#9b3ff0", "#e0337a", "#ff3b1f"], "retard", "advance"),
-    "afr": (["#ff3b30", "#ff9500", "#ffd60a", "#34c759", "#0a84ff"], "rich", "lean"),
-    "default": (["#1b3a8a", "#1f7fa8", "#22b39a", "#b9d23a", "#f5c518"], "low", "high"),
+    "ve": (["#2340a8", "#1f8fd0", "#25b45e", "#d8d515", "#ef8b12", "#df2f1c"], "low", "high"),
+    "spark": (["#2340a8", "#1f8fd0", "#25b45e", "#d8d515", "#ef8b12", "#df2f1c"], "retard", "advance"),
+    "afr": (["#df2f1c", "#ef8b12", "#d8d515", "#25b45e", "#1f8fd0"], "rich", "lean"),
+    "default": (["#2340a8", "#1f8fd0", "#25b45e", "#d8d515", "#ef8b12", "#df2f1c"], "low", "high"),
     "diff": (["#388eff", "#1a2127", "#ff5630"], "lower", "higher"),
 }
 
@@ -87,6 +90,7 @@ class Grid:
     rows: list[Row] = field(default_factory=list)
     lo: str = ""
     hi: str = ""
+    avg: str = ""
     note: str = ""
     is_diff: bool = False
     fuel: str | None = None
@@ -103,6 +107,10 @@ class Grid:
     @property
     def dims(self) -> str:
         return f"{len(self.rows)}×{len(self.x_labels)}"
+
+    @property
+    def cell_count(self) -> int:
+        return len(self.rows) * len(self.x_labels)
 
 
 def _decimals_needed(v: float, cap: int = 3) -> int:
@@ -150,6 +158,7 @@ def build_grid(gid: str, title: str, z: Constant, x: Constant | None = None, y: 
         y_label=y_label or (y.units or "" if y is not None else ""),
         x_labels=axis_labels(x_bins, z.cols, x.digits if x is not None else None),
         lo=fmt_value(lo, digits) if nums else "", hi=fmt_value(hi, digits) if nums else "",
+        avg=fmt_value(sum(nums) / len(nums), digits) if nums else "",
         fuel=fuel_mode(z, u, palette_name),
     )
     if (x is not None and x_bins is None) or (y is not None and y_bins is None):

@@ -10,7 +10,47 @@
 <meta name="twitter:title" content="{{ og_title }}">
 <meta name="twitter:description" content="{{ og_desc }}">
 {% endblock %}
-{% block bodyclass %}has-tabbar{% endblock %}
+{% block bodyclass %}has-jumpbar{% endblock %}
+
+{% block menus %}
+<details class="menu"><summary>File</summary>
+  <div class="mpop">
+    <a class="mi" href="/t/{{ slug }}.msq" download><span class="mi-k">Download .msq</span></a>
+    <a class="mi" href="/t/{{ slug }}.json"><span class="mi-k">Open as JSON</span></a>
+    <button class="mi" type="button" data-copy-link><span class="mi-k">Copy link</span></button>
+    <button class="mi" type="button" data-share hidden><span class="mi-k">Share…</span></button>
+    <hr>
+    <a class="mi" href="/compare?a={{ slug }}"><span class="mi-k">Compare with another tune…</span></a>
+    <a class="mi" href="/"><span class="mi-k">Open another tune…</span></a>
+    <hr>
+    <a class="mi danger" href="#sec-manage" data-jump="manage"><span class="mi-k">Delete this tune…</span></a>
+  </div>
+</details>
+<details class="menu"><summary>View</summary>
+  <div class="mpop">
+    <button class="mi" type="button" data-all-tables="open"><span class="mi-k">Expand all tables</span></button>
+    <button class="mi" type="button" data-all-tables="close"><span class="mi-k">Collapse all tables</span></button>
+    <hr>
+    <button class="mi" type="button" data-density><span class="mi-k">Toggle compact cells</span></button>
+    <button class="mi" type="button" data-dock-toggle><span class="mi-k">Toggle sections panel</span></button>
+    <hr>
+    <a class="mi" href="#sec-overview" data-jump="overview"><span class="mi-k">Back to overview</span></a>
+  </div>
+</details>
+{% for sec in sections %}
+<details class="menu cat"><summary>{{ sec.label }}</summary>
+  <div class="mpop">
+    {% for it in sec.items[:18] %}
+    <a class="mi" href="#sec-{{ it.anchor }}" data-jump="{{ it.anchor }}"><span class="mi-k">{{ it.label }}</span><span class="mi-s mono">{{ it.sub }}</span></a>
+    {% endfor %}
+    {% if sec.items|length > 18 %}<a class="mi" href="#sec-{{ sec.anchor }}" data-jump="{{ sec.anchor }}"><span class="mi-k">See all {{ sec.items|length }}…</span></a>{% endif %}
+    {% if sec.items and sec.settings %}<hr>{% endif %}
+    {% if sec.settings %}<a class="mi" href="#sec-{{ sec.settings_anchor }}" data-jump="{{ sec.settings_anchor }}"><span class="mi-k">{{ sec.label }} settings</span><span class="mi-s mono">{{ sec.settings|length }}</span></a>{% endif %}
+  </div>
+</details>
+{% endfor %}
+{% endblock %}
+
 {% block main %}
 {% if delete_key %}
 <section class="keybox" role="status">
@@ -20,101 +60,124 @@
 </section>
 {% endif %}
 
-<section class="tunehead">
-  <div class="chips">
-    <span class="chip fam">{{ doc.family if doc.family != 'unknown' else 'Unknown firmware' }}</span>
-    {% if doc.version %}<span class="chip ghost mono">{{ doc.version }}</span>{% endif %}
-    {% if doc.board %}<span class="chip ghost mono">{{ doc.board }}</span>{% endif %}
-    {% if doc.branch and doc.branch|lower != doc.board|lower %}<span class="chip ghost mono">{{ doc.branch }}</span>{% endif %}
-  </div>
-  <p class="sig mono" title="Firmware signature, exactly as written in the file">{{ doc.signature or '(no signature in file)' }}</p>
-  {% if doc.tune_comment %}<h1 class="comment">{{ doc.tune_comment }}</h1>{% endif %}
-  <p class="meta">
-    {% if doc.write_date %}<span>Saved {{ doc.write_date }}</span>{% endif %}
-    {% if doc.author %}<span>by {{ doc.author }}</span>{% endif %}
-    <span>Layout: {{ tmap.name }}</span>
-  </p>
-  {% if summary %}
-  <dl class="readouts">
-    {% for label, val, units in summary %}
-    <div class="ro"><dt>{{ label }}</dt><dd><span class="v">{{ val }}</span>{% if units %}<span class="u">{{ units }}</span>{% endif %}</dd></div>
-    {% endfor %}
-  </dl>
-  {% endif %}
-  <div class="actions">
-    <button class="btn primary" type="button" data-share hidden>Share</button>
-    <button class="btn" type="button" data-copy-link>Copy link</button>
-    <a class="btn" href="/t/{{ slug }}.msq" download>Download .msq</a>
-    <a class="btn" href="/compare?a={{ slug }}">Compare…</a>
-    <a class="btn ghost" href="/t/{{ slug }}.json">JSON</a>
+<section class="panel" id="sec-overview" data-section="overview">
+  <div class="panel-bar"><h2 class="panel-title">Tune overview</h2><span class="pb-sub mono">{{ tmap.name }}</span></div>
+  <div class="panel-body">
+    <div class="chips">
+      <span class="chip fam">{{ doc.family if doc.family != 'unknown' else 'Unknown firmware' }}</span>
+      {% if doc.version %}<span class="chip ghost mono">{{ doc.version }}</span>{% endif %}
+      {% if doc.board %}<span class="chip ghost mono">{{ doc.board }}</span>{% endif %}
+      {% if doc.branch and doc.branch|lower != doc.board|lower %}<span class="chip ghost mono">{{ doc.branch }}</span>{% endif %}
+    </div>
+    {% if doc.tune_comment %}<h1 class="comment">{{ doc.tune_comment }}</h1>{% endif %}
+    <p class="sig mono" title="Firmware signature, exactly as written in the file"><span class="sig-k">signature</span>{{ doc.signature or '(no signature in file)' }}</p>
+
+    {% if summary %}
+    <dl class="readouts">
+      {% for label, val, units in summary %}
+      <div class="ro"><dt>{{ label }}</dt><dd><span class="v">{{ val }}</span>{% if units %}<span class="u">{{ units }}</span>{% endif %}</dd></div>
+      {% endfor %}
+    </dl>
+    {% endif %}
+
+    <dl class="facts">
+      <div><dt>Tables</dt><dd>{{ n_tables }}</dd></div>
+      <div><dt>Curves</dt><dd>{{ n_curves }}</dd></div>
+      <div><dt>Settings</dt><dd>{{ n_settings }}</dd></div>
+      <div><dt>Layout</dt><dd>{{ tmap.name }}</dd></div>
+      {% if doc.write_date %}<div><dt>Saved</dt><dd>{{ doc.write_date }}</dd></div>{% endif %}
+      {% if doc.author %}<div><dt>Author</dt><dd>{{ doc.author }}</dd></div>{% endif %}
+    </dl>
+
+    <div class="actions">
+      <button class="btn primary" type="button" data-share hidden>Share</button>
+      <button class="btn" type="button" data-copy-link>Copy link</button>
+      <a class="btn" href="/t/{{ slug }}.msq" download>Download .msq</a>
+      <a class="btn" href="/compare?a={{ slug }}">Compare…</a>
+      <a class="btn ghost" href="/t/{{ slug }}.json">JSON</a>
+    </div>
+    {% if not sections %}<p class="note">No constants were found in this file.</p>{% endif %}
   </div>
 </section>
 
-{% for g in fgrids %}
-<section class="panel" data-panel="{{ g.id }}">
-  {% include "_grid.html" %}
+{% for sec in sections %}
+<section class="panel" id="sec-{{ sec.anchor }}" data-section="{{ sec.anchor }}">
+  <div class="panel-bar"><h2 class="panel-title">{{ sec.label }}</h2><span class="pb-sub mono">{{ sec.sub }}</span></div>
+  <div class="panel-body">
+    {% for it in sec.items %}
+      {% if it.kind == 'table' %}
+      <article class="card lazy" id="sec-{{ it.anchor }}" data-section="{{ it.anchor }}" data-name="{{ (it.label ~ ' ' ~ it.payload.z.name)|lower }}"
+               hx-get="/t/{{ slug }}/table?name={{ it.payload.z.name|urlencode }}" hx-trigger="intersect once" hx-swap="innerHTML">
+        <figure class="hm-wrap">
+          <div class="hm-bar"><span class="hm-title">{{ it.label }}</span>{% if it.label != it.payload.z.name %}<code class="hm-name">{{ it.payload.z.name }}</code>{% endif %}<span class="hm-dims mono">{{ it.sub }}</span></div>
+          <div class="skeleton">loading…</div>
+        </figure>
+      </article>
+      {% else %}
+      <article class="card" id="sec-{{ it.anchor }}" data-section="{{ it.anchor }}" data-name="{{ (it.label ~ ' ' ~ it.payload.name)|lower }}">
+        {% with g = it.payload %}{% include "_grid.html" %}{% endwith %}
+      </article>
+      {% endif %}
+    {% endfor %}
+
+    {% if sec.settings %}
+    <div class="setblock" id="sec-{{ sec.settings_anchor }}" data-section="{{ sec.settings_anchor }}">
+      <div class="sb-bar"><h3>Settings</h3><span class="mono dim">{{ sec.settings|length }}</span></div>
+      <div class="tbl-scroll">
+        <table class="settings">
+          <thead><tr><th>Name</th><th>Value</th><th>Units</th></tr></thead>
+          <tbody>
+          {% for c in sec.settings %}
+            <tr data-setting data-name="{{ c.name|lower }} {{ (c|cval)|lower }}">
+              <td class="n mono">{{ c.name }}</td>
+              {% if c.kind in ('scalar', 'string') %}
+              <td class="v mono">{{ c|cval }}</td>
+              {% else %}
+              <td class="v"><details hx-get="/t/{{ slug }}/const?name={{ c.name|urlencode }}" hx-trigger="toggle once" hx-target="find .cbody"><summary class="mono">{{ c|cval }}</summary><div class="cbody">loading…</div></details></td>
+              {% endif %}
+              <td class="u">{{ c.units or '' }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+  </div>
 </section>
 {% endfor %}
 
-{% if other %}
-<section class="panel" data-panel="other">
-  <h2 class="panel-title">{{ 'Tables' if not fgrids else 'Other tables' }} <small>{{ other|length }}</small></h2>
-  {% if not fgrids %}<p class="note">No layout for this firmware yet, so every table is shown with its raw name and cell-index axes.</p>{% endif %}
-  <input class="search" type="search" placeholder="Filter {{ other|length }} tables" data-filter="#other-list > .lazy" autocomplete="off" autocapitalize="off" spellcheck="false">
-  <div id="other-list">
-  {% for v in other %}
-    <div class="lazy" data-name="{{ (v.label ~ ' ' ~ v.z.name)|lower }}" hx-get="/t/{{ slug }}/table?name={{ v.z.name|urlencode }}" hx-trigger="intersect once" hx-swap="innerHTML">
-      <div class="hm-head"><span class="hm-title">{{ v.label }}</span>{% if v.label != v.z.name %}<code class="hm-name">{{ v.z.name }}</code>{% endif %}<span class="hm-dims mono">{{ v.z.rows }}×{{ v.z.cols }}</span></div>
-      <div class="skeleton">loading…</div>
+<section class="panel" id="sec-manage" data-section="manage">
+  <div class="panel-bar"><h2 class="panel-title">File</h2><span class="pb-sub mono">{{ slug }}</span></div>
+  <div class="panel-body">
+    <div class="actions">
+      <a class="btn" href="/t/{{ slug }}.msq" download>Download original .msq</a>
+      <a class="btn ghost" href="/t/{{ slug }}.json">Parsed JSON</a>
     </div>
-  {% endfor %}
+    <details class="danger">
+      <summary>Delete this tune</summary>
+      <form method="post" action="/t/{{ slug }}/delete" hx-delete="/t/{{ slug }}" hx-target="#del-msg" hx-confirm="Delete this tune for everyone? This can't be undone.">
+        <label>Delete key <input name="key" autocomplete="off" autocapitalize="off" spellcheck="false" required></label>
+        <button class="btn danger-btn" type="submit">Delete</button>
+        <div id="del-msg"></div>
+      </form>
+    </details>
   </div>
-</section>
-{% endif %}
-
-{% if cgrids %}
-<section class="panel" data-panel="curves">
-  <h2 class="panel-title">Curves <small>{{ cgrids|length }}</small></h2>
-  {% for g in cgrids %}{% include "_grid.html" %}{% endfor %}
-</section>
-{% endif %}
-
-<section class="panel" data-panel="all">
-  <h2 class="panel-title">All settings <small>{{ settings|length }}</small></h2>
-  <input class="search" type="search" placeholder="Search {{ settings|length }} settings" data-filter="#settings tbody tr" autocomplete="off" autocapitalize="off" spellcheck="false">
-  <div class="tbl-scroll">
-  <table id="settings" class="settings">
-    <thead><tr><th>Name</th><th>Value</th><th>Units</th></tr></thead>
-    <tbody>
-    {% for c in settings %}
-      <tr data-name="{{ c.name|lower }} {{ (c|cval)|lower }}">
-        <td class="n mono">{{ c.name }}</td>
-        {% if c.kind in ('scalar', 'string') %}
-        <td class="v mono">{{ c|cval }}</td>
-        {% else %}
-        <td class="v"><details hx-get="/t/{{ slug }}/const?name={{ c.name|urlencode }}" hx-trigger="toggle once" hx-target="find .cbody"><summary class="mono">{{ c|cval }}</summary><div class="cbody">loading…</div></details></td>
-        {% endif %}
-        <td class="u">{{ c.units or '' }}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  </div>
-
-  <details class="danger">
-    <summary>Delete this tune</summary>
-    <form method="post" action="/t/{{ slug }}/delete" hx-delete="/t/{{ slug }}" hx-target="#del-msg" hx-confirm="Delete this tune for everyone? This can't be undone.">
-      <label>Delete key <input name="key" autocomplete="off" autocapitalize="off" spellcheck="false" required></label>
-      <button class="btn danger-btn" type="submit">Delete</button>
-      <div id="del-msg"></div>
-    </form>
-  </details>
 </section>
 {% endblock %}
 
+{% block status %}
+<span class="st led"></span>
+<span class="st">{{ doc.family if doc.family != 'unknown' else 'Unknown firmware' }}</span>
+<span class="st mono sig-st">{{ doc.signature or 'no signature' }}</span>
+<span class="st dim">Layout {{ tmap.name }}</span>
+<span class="st dim">{{ n_tables }} tables · {{ n_curves }} curves · {{ n_settings }} settings</span>
+<span class="st crumb" data-crumb></span>
+{% endblock %}
+
 {% block after %}
-<nav class="tabbar" role="tablist" aria-label="Sections">
-  {% for t in tabs %}<button type="button" role="tab" data-tab="{{ t.id }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ t.label }}</button>{% endfor %}
+<nav class="jumpbar" aria-label="Quick jump">
+  {% for j in jumps %}<a href="#sec-{{ j.id }}" data-jump="{{ j.id }}" data-tab="{{ j.id }}">{{ j.label }}</a>{% endfor %}
 </nav>
 <div class="bubble" role="status" hidden></div>
 {% endblock %}

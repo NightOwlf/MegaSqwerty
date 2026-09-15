@@ -7,24 +7,29 @@
   <p class="lede">Paste two tune links (or their 10-character codes), or paste one and upload the other.</p>
 </section>
 {% if error %}<p class="flash err" role="alert">{{ error }}</p>{% endif %}
-<form class="compare" method="post" action="/compare" enctype="multipart/form-data" data-max="{{ max_bytes }}">
-  <div class="field">
-    <label for="fa">Tune A <span class="dim">(before)</span></label>
-    <input id="fa" name="a" value="{{ a }}" placeholder="…/t/Ab3dE6gH9k" autocomplete="off" autocapitalize="off" spellcheck="false" hx-get="/compare/check" hx-trigger="input changed delay:350ms, load" hx-target="#ca">
-    <output id="ca" class="check"></output>
+<section class="panel">
+  <div class="panel-bar"><h2 class="panel-title">Pick two tunes</h2><span class="pb-sub mono">A → B</span></div>
+  <div class="panel-body">
+    <form class="compare" method="post" action="/compare" enctype="multipart/form-data" data-max="{{ max_bytes }}">
+      <div class="field">
+        <label for="fa">Tune A <span class="dim">(before)</span></label>
+        <input id="fa" name="a" value="{{ a }}" placeholder="…/t/Ab3dE6gH9k" autocomplete="off" autocapitalize="off" spellcheck="false" hx-get="/compare/check" hx-trigger="input changed delay:350ms, load" hx-target="#ca">
+        <output id="ca" class="check"></output>
+      </div>
+      <div class="field">
+        <label for="fb">Tune B <span class="dim">(after)</span></label>
+        <input id="fb" name="b" value="{{ b }}" placeholder="…/t/Zx9yW8vU7t" autocomplete="off" autocapitalize="off" spellcheck="false" hx-get="/compare/check" hx-trigger="input changed delay:350ms, load" hx-target="#cb">
+        <output id="cb" class="check"></output>
+      </div>
+      <p class="or mono">or upload tune B</p>
+      <label class="dropzone small">
+        <input type="file" name="file">
+        <span class="dz-main">Choose .msq for B</span>
+        <span class="dz-sub">{{ max_mb }} MB max. It's saved as a new shareable tune.</span>
+      </label>
+      <p class="upload-status mono" aria-live="polite"></p>
+      <button class="btn primary big" type="submit">Compare</button>
+    </form>
   </div>
-  <div class="field">
-    <label for="fb">Tune B <span class="dim">(after)</span></label>
-    <input id="fb" name="b" value="{{ b }}" placeholder="…/t/Zx9yW8vU7t" autocomplete="off" autocapitalize="off" spellcheck="false" hx-get="/compare/check" hx-trigger="input changed delay:350ms, load" hx-target="#cb">
-    <output id="cb" class="check"></output>
-  </div>
-  <p class="or mono">or upload tune B</p>
-  <label class="dropzone small">
-    <input type="file" name="file">
-    <span class="dz-main">Choose .msq for B</span>
-    <span class="dz-sub">{{ max_mb }} MB max. It's saved as a new shareable tune.</span>
-  </label>
-  <p class="upload-status mono" aria-live="polite"></p>
-  <button class="btn primary big" type="submit">Compare</button>
-</form>
+</section>
 {% endblock %}

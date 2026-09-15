@@ -8,7 +8,31 @@
 <meta property="og:url" content="{{ og_url }}">
 <meta name="twitter:card" content="summary">
 {% endblock %}
-{% block bodyclass %}has-tabbar{% endblock %}
+{% block bodyclass %}has-jumpbar{% endblock %}
+
+{% block menus %}
+<details class="menu"><summary>File</summary>
+  <div class="mpop">
+    <button class="mi" type="button" data-copy-link><span class="mi-k">Copy link</span></button>
+    <button class="mi" type="button" data-share hidden><span class="mi-k">Share…</span></button>
+    <hr>
+    <a class="mi" href="/t/{{ a }}"><span class="mi-k">Open tune A</span></a>
+    <a class="mi" href="/t/{{ b }}"><span class="mi-k">Open tune B</span></a>
+    <a class="mi" href="/d/{{ b }}/{{ a }}"><span class="mi-k">Swap A and B</span></a>
+    <hr>
+    <a class="mi" href="/compare"><span class="mi-k">Compare other tunes…</span></a>
+  </div>
+</details>
+<details class="menu"><summary>View</summary>
+  <div class="mpop">
+    <button class="mi" type="button" data-all-tables="open"><span class="mi-k">Expand all tables</span></button>
+    <button class="mi" type="button" data-all-tables="close"><span class="mi-k">Collapse all tables</span></button>
+    <button class="mi" type="button" data-density><span class="mi-k">Toggle compact cells</span></button>
+    <button class="mi" type="button" data-dock-toggle><span class="mi-k">Toggle sections panel</span></button>
+  </div>
+</details>
+{% endblock %}
+
 {% block main %}
 {% if delete_key %}
 <section class="keybox" role="status">
@@ -17,81 +41,116 @@
   <div class="keyrow"><code id="dkey" class="mono">{{ delete_key }}</code><button class="btn" type="button" data-copy="#dkey">Copy key</button></div>
 </section>
 {% endif %}
-<section class="tunehead">
-  <p class="eyebrow mono">diff</p>
-  <div class="pair">
-    <a class="side" href="/t/{{ a }}"><span class="tag">A</span><span class="sig mono">{{ da.signature or '(no signature)' }}</span>{% if da.tune_comment %}<span class="c">{{ da.tune_comment }}</span>{% endif %}</a>
-    <a class="side" href="/t/{{ b }}"><span class="tag b">B</span><span class="sig mono">{{ db.signature or '(no signature)' }}</span>{% if db.tune_comment %}<span class="c">{{ db.tune_comment }}</span>{% endif %}</a>
-  </div>
-  {% if da.family != db.family %}<p class="flash warn">These tunes are for different firmware ({{ da.family }} vs {{ db.family }}). Only settings with the same name are compared.</p>{% endif %}
-  <dl class="readouts">
-    <div class="ro"><dt>Tables changed</dt><dd><span class="v">{{ tables_changed }}</span></dd></div>
-    <div class="ro"><dt>Cells changed</dt><dd><span class="v">{{ cells_changed }}</span></dd></div>
-    <div class="ro"><dt>Settings differ</dt><dd><span class="v">{{ settings|length }}</span></dd></div>
-  </dl>
-  <div class="actions">
-    <button class="btn primary" type="button" data-share hidden>Share</button>
-    <button class="btn" type="button" data-copy-link>Copy link</button>
-    <a class="btn" href="/d/{{ b }}/{{ a }}">Swap A/B</a>
+
+<section class="panel" id="sec-overview" data-section="overview">
+  <div class="panel-bar"><h2 class="panel-title">Diff summary</h2><span class="pb-sub mono">A → B</span></div>
+  <div class="panel-body">
+    <div class="pair">
+      <a class="side" href="/t/{{ a }}"><span class="tag">A</span><span class="sig mono">{{ da.signature or '(no signature)' }}</span>{% if da.tune_comment %}<span class="c">{{ da.tune_comment }}</span>{% endif %}</a>
+      <a class="side" href="/t/{{ b }}"><span class="tag b">B</span><span class="sig mono">{{ db.signature or '(no signature)' }}</span>{% if db.tune_comment %}<span class="c">{{ db.tune_comment }}</span>{% endif %}</a>
+    </div>
+    {% if da.family != db.family %}<p class="flash warn">These tunes are for different firmware ({{ da.family }} vs {{ db.family }}). Only settings with the same name are compared.</p>{% endif %}
+    <dl class="readouts">
+      <div class="ro"><dt>Tables changed</dt><dd><span class="v">{{ tables_changed }}</span></dd></div>
+      <div class="ro"><dt>Cells changed</dt><dd><span class="v">{{ cells_changed }}</span></dd></div>
+      <div class="ro"><dt>Settings differ</dt><dd><span class="v">{{ settings|length }}</span></dd></div>
+    </dl>
+    <div class="actions">
+      <button class="btn primary" type="button" data-share hidden>Share</button>
+      <button class="btn" type="button" data-copy-link>Copy link</button>
+      <a class="btn" href="/d/{{ b }}/{{ a }}">Swap A/B</a>
+      <a class="btn ghost" href="/t/{{ a }}">Tune A</a>
+      <a class="btn ghost" href="/t/{{ b }}">Tune B</a>
+    </div>
   </div>
 </section>
 
 {% for td in featured %}
-<section class="panel" data-panel="{{ td.id }}">
-  {% set g = grids[td.id] %}
-  {% if g %}
-    {% if td.status == 'same' %}<p class="flash ok">No changes in {{ td.label }}.</p>{% else %}<p class="note mono">{{ td.changed }} of {{ td.total }} cells changed</p>{% endif %}
-    {% set notes = td.axis_notes %}
-    {% include "_grid.html" %}
-  {% else %}
-    <h2 class="panel-title">{{ td.label }}</h2>
-    <p class="flash warn">{{ td.message }}</p>
-  {% endif %}
+<section class="panel" id="sec-{{ td.id }}" data-section="{{ td.id }}">
+  <div class="panel-bar"><h2 class="panel-title">{{ td.label }}</h2><span class="pb-sub mono">{% if td.total %}{{ td.changed }}/{{ td.total }} cells{% else %}{{ td.status }}{% endif %}</span></div>
+  <div class="panel-body">
+    {% set g = grids[td.id] %}
+    {% if g %}
+      {% if td.status == 'same' %}<p class="flash ok">No changes in {{ td.label }}.</p>{% endif %}
+      <article class="card">
+        {% set notes = td.axis_notes %}
+        {% include "_grid.html" %}
+      </article>
+    {% else %}
+      <p class="flash warn">{{ td.message }}</p>
+    {% endif %}
+  </div>
 </section>
 {% endfor %}
 
-<section class="panel" data-panel="other">
-  <h2 class="panel-title">Other tables <small>{{ others|length }} differ · {{ same_others }} same</small></h2>
-  {% if not others %}<p class="flash ok">No other table differs.</p>{% endif %}
-  {% for td in others %}
-    {% if td.status == 'changed' %}
-    <div class="lazy" hx-get="/d/{{ a }}/{{ b }}/table?name={{ td.name|urlencode }}" hx-trigger="intersect once" hx-swap="innerHTML">
-      <div class="hm-head"><span class="hm-title">{{ td.label }}</span><span class="hm-dims mono">{{ td.changed }}/{{ td.total }} cells</span></div>
-      <div class="skeleton">loading…</div>
-    </div>
-    {% else %}
-    <div class="diffline"><span class="hm-title">{{ td.label }}</span>{% if td.label != td.name %} <code class="hm-name">{{ td.name }}</code>{% endif %}<p class="note">{{ td.message }}</p></div>
-    {% endif %}
-  {% endfor %}
+<section class="panel" id="sec-other-tables" data-section="other-tables">
+  <div class="panel-bar"><h2 class="panel-title">Other tables that differ</h2><span class="pb-sub mono">{{ others|length }} differ · {{ same_others }} same</span></div>
+  <div class="panel-body">
+    {% if not others %}<p class="flash ok">No other table differs.</p>{% endif %}
+    {% for td in others %}
+      {% if td.status == 'changed' %}
+      <article class="card lazy" id="sec-o{{ loop.index0 }}-{{ td.id }}" data-section="o{{ loop.index0 }}-{{ td.id }}" data-name="{{ (td.label ~ ' ' ~ td.name)|lower }}"
+               hx-get="/d/{{ a }}/{{ b }}/table?name={{ td.name|urlencode }}" hx-trigger="intersect once" hx-swap="innerHTML">
+        <figure class="hm-wrap">
+          <div class="hm-bar"><span class="hm-title">{{ td.label }}</span><span class="hm-dims mono">{{ td.changed }}/{{ td.total }} cells</span></div>
+          <div class="skeleton">loading…</div>
+        </figure>
+      </article>
+      {% else %}
+      <article class="card" id="sec-o{{ loop.index0 }}-{{ td.id }}" data-section="o{{ loop.index0 }}-{{ td.id }}" data-name="{{ (td.label ~ ' ' ~ td.name)|lower }}">
+        <figure class="hm-wrap">
+          <div class="hm-bar"><span class="hm-title">{{ td.label }}</span>{% if td.label != td.name %}<code class="hm-name">{{ td.name }}</code>{% endif %}</div>
+          <div class="hm-body"><p class="note">{{ td.message }}</p></div>
+        </figure>
+      </article>
+      {% endif %}
+    {% endfor %}
+  </div>
 </section>
 
-<section class="panel" data-panel="settings">
-  <h2 class="panel-title">Settings that differ <small>{{ settings|length }}</small></h2>
-  {% if settings %}
-  <input class="search" type="search" placeholder="Filter" data-filter="#sdiff tbody tr" autocomplete="off" autocapitalize="off" spellcheck="false">
-  <div class="tbl-scroll">
-  <table id="sdiff" class="settings sdiff">
-    <thead><tr><th>Name</th><th>A</th><th>B</th></tr></thead>
-    <tbody>
-    {% for s in settings %}
-      <tr data-name="{{ s.name|lower }}" class="{{ s.status }}">
-        <td class="n mono">{{ s.name }}{% if s.units %} <span class="u">{{ s.units }}</span>{% endif %}</td>
-        {% if s.detail %}
-        <td class="v mono" colspan="2">{{ s.a }}{% for d in s.detail %}<br><span class="dim">{{ d }}</span>{% endfor %}</td>
-        {% else %}
-        <td class="v mono a">{{ s.a }}</td><td class="v mono b">{{ s.b }}</td>
-        {% endif %}
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
+{% for sec in sections %}
+<section class="panel" id="sec-{{ sec.settings_anchor }}" data-section="{{ sec.settings_anchor }}">
+  <div class="panel-bar"><h2 class="panel-title">{{ sec.label }} settings</h2><span class="pb-sub mono">{{ sec.settings|length }} differ</span></div>
+  <div class="panel-body">
+    <div class="tbl-scroll">
+      <table class="settings sdiff">
+        <thead><tr><th>Name</th><th>A</th><th>B</th></tr></thead>
+        <tbody>
+        {% for s in sec.settings %}
+          <tr data-setting data-name="{{ s.name|lower }} {{ s.a|lower }} {{ s.b|lower }}" class="{{ s.status }}">
+            <td class="n mono">{{ s.name }}{% if s.units %} <span class="u">{{ s.units }}</span>{% endif %}</td>
+            {% if s.detail %}
+            <td class="v mono" colspan="2">{{ s.a }}{% for d in s.detail %}<br><span class="dim">{{ d }}</span>{% endfor %}</td>
+            {% else %}
+            <td class="v mono a">{{ s.a }}</td><td class="v mono b">{{ s.b }}</td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </div>
-  {% else %}<p class="flash ok">All scalar settings match.</p>{% endif %}
 </section>
+{% endfor %}
+{% if not settings %}
+<section class="panel" id="sec-no-settings" data-section="no-settings">
+  <div class="panel-bar"><h2 class="panel-title">Settings</h2></div>
+  <div class="panel-body"><p class="flash ok">All scalar settings match.</p></div>
+</section>
+{% endif %}
 {% endblock %}
+
+{% block status %}
+<span class="st led"></span>
+<span class="st">Diff</span>
+<span class="st mono sig-st">{{ a }} → {{ b }}</span>
+<span class="st dim">{{ tables_changed }} tables · {{ cells_changed }} cells · {{ settings|length }} settings</span>
+<span class="st crumb" data-crumb></span>
+{% endblock %}
+
 {% block after %}
-<nav class="tabbar" role="tablist" aria-label="Sections">
-  {% for t in tabs %}<button type="button" role="tab" data-tab="{{ t.id }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ t.label }}</button>{% endfor %}
+<nav class="jumpbar" aria-label="Quick jump">
+  {% for j in jumps %}<a href="#sec-{{ j.id }}" data-jump="{{ j.id }}" data-tab="{{ j.id }}">{{ j.label }}</a>{% endfor %}
 </nav>
 <div class="bubble" role="status" hidden></div>
 {% endblock %}

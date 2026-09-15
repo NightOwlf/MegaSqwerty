@@ -21,6 +21,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from . import diff as diffmod
 from .db import SLUG_RE, Store
+from .nav import NavGroup, NavItem, build_sections, nav_from_sections
 from .parser import MAX_BYTES, Constant, MsqError, TuneDoc, fmt_value, parse_msq
 from .render import build_curve_grid, build_grid
 from .tablemaps import TableView, all_tables, curves, find_table, meta_digits, meta_units, resolve_map, summary_fields
@@ -46,6 +47,11 @@ MESSAGES = {
 }
 
 TAB_NAMES = {"ve": "VE", "spark": "Spark", "afr": "AFR", "ve2": "VE 2"}
+
+# Short labels for the thumb-reach jump bar on phones.
+SHORT_CAT = {"engine": "Engine", "fuel": "Fuel", "afr": "AFR", "spark": "Spark", "crank": "Crank",
+             "accel": "Accel", "idle": "Idle", "boost": "Boost", "vvt": "VVT", "knock": "Knock",
+             "sensors": "Sensors", "io": "I/O", "log": "Logging", "script": "Script", "other": "Other"}
 
 
 class BodyTooLarge(Exception):
@@ -250,6 +256,36 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
     def summary_rows(doc: TuneDoc, tmap: dict):
         return [(label, display_value(c, tmap), meta_units(tmap, c)) for label, c in summary_fields(doc, tmap)]
 
+    def jump_bar(sections, first_label="Tune"):
+        """Phone-sized shortcut row: the handful of places people actually go."""
+        out = [{"id": "overview", "label": first_label}]
+        for sec in sections[:7]:
+            out.append({"id": sec.anchor, "label": SHORT_CAT.get(sec.key, sec.label.split()[0])})
+        return out
+
+    def diff_nav(featured, others, sections):
+        groups = [NavGroup("g-overview", "Diff", [NavItem("overview", "Summary", "", "page")] +
+                           [NavItem(t.id, t.label, f"{t.changed}/{t.total}" if t.total else t.status,
+                                    "table") for t in featured])]
+        if others:
+            groups.append(NavGroup("g-other", f"Tables that differ ({len(others)})",
+                                   [NavItem(f"o{i}-{t.id}", t.label, f"{t.changed}/{t.total}", "table")
+                                    for i, t in enumerate(others)]))
+        if sections:
+            groups.append(NavGroup("g-settings", f"Settings that differ ({sum(len(s_.settings) for s_ in sections)})",
+                                   [NavItem(s_.settings_anchor, s_.label, str(len(s_.settings)), "settings")
+                                    for s_ in sections]))
+        return groups
+
+    def diff_jumps(featured, others, sections):
+        out = [{"id": "overview", "label": "Diff"}]
+        out += [{"id": t.id, "label": t.label.split()[0][:8]} for t in featured[:3]]
+        if others:
+            out.append({"id": "other-tables", "label": "Tables"})
+        for s_ in sections[:3]:
+            out.append({"id": s_.settings_anchor, "label": SHORT_CAT.get(s_.key, s_.label.split()[0])})
+        return out
+
     # ------------------------------------------------------------- pages
     @app.get("/healthz")
     def healthz():
@@ -353,19 +389,18 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         cgrids = [build_curve_grid(cv.id, cv.label, cv.y, cv.x, cv.x_label, cv.y_label, meta_units(tmap, cv.y))
                   for cv in curves(doc, tmap)]
         summary = summary_rows(doc, tmap)
-        tabs = [{"id": g.id, "label": TAB_NAMES.get(g.id, g.title[:12])} for g in fgrids]
-        if other:
-            tabs.append({"id": "other", "label": "Other tables" if not fgrids else "Other"})
-        if cgrids:
-            tabs.append({"id": "curves", "label": "Curves"})
-        tabs.append({"id": "all", "label": "All settings" if len(tabs) < 3 else "All"})
+        settings = list(doc.constants.values())
+        sections = build_sections(fgrids, other, cgrids, settings)
+
         og_title, og_desc = og_for(doc, summary)
         delete_key = pop_delete_key(request, slug)
         resp = templates.TemplateResponse(request, "tune.html", {
-            "slug": slug, "doc": doc, "tmap": tmap, "fgrids": fgrids, "other": other, "cgrids": cgrids,
-            "summary": summary, "tabs": tabs, "delete_key": delete_key, "og_title": og_title,
+            "slug": slug, "doc": doc, "tmap": tmap, "sections": sections,
+            "nav": nav_from_sections(sections), "jumps": jump_bar(sections),
+            "n_tables": len(fgrids) + len(other), "n_curves": len(cgrids), "n_settings": len(settings),
+            "summary": summary, "delete_key": delete_key, "og_title": og_title,
             "og_desc": og_desc, "og_url": str(request.url.replace(query="", fragment="")),
-            "settings": list(doc.constants.values()),
+            "settings": settings,
         })
         if delete_key:
             resp.delete_cookie(f"dk_{slug}", path="/")
@@ -449,13 +484,13 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         others = [t for t in tds if not t.featured and t.status != "same"]
         same_others = sum(1 for t in tds if not t.featured and t.status == "same")
         settings = diffmod.diff_settings(da, db_)
-        tabs = [{"id": t.id, "label": TAB_NAMES.get(t.id, t.label[:12])} for t in featured]
-        tabs.append({"id": "other", "label": "Other"})
-        tabs.append({"id": "settings", "label": "Settings"})
+        sections = build_sections(settings=settings)
         delete_key = pop_delete_key(request, b)
         resp = templates.TemplateResponse(request, "diff.html", {
             "a": a, "b": b, "da": da, "db": db_, "featured": featured, "grids": grids, "others": others,
-            "same_others": same_others, "settings": settings, "tabs": tabs, "delete_key": delete_key,
+            "sections": sections, "nav": diff_nav(featured, others, sections),
+            "jumps": diff_jumps(featured, others, sections),
+            "same_others": same_others, "settings": settings, "delete_key": delete_key,
             "tables_changed": sum(1 for t in tds if t.status != "same"),
             "cells_changed": sum(t.changed for t in tds),
             "og_url": str(request.url.replace(query="", fragment="")),

@@ -51,7 +51,11 @@ def test_upload_view_json_download_delete(client, fx):
     html = page.text
     assert "rusEFI (FOME) Vthpnp.2026.03.19.vthpnp.3616320453" in html
     assert 'property="og:title"' in html and "FOME 2026.03.19 tune" in html
-    assert 'data-tab="ve"' in html and 'data-tab="other"' in html and 'data-tab="all"' in html
+    # TunerStudio-style navigation: a menu and a tree group per category.
+    for section in ('overview', 'cat-fuel', 'cat-spark', 'cat-afr', 'cat-vvt'):
+        assert f'data-section="{section}"' in html
+    assert "<summary>Fuel</summary>" in html and "<summary>Ignition</summary>" in html
+    assert 'id="tree"' in html and 'id="navq"' in html
     assert 'data-fuel="lambda"' in html
     key = re.search(r'<code id="dkey" class="mono">([^<]+)</code>', html).group(1)
     assert page.headers["x-robots-tag"] == "noindex"
@@ -82,6 +86,31 @@ def test_generic_fallback_page(client, fx):
     slug = slug_of(upload(client, fx("unknown_firmware.msq")))
     html = client.get(f"/t/{slug}").text
     assert "Unknown firmware" in html and "AcmeECU build 7" in html and "fooMap" in html
+
+
+def test_every_table_and_setting_is_reachable_from_the_tree(client, fx):
+    """The nav tree is the whole point of the layout: nothing may be orphaned."""
+    import re
+
+    from app import parser
+    from app.nav import build_sections
+    from app.tablemaps import all_tables, resolve_map
+
+    slug = slug_of(upload(client, fx("fome_vthpnp.msq")))
+    html = client.get(f"/t/{slug}").text
+    doc = parser.parse_msq(fx("fome_vthpnp.msq"))
+    featured, other = all_tables(doc, resolve_map(doc))
+
+    anchors = set(re.findall(r'id="sec-([^"]+)"', html))
+    jumps = set(re.findall(r'data-jump="([^"]+)"', html))
+    # every table has an anchor, and every tree link points at a real one
+    assert len(anchors) >= len(featured) + len(other)
+    assert jumps <= anchors | {"manage", "overview"}
+    # every constant is listed exactly once, under some category
+    sections = build_sections(settings=list(doc.constants.values()))
+    assert sum(len(s.settings) for s in sections) == len(doc.constants)
+    for name in doc.constants:
+        assert name in html
 
 
 @pytest.mark.parametrize("name,expect", [
