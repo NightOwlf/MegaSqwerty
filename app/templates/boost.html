@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon %}
+{% block title %}Prep for boost · {{ tune_label }} · MSQ Viewer{% endblock %}
+{% block bodyclass %}page-boost{% endblock %}
+{% macro g(v) %}{{ '%g'|format(v|round(2)) if v is not none else '' }}{% endmacro %}
+{% macro psi(kpa) %}{{ '%g'|format(psi_of(kpa)|round(1)) }}{% endmacro %}
+{% set led = {'ok': 'on', 'warn': 'warn', 'bad': 'bad', 'info': ''} %}
+{% block main %}
+
+<nav class="crumbs"><a href="/t/{{ slug }}">{{ icon('left') }}<span>{{ tune_label }}</span></a><span class="crumb-sep">/</span><span class="crumb-cur">Prep for boost</span></nav>
+
+<div class="boost">
+<section class="win">
+  <header class="win-title">{{ icon('boost') }}<h1>Prep for boost</h1><span class="win-sub">{{ family }}{% if doc.version %} {{ doc.version }}{% endif %}</span></header>
+  <div class="win-body">
+    <p class="lede-sm">Answer a few questions about your setup. This works out the most boost it can start you on, says why, and writes the fuel, timing, boost target and failsafes into a <b>new</b> tune with its own link. This tune is never changed.</p>
+    <div class="notice">{{ icon('warn') }}<p><strong>A starting point, not a finished tune.</strong> Every number here is conservative and generic: it can't know your engine. Log every drive with a wideband, stop at the first sign of knock or a lean mixture, and have someone experienced check the tune before you lean on it.</p></div>
+  </div>
+</section>
+
+{% if flash %}<p class="flash err" role="alert">{{ icon('warn') }}<span>{{ flash }}</span></p>{% endif %}
+
+<section class="win">
+  <header class="win-title">{{ icon('info') }}<h2>What this tune already has</h2></header>
+  <div class="win-body">
+    <ul class="facts">
+      {% for f in a.facts %}
+      <li class="fact fact-{{ f.status }}"><span class="led {{ led[f.status] }}"></span><b>{{ f.label }}</b><span class="fact-v">{{ f.value }}</span>{% if f.detail %}<small>{{ f.detail }}</small>{% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% if a.blockers %}
+    <div class="flash err"><span class="alert-ic">{{ icon('warn') }}</span><div><b>Sort these out before boost:</b><ul class="plist">{% for b in a.blockers %}<li>{{ b }}</li>{% endfor %}</ul></div></div>
+    {% endif %}
+  </div>
+</section>
+
+<form method="post" action="/t/{{ slug }}/boost" class="bform">
+<section class="win">
+  <header class="win-title">{{ icon('engine') }}<h2>Your setup</h2></header>
+  <div class="win-body qgrid">
+    <fieldset class="group">
+      <legend>Turbo or supercharger</legend>
+      <label class="q"><span class="ql">Wastegate spring pressure</span>
+        <span class="qin"><input name="spring_psi" type="number" step="0.5" min="2" max="30" inputmode="decimal" value="{{ g(ans.spring_psi) }}" required><small>psi</small></span>
+        <small class="qh">The boost the wastegate holds on its own, with no boost control. It's stamped on the actuator or in the kit's paperwork. Stage 1 runs exactly this.</small>
+      </label>
+      <label class="q"><span class="ql">Intercooler</span>
+        <select name="intercooler"><option value="yes"{{ ' selected' if ans.intercooler }}>Yes</option><option value="no"{{ ' selected' if not ans.intercooler }}>No</option></select>
+        <small class="qh">Without one, intake air gets hot fast and knock comes much earlier.</small>
+      </label>
+    </fieldset>
+
+    <fieldset class="group">
+      <legend>Engine and fuel</legend>
+      <label class="q"><span class="ql">Fuel</span>
+        <select name="fuel">{% for key, f in fuels.items() %}<option value="{{ key }}"{{ ' selected' if ans.fuel == key }}>{{ f.label }}</option>{% endfor %}</select>
+      </label>
+      <label class="q"><span class="ql">Engine internals</span>
+        <select name="internals"><option value="stock"{{ ' selected' if ans.internals == 'stock' }}>Stock</option><option value="built"{{ ' selected' if ans.internals == 'built' }}>Built for boost</option></select>
+      </label>
+      <label class="q"><span class="ql">Fuel pump and regulator</span>
+        <select name="pump">
+          <option value="upgraded"{{ ' selected' if ans.pump == 'upgraded' }}>Upgraded for boost</option>
+          <option value="stock"{{ ' selected' if ans.pump == 'stock' }}>Stock</option>
+          <option value="unsure"{{ ' selected' if ans.pump == 'unsure' }}>Not sure</option>
+        </select>
+        <small class="qh">A stock pump that can't hold pressure in boost leans the engine out at the worst moment.</small>
+      </label>
+      <label class="q"><span class="ql">Injector size</span>
+        <span class="qin"><input name="injector_cc" type="number" step="1" min="80" max="3000" inputmode="numeric" value="{{ g(ans.injector_cc) }}"><small>cc/min</small></span>
+      </label>
+      <label class="q"><span class="ql">Engine power without boost</span>
+        <span class="qin"><input name="na_hp" type="number" step="1" min="20" max="1500" inputmode="numeric" value="{{ g(ans.na_hp) }}"><small>hp</small></span>
+        <small class="qh">Both are used to check the injectors can keep up. Without them boost is held to {{ '%g'|format(unverified_cap) }} psi.</small>
+      </label>
+      {% if a.map_kpa is none %}
+      <label class="q"><span class="ql">MAP sensor range</span>
+        <span class="qin"><input name="map_kpa" type="number" step="5" min="100" max="1000" inputmode="numeric" value="{{ g(ans.map_kpa) }}"><small>kPa</small></span>
+        <small class="qh">The tune doesn't say. A 2.5 bar sensor is 250, a 3 bar is 300. Boost can never be set past what the sensor reads.</small>
+      </label>
+      {% endif %}
+    </fieldset>
+
+    <fieldset class="group">
+      <legend>Before any boost</legend>
+      <label class="check"><input type="checkbox" name="wideband" value="yes"{{ ' checked' if ans.wideband }}><span>I have a wideband O2 sensor that the ECU logs</span></label>
+      <small class="qh">Required. A narrowband can't see a lean mixture in boost until the damage is done.</small>
+    </fieldset>
+  </div>
+</section>
+
+<section class="win">
+  <header class="win-title">{{ icon('target') }}<h2>How much boost</h2></header>
+  <div class="win-body">
+    <div class="goals">
+      {% for key, label in goals.items() %}
+      <label class="goal{{ ' on' if ans.goal == key }}">
+        <input type="radio" name="goal" value="{{ key }}"{{ ' checked' if ans.goal == key }}>
+        <b>{{ label.split(' · ')[0] }}</b><span>{{ label.split(' · ')[1] if ' · ' in label else '' }}</span>
+      </label>
+      {% endfor %}
+    </div>
+    <label class="q q-inline"><span class="ql">Custom target</span>
+      <span class="qin"><input name="target_psi" type="number" step="0.5" min="1" max="40" inputmode="decimal" value="{{ g(ans.target_psi) }}"><small>psi</small></span>
+      <small class="qh">Used when you pick Custom. It's capped by whatever limit is smallest, and by {{ '%g'|format(step_psi) }} psi more than the tune already runs.</small>
+    </label>
+    <label class="check"><input type="checkbox" name="logged" value="yes"{{ ' checked' if ans.logged }}><span>I've logged the stage before this one: boost held steady, the wideband matched the targets, and there was no knock</span></label>
+    <small class="qh">Required for anything above the wastegate spring.</small>
+  </div>
+</section>
+
+<section class="win">
+  <header class="win-title">{{ icon('accel') }}<h2>Boost by gear or speed <span class="win-sub">optional</span></h2></header>
+  <div class="win-body">
+    <p class="hint">Less boost in the low gears (or at low speed) keeps the car from turning everything into wheelspin, and takes strain off the drivetrain. Anything you enter is still capped by the limits above, and if the ECU loses the gear or speed signal, boost falls back to the lowest value you set.</p>
+    <div class="goals goals-sm">
+      {% for key, label in (('none', 'One target everywhere'), ('gear', 'By gear'), ('speed', 'By speed')) %}
+      <label class="goal{{ ' on' if ans.schedule == key }}"><input type="radio" name="schedule" value="{{ key }}"{{ ' checked' if ans.schedule == key }}><b>{{ label }}</b></label>
+      {% endfor %}
+    </div>
+    <div class="sched">
+      <div class="sched-gear">
+        <p class="sched-t">Boost by gear (psi)</p>
+        <div class="gears">
+          {% for i in range(gears) %}
+          <label class="q q-sm"><span class="ql">Gear {{ i + 1 }}</span><input name="gear{{ i + 1 }}_psi" type="number" step="0.5" min="0" max="40" inputmode="decimal" value="{{ g(ans.gear_psi[i]) }}"></label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="sched-speed">
+        <p class="sched-t">Boost by speed
+          <select name="speed_unit"><option value="mph"{{ ' selected' if ans.speed_unit == 'mph' }}>mph</option><option value="kmh"{{ ' selected' if ans.speed_unit == 'kmh' }}>km/h</option></select>
+        </p>
+        <div class="speeds">
+          {% for i in range(speed_rows) %}
+          <div class="speedrow">
+            <label class="q q-sm"><span class="ql">From</span><input name="speed{{ i + 1 }}" type="number" step="1" min="0" max="400" inputmode="numeric" value="{{ g(ans.speeds[i][0]) }}"></label>
+            <label class="q q-sm"><span class="ql">Boost (psi)</span><input name="speed{{ i + 1 }}_psi" type="number" step="0.5" min="0" max="40" inputmode="decimal" value="{{ g(ans.speeds[i][1]) }}"></label>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="bactions">
+  <button class="btn primary big" type="submit" name="action" value="preview">{{ icon('shield') }}<span>Work out the plan</span></button>
+</div>
+
+{% if plan %}
+<section class="win win-plan" id="plan">
+  <header class="win-title">{{ icon('shield') }}<h2>The plan</h2><span class="win-sub">{{ plan.stage }}</span></header>
+  <div class="win-body">
+    {% if plan.errors or plan.blockers %}
+    <p class="verdict verdict-error"><span class="led bad"></span><b>This can't be built yet</b></p>
+    <ul class="plist">{% for m in plan.errors + plan.blockers %}<li class="chk chk-error"><span class="chk-tag">Fix</span><span class="chk-text">{{ m }}</span></li>{% endfor %}</ul>
+    {% else %}
+    <p class="verdict verdict-ok"><span class="led on"></span><b>Target {{ g(plan.target_psi) }} psi ({{ g(plan.target_kpa) }} kPa absolute) · boost cut {{ g(plan.cut_kpa) }} kPa ({{ psi(plan.cut_kpa) }} psi)</b></p>
+    {% endif %}
+    {% for n in plan.notes %}<p class="flash warn">{{ icon('warn') }}<span>{{ n }}</span></p>{% endfor %}
+
+    <h3 class="sub-h">What sets the limit</h3>
+    <table class="ltable">
+      <thead><tr><th>Limit</th><th>Allows</th><th>Why</th></tr></thead>
+      <tbody>
+        {% for lim in plan.limits %}
+        <tr class="{{ 'binding' if lim.binding }}"><th scope="row">{{ lim.label }}</th><td class="mono">{{ g(lim.psi) }} psi</td><td>{{ lim.reason }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if plan.schedule %}
+    <h3 class="sub-h">Boost by {{ plan.answers.schedule }}</h3>
+    <table class="ltable">
+      <thead><tr><th>{{ 'Gear' if plan.answers.schedule == 'gear' else 'From' }}</th><th>You asked</th><th>Set to</th><th></th></tr></thead>
+      <tbody>{% for r in plan.schedule %}<tr><th scope="row">{{ r.label }}</th><td class="mono">{{ g(r.asked) }} psi</td><td class="mono">{{ g(r.psi) }} psi</td><td>{{ r.note }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
+
+    {% if plan.items %}
+    <h3 class="sub-h">What gets written</h3>
+    <ul class="plist">{% for i in plan.items %}<li class="pitem"><b>{{ i.label }}</b><code class="mono">{{ i.name }}</code><span>{{ i.detail }}</span></li>{% endfor %}</ul>
+    {% endif %}
+
+    {% if plan.failsafes %}
+    <h3 class="sub-h">Failsafes in this tune</h3>
+    <ul class="plist">{% for f in plan.failsafes %}<li class="chk chk-ok"><span class="chk-tag">Safe</span><span class="chk-text">{{ f }}</span></li>{% endfor %}</ul>
+    {% endif %}
+
+    {% if plan.required %}
+    <h3 class="sub-h">Do these in TunerStudio before you drive</h3>
+    <p class="hint">A <span class="mono">.msq</span> doesn't record which choices a setting allows, so switches like these can only be flipped in TunerStudio.</p>
+    <ul class="plist">{% for r in plan.required %}<li class="chk chk-error"><span class="chk-tag">Required</span><span class="chk-text">{{ r }}</span></li>{% endfor %}</ul>
+    {% endif %}
+    {% if plan.recommended %}
+    <ul class="plist">{% for r in plan.recommended %}<li class="chk chk-warn"><span class="chk-tag">Worth doing</span><span class="chk-text">{{ r }}</span></li>{% endfor %}</ul>
+    {% endif %}
+
+    {% if plan.logging %}
+    <h3 class="sub-h">First drive, and what to look for in the log</h3>
+    <ol class="steps">{% for s in plan.logging %}<li>{{ s }}</li>{% endfor %}</ol>
+    {% endif %}
+
+    {% if plan.ok %}
+    <div class="create">
+      <label class="check"><input type="checkbox" name="acknowledge" value="yes"><span>I understand this is a conservative starting point, not a finished tune. I'll do the required steps above, log the first drive with a wideband, and stop at the first sign of knock or a lean mixture.</span></label>
+      <input type="hidden" name="plan_sig" value="{{ plan.answers.signature() }}">
+      <button class="btn primary big" type="submit" name="action" value="create">{{ icon('boost') }}<span>Create the boost tune</span></button>
+      <p class="fine">Creates a new tune with its own link and delete key, and a diff against this one. This tune stays exactly as it is.</p>
+    </div>
+    {% endif %}
+  </div>
+</section>
+{% endif %}
+</form>
+</div>
+{% endblock %}
+
+{% block status %}<span class="led on"></span><span>{{ tune_label }}</span><span class="st-sep"></span><span>Prep for boost</span><span class="st-grow"></span>{% if plan and plan.ok %}<span class="st-dim">target {{ g(plan.target_psi) }} psi · cut {{ g(plan.cut_kpa) }} kPa</span>{% endif %}{% endblock %}

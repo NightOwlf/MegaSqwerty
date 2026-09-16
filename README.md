@@ -66,6 +66,8 @@ The app binds `0.0.0.0:$PORT`. Optional env var: `UPLOADS_PER_HOUR` (default `20
 | `GET /t/{slug}.msq` | Original file download |
 | `DELETE /t/{slug}?key=…` | Delete with the key from upload (there's also a `POST /t/{slug}/delete` form fallback) |
 | `POST /t/{slug}/save` | Save edited values as a new tune. JSON `{"changes": {name: {index: number}}}` → `{"url", "slug"}` |
+| `GET /t/{slug}/boost` | Boost prep: what the tune has, and the questions |
+| `POST /t/{slug}/boost` | `action=preview` shows the plan; `action=create` writes it as a new tune |
 | `GET /compare`, `POST /compare` | Pick two tunes, or paste A and upload B |
 | `GET /d/{a}/{b}` | Cell-by-cell diff, plus a list of settings that differ |
 | `GET /healthz` | Healthcheck |
@@ -209,6 +211,68 @@ Matching is an ordered keyword scan (the first category that matches wins, so `i
 than Fuel), and nothing is ever dropped. Categories drive the toolbar menus and the Tables, Curves and
 Settings filters. To move something, add a keyword to `CATEGORIES`; to change the order, edit
 `CATEGORY_ORDER`.
+
+## Prep a tune for boost
+
+**Prep for boost** on the Dash (`/t/{slug}/boost`, `app/boost.py`) takes a naturally aspirated basemap, or a
+tune already running boost, and writes a conservative starting point: load bins that reach into boost, fuel
+and timing for those rows, a boost target, and failsafes. It asks a few questions (wastegate spring, fuel,
+internals, intercooler, fuel pump, injectors, engine power, wideband), then says how much boost it will allow
+and **why**, before writing anything. The original tune is never changed: creating gives a new tune with its
+own link, delete key and diff, like any other edit.
+
+### How much boost it allows
+
+The target is the smallest of: the engine and fuel ceiling (stock or built internals × pump 91 / 93 / E30 /
+E85 / race), no intercooler, a stock or unknown fuel pump, what the injectors can fuel (injector size ×
+cylinders at 80% duty against engine power, assuming power rises with pressure ratio, and E85 needing ~40%
+more fuel), what the MAP sensor can read, and how far boost may rise in one step. Every limit is listed with
+what it allows and why, and the binding one is highlighted. Asking for more than it allows caps the target
+and says so; it never silently obeys.
+
+- **Stage 1** is the wastegate spring alone: boost targets at spring pressure, open-loop duty 0% and, where
+  the tune has it, max duty 0%, so the solenoid can't add boost. Extra timing out and extra fuel for the
+  first drive.
+- **Stage 2** is 3 psi over the spring, and **Custom** is anything up to the limits. Both need the previous
+  stage logged first, and neither can go more than 4 psi above what the tune already runs.
+
+### What it writes, and what it refuses
+
+Fuel, timing and targets in boost are built from the tune's own full-throttle (atmospheric) row, so they
+follow the engine that's already tuned:
+
+- **Load bins** are rescaled to reach the boost cut, keeping the tune's vacuum resolution, and every table
+  sharing those bins is resampled with them.
+- **VE** in boost starts just above the full-throttle row and never drops below it. **Timing** comes out per
+  psi (1.5°/psi on 91 down to 0.7°/psi on E85, more without an intercooler) and never exceeds the fuel's
+  ceiling. **AFR/λ targets** reach the fuel's boost target by 3 psi and never get leaner than the tune is now.
+- **Boost cut** goes a few psi above the target and inside what the MAP sensor can read, and the MAP gauge
+  zones follow it. Hidden duty and target adders (rusEFI blend tables, gear-based duty adders) are zeroed.
+- The rev limit is never touched.
+
+Then `verify` re-reads the written file and refuses it unless every one of those rules holds and Tune Health
+still finds nothing to fix. A plan that fails its own check is never saved.
+
+It can't switch an option — a `.msq` doesn't record which choices a setting allows — so turning on boost
+control, boost cut or engine protection becomes a **required checklist for TunerStudio**, listed with the
+plan along with a first-drive logging procedure. Anything it can't confirm from the tune (a table whose units
+don't say whether it holds duty or a pressure, a by-gear mode it doesn't recognise) is reported and left
+alone rather than guessed at.
+
+It refuses outright when there's no wideband, when fuel or ignition load isn't MAP (speed density), when the
+MAP sensor can't read boost, when Tune Health has anything to fix, or when the wastegate spring alone makes
+more than the limits allow.
+
+### Boost by gear and by speed
+
+Enter boost per gear, or per speed breakpoint, and each point is capped by the same limits. It writes
+Speeduino's `boostByGear` settings when their mode and units say what they mean, or a rusEFI/FOME closed-loop
+blend table when the tune says that blend is by gear or vehicle speed (speeds convert to km/h). Where the
+blend is used, the base target is the **lowest** scheduled boost and the schedule adds to it, so a lost gear
+or speed signal falls back to the least boost, not the most. When the tune has no mechanism it can write
+safely, the whole target becomes the lowest point you asked for, and the plan says what to turn on.
+
+**None of this makes a tune safe.** It's a conservative starting point for logging with a wideband.
 
 ## Abuse controls
 

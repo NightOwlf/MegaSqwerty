@@ -821,3 +821,77 @@ body.editing [contenteditable=true]:focus { outline: 2px solid var(--sel); backg
   .dial { width: 150px; }
   .dial:only-child { width: 180px; }
 }
+
+/* ---------- boost prep ---------- */
+.boost { max-width: 980px; margin: 0 auto; }
+.lede-sm { max-width: 70ch; margin-bottom: 10px; color: var(--muted); font-size: 14px; }
+.facts { display: grid; gap: 6px; margin: 0 0 10px; padding: 0; list-style: none; }
+.fact { display: grid; grid-template-columns: 10px minmax(0, 150px) minmax(0, 1fr); align-items: baseline; gap: 4px 8px; font-size: 13.5px; }
+.fact .led { margin-top: 4px; }
+.fact b { font-weight: 600; }
+.fact-v { font-weight: 600; }
+.fact small { grid-column: 2 / -1; color: var(--muted); font-size: 12.5px; }
+.facts-sm .fact { grid-template-columns: 10px minmax(0, 1fr); }
+.facts-sm .fact b { grid-column: 2; }
+.facts-sm .fact-v, .facts-sm small { grid-column: 2; }
+.qgrid { display: grid; gap: 0; }
+.q { display: grid; gap: 4px; margin-bottom: 12px; font-size: 13px; }
+.q:last-child { margin-bottom: 0; }
+.ql { font-weight: 600; }
+.qh { color: var(--muted); font-size: 12.5px; }
+.q input, .q select, .sched select, .create input { font: inherit; }
+.q input, .q select, .sched select {
+  min-height: 34px; padding: 0 8px; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--field); color: var(--text); box-shadow: var(--inset);
+}
+.q input:focus, .q select:focus { border-color: var(--sel); outline: none; }
+.qin { display: flex; align-items: center; gap: 6px; }
+.qin input { width: 120px; }
+.qin small { color: var(--muted); font-size: 12px; }
+.q-sm { margin-bottom: 0; }
+.q-sm input { width: 100%; }
+.q-inline { margin-top: 12px; }
+.check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; }
+.check input { width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--sel); }
+.check + .qh { margin: 4px 0 0 26px; }
+.goals { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; }
+.goal { display: grid; gap: 2px; padding: 9px 10px 9px 32px; position: relative; border: 1px solid var(--line); border-radius: 4px; background: var(--win-2); font-size: 13px; cursor: pointer; }
+.goal input { position: absolute; left: 9px; top: 10px; width: 16px; height: 16px; accent-color: var(--sel); }
+.goal:has(input:checked) { border-color: var(--sel); background: var(--sel-soft); }
+.goal span { color: var(--muted); font-size: 12.5px; }
+.goals-sm .goal { padding-block: 7px; }
+.sched { display: grid; gap: 14px; margin-top: 12px; }
+.sched-t { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; font-weight: 700; color: var(--link); }
+.sched select { min-height: 26px; padding: 0 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--field); color: var(--text); font-size: 12px; }
+.gears { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 8px; }
+.speeds { display: grid; gap: 8px; }
+.speedrow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.bform:has([name=schedule][value=none]:checked) .sched,
+.bform:has([name=schedule][value=gear]:checked) .sched-speed,
+.bform:has([name=schedule][value=speed]:checked) .sched-gear { display: none; }
+.bactions { display: flex; justify-content: flex-end; margin-bottom: 14px; }
+.bactions .btn { max-width: 320px; }
+.sub-h { margin: 16px 0 8px; font-size: 12px; font-weight: 700; color: var(--link); text-transform: uppercase; letter-spacing: .06em; }
+.sub-h:first-child { margin-top: 0; }
+.ltable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ltable th, .ltable td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.ltable thead th { color: var(--muted); font-size: 12px; font-weight: 600; }
+.ltable tbody th { font-weight: 600; white-space: nowrap; }
+.ltable td { color: var(--muted); }
+.ltable tr.binding { background: var(--warn-bg); color: var(--warn-ink); }
+.ltable tr.binding th, .ltable tr.binding td { color: inherit; }
+.plist { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.pitem { display: grid; grid-template-columns: minmax(0, 170px) minmax(0, 1fr); gap: 2px 10px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.pitem code { grid-row: 2; grid-column: 1; color: var(--faint); font-size: 12px; overflow-wrap: anywhere; }
+.pitem span { grid-row: 1 / 3; grid-column: 2; color: var(--muted); }
+.steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 13.5px; }
+.steps li { padding-left: 2px; }
+.create { margin-top: 16px; padding: 12px; border: 1px solid var(--sel-line); border-radius: 4px; background: var(--sel-soft); display: grid; gap: 10px; }
+.create .btn { justify-self: start; }
+.win-boost .actions { margin-top: 10px; }
+@media (min-width: 720px) {
+  .q-inline, .q:not(.q-sm) { grid-template-columns: minmax(0, 260px) minmax(0, 1fr); align-items: center; }
+  .q:not(.q-sm) .qh { grid-column: 2; }
+  .qgrid .group { margin-bottom: 12px; }
+  .sched { grid-template-columns: minmax(0, 1fr); }
+}

@@ -75,6 +75,18 @@
 
       <div hidden data-tune-values='{{ live_values|tojson }}'></div>
 
+      {% if boost_card %}
+      <section class="win win-boost">
+        <header class="win-title">{{ icon('boost') }}<h2>Boost</h2><span class="win-sub">{{ boost_card.headline }}</span></header>
+        <div class="win-body">
+          <ul class="facts facts-sm">{% for f in boost_card.facts %}<li class="fact fact-{{ f.status }}"><span class="led {{ {'ok': 'on', 'warn': 'warn', 'bad': 'bad', 'info': ''}[f.status] }}"></span><b>{{ f.label }}</b><span class="fact-v">{{ f.value }}</span></li>{% endfor %}</ul>
+          <div class="actions">
+            <a class="btn primary" href="/t/{{ slug }}/boost">{{ icon('boost') }}<span>Prep for boost</span></a>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
       <section class="win win-info">
         <header class="win-title">{{ icon('info') }}<h2>Tune Information</h2></header>
         <div class="win-body">
@@ -110,9 +122,9 @@
           {% set chk_problems = health|selectattr('status', 'in', ['error', 'warn'])|list %}
           {% if chk_problems %}<ul class="chk-list">{% for r in chk_problems %}<li class="chk chk-{{ r.status }}"><span class="chk-tag">{{ 'Fix' if r.status == 'error' else 'Check' }}</span><span class="chk-text">{{ r.text }}</span><span class="chk-group">{{ r.group }}</span></li>{% endfor %}</ul>{% endif %}
           {% set chk_notes = health|selectattr('status', 'equalto', 'info')|list %}
-          {% if chk_notes %}<details class="chk-more" data-more="notes"><summary>{{ chk_notes|length }} note{{ 's' if chk_chk_notes|length != 1 }}</summary><ul class="chk-list">{% for r in chk_notes %}<li class="chk chk-info"><span class="chk-tag">Note</span><span class="chk-text">{{ r.text }}</span><span class="chk-group">{{ r.group }}</span></li>{% endfor %}</ul></details>{% endif %}
+          {% if chk_notes %}<details class="chk-more" data-more="notes"><summary>{{ chk_notes|length }} note{{ 's' if chk_notes|length != 1 }}</summary><ul class="chk-list">{% for r in chk_notes %}<li class="chk chk-info"><span class="chk-tag">Note</span><span class="chk-text">{{ r.text }}</span><span class="chk-group">{{ r.group }}</span></li>{% endfor %}</ul></details>{% endif %}
           {% set chk_passed = health|selectattr('status', 'equalto', 'ok')|selectattr('text')|list %}
-          {% if chk_passed %}<details class="chk-more" data-more="passed"><summary>{{ chk_passed|length }} check{{ 's' if chk_chk_passed|length != 1 }} passed</summary><ul class="chk-list">{% for r in chk_passed %}<li class="chk chk-ok"><span class="chk-tag">OK</span><span class="chk-text">{{ r.text }}</span><span class="chk-group">{{ r.group }}</span></li>{% endfor %}</ul></details>{% endif %}
+          {% if chk_passed %}<details class="chk-more" data-more="passed"><summary>{{ chk_passed|length }} check{{ 's' if chk_passed|length != 1 }} passed</summary><ul class="chk-list">{% for r in chk_passed %}<li class="chk chk-ok"><span class="chk-tag">OK</span><span class="chk-text">{{ r.text }}</span><span class="chk-group">{{ r.group }}</span></li>{% endfor %}</ul></details>{% endif %}
           <p class="chk-fine">These checks catch common setup mistakes as you edit. They can't prove a tune is safe, so still have it reviewed and check a wideband log.</p>
         </div>
       </section>

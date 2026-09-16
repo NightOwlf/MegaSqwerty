@@ -20,6 +20,7 @@ from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
 from starlette.middleware.gzip import GZipMiddleware
 
+from . import boost as boostmod
 from . import checks as checksmod
 from . import diff as diffmod
 from .axes import axis_text
@@ -416,12 +417,13 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         summary = summary_rows(doc, tmap)
         dials, readouts = views.gauges(summary, doc)
         health = checksmod.run(doc, model.table_views)
+        boost_card = boostmod.card(boostmod.assess(doc, model.table_views, tmap, health))
         parent = edited_from(slug)
         og_title, og_desc = og_for(doc, summary, edited=parent is not None)
         delete_key = pop_delete_key(request, slug)
         resp = templates.TemplateResponse(request, "tune.html", {
             "slug": slug, "doc": doc, "tmap": tmap, "m": model, "fgrids": fgrids, "summary": summary,
-            "dials": dials, "readouts": readouts, "parent": parent, "health": health,
+            "dials": dials, "readouts": readouts, "parent": parent, "health": health, "boost_card": boost_card,
             "health_summary": checksmod.summary(health), "live_values": views.live_values(doc, dials, health),
             "load": next((v.load for v in model.featured if v.load is not None), None),
             "family": views.family_label(doc), "tune_label": views.tune_label(doc), "delete_key": delete_key,
@@ -482,6 +484,75 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         ctx["cat_label"] = views.CATEGORY_LABELS[ctx["cat"]]
         ctx["kind_label"] = views.KIND_LABEL[ctx["kind"]]
         return templates.TemplateResponse(request, "constant.html", ctx)
+
+    # -------------------------------------------------------------- boost
+    def boost_inputs(slug: str):
+        doc = load_doc(slug)
+        tmap = resolve_map(doc)
+        featured, other = all_tables(doc, tmap)
+        tviews = featured + other
+        return doc, tmap, tviews, boostmod.assess(doc, tviews, tmap)
+
+    def boost_page(request: Request, slug: str, doc: TuneDoc, a, ans, plan=None, flash: str | None = None,
+                   status: int = 200):
+        return templates.TemplateResponse(request, "boost.html", {
+            "slug": slug, "doc": doc, "a": a, "ans": ans, "plan": plan, "flash": flash,
+            "tune_label": views.tune_label(doc), "family": views.family_label(doc),
+            "fuels": boostmod.FUELS, "goals": boostmod.GOALS, "gears": boostmod.GEARS,
+            "speed_rows": boostmod.SPEED_ROWS, "step_psi": boostmod.STEP_PSI,
+            "unverified_cap": boostmod.UNVERIFIED_FUEL_CAP, "psi_of": boostmod.psi_of,
+            "og_url": page_url(request),
+        }, status_code=status)
+
+    @app.get("/t/{slug}/boost", response_class=HTMLResponse)
+    def boost_view(request: Request, slug: str):
+        doc, tmap, tviews, a = boost_inputs(slug)
+        store.touch(slug)
+        return boost_page(request, slug, doc, a, boostmod.Answers(injector_cc=a.injector_cc))
+
+    @app.post("/t/{slug}/boost", response_class=HTMLResponse)
+    async def boost_submit(request: Request, slug: str):
+        """Preview a boost plan, or write it into a new tune. The tune being read is never modified."""
+        doc, tmap, tviews, a = boost_inputs(slug)
+        if request.state._state.get("body_too_large"):
+            return error_response(request, 413)
+        try:
+            form = await request.form(max_files=0, max_fields=80)
+        except BodyTooLarge:
+            raise
+        except Exception:
+            return error_response(request, 400)
+        ans, errors = boostmod.parse_answers(form)
+        plan = await run_in_threadpool(boostmod.build_plan, doc, tviews, tmap, ans, errors, a)
+
+        def again(message: str, status: int):
+            return boost_page(request, slug, doc, a, ans, plan, flash=message, status=status)
+
+        if str(form.get("action") or "") != "create":
+            return boost_page(request, slug, doc, a, ans, plan)
+        if not plan.ok:
+            return again("This plan needs fixing before it can be created: see below.", 400)
+        if str(form.get("plan_sig") or "") != ans.signature():
+            return again("Your answers changed since the preview. Check the plan below, then create it again.", 409)
+        if str(form.get("acknowledge") or "") != "yes":
+            return again("Tick the box to confirm you'll do the required steps and log the first drive.", 400)
+        if store.over_limit(client_ip(request), limit):
+            return again(MESSAGES[429], 429)
+        raw = store.read_raw(slug)
+        if raw is None:
+            raise HTTPException(404)
+        try:
+            new_raw, changed = await run_in_threadpool(boostmod.create, raw, doc, tmap, plan)
+        except boostmod.BoostError as e:
+            log.warning("boost plan refused for %s: %s", slug, e)
+            return again(str(e), 400)
+        new_slug, key, err, status = await store_upload(request, new_raw, parent=slug)
+        if err:
+            return again(err, status)
+        log.info("boost tune %s from %s (%.2f psi, %d values)", new_slug, slug, plan.target_psi, changed)
+        resp = RedirectResponse(f"/t/{new_slug}", status_code=303)
+        set_key_cookie(resp, request, new_slug, key)
+        return resp
 
     # ------------------------------------------------------------ compare
     @app.get("/compare", response_class=HTMLResponse)
