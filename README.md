@@ -121,10 +121,11 @@ gives a verdict: **Not ready to start**, **No blocking problems, but N things lo
   above 200%, sharp VE or ignition spikes, advance outside −20° to 55° or above 35° in boost, AFR/λ targets
   outside λ 0.65–1.20, lean full-load (λ > 0.95) or boost (λ > 0.86) targets, soft/launch limits out of order,
   RPM bins short of the rev limit, load bins or boost cut past the MAP sensor's range, boost control on with
-  an unset table.
+  an unset table, a boost control duty table still at the firmware's default (duty following the throttle, so
+  full throttle holds the wastegate shut), a closed-loop boost target left below atmospheric.
 - **Note** (worth knowing): a boost-capable MAP sensor with tables that stop at atmospheric, boost rows with
-  boost cut off, TunerStudio gauge settings that don't cover the rev limit, and other tables still holding
-  placeholder values.
+  boost cut off, a default boost duty table while boost control is off, TunerStudio gauge settings that don't
+  cover the rev limit, and other tables still holding placeholder values.
 
 Rules are data, so the same rule runs on the server and in the browser (`evaluateCheck` in `edit.js`). They
 catch common setup mistakes and can't prove a tune is safe.
