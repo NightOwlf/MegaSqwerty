@@ -139,7 +139,8 @@ def test_every_rule_kind_used_is_one_edit_js_knows():
         assert f'"{kind}"' in js, kind
 
 
-def fome(units="afr", cells=None, stoich=14.7) -> bytes:
+def fome(units="afr", cells=None, stoich=14.7, boost_duty=None, boost_target=None, boost_on=False,
+         boost_type="Open Loop") -> bytes:
     """A FOME tune whose target table is saved the way the ECU wrote it, with the units it used."""
     rpm, load = [500, 4000, 8000], [10, 55, 100]
     targets = cells if cells is not None else [14.7] * 6 + [12.2, 11.8, 11.5]
@@ -164,7 +165,14 @@ def fome(units="afr", cells=None, stoich=14.7) -> bytes:
         '<constant digits="2" name="injector_flow" units="cc/min">440.0</constant>',
         '<constant digits="3" name="displacement" units="L">2.000</constant>',
         '<constant digits="0" name="cylindersCount">4</constant>',
+        f'<constant name="isBoostControlEnabled">"{str(boost_on).lower()}"</constant>',
+        f'<constant name="boostType">"{boost_type}"</constant>',
     ]
+    if boost_duty is not None:
+        parts += [table("boostTableOpenLoop", boost_duty, "%"), array("boostTpsBins", [0, 50, 100], "%"),
+                  array("boostRpmBins", rpm, "RPM")]
+    if boost_target is not None:
+        parts += [table("boostTableClosedLoop", boost_target, ""), array("boostClosedLoopYAxisBins", [0, 50, 100], "%")]
     return ('<?xml version="1.0" encoding="ISO-8859-1"?><msq xmlns="http://www.msefi.com/:msq">'
             '<versionInfo signature="rusEFI (FOME) Vthpnp.2026.05.01.vthpnp.1"/><page>'
             + "".join(parts) + "</page></msq>").encode()
@@ -192,3 +200,31 @@ def test_the_stoich_ratio_is_found_under_the_name_the_firmware_uses():
     featured, other = all_tables(doc, resolve_map(doc))
     target = next(v for v in featured + other if v.id == "afr")
     assert target.units == "afr" and fuel_mode(target.z, target.units, target.palette) == "afr"
+
+
+RAMP = [0, 0, 0, 50, 50, 50, 100, 100, 100]  # the firmware default: duty follows the throttle
+
+
+def test_a_default_boost_duty_table_is_flagged_when_boost_control_is_on():
+    results, _ = health(fome(boost_duty=RAMP, boost_on=True))
+    warns = " ".join(texts(results, "warn"))
+    assert "still the firmware's default" in warns and "boost keeps climbing" in warns
+
+
+def test_the_same_table_is_only_a_note_while_boost_control_is_off():
+    results, summary = health(fome(boost_duty=RAMP, boost_on=False))
+    assert any("harmless while boost control is off" in t for t in texts(results, "info"))
+    assert summary["tone"] == "ok"  # a note, not a problem
+
+
+def test_a_tuned_boost_duty_table_is_left_alone():
+    results, _ = health(fome(boost_duty=[0, 0, 0, 18, 26, 30, 42, 55, 61], boost_on=True))
+    assert not any("firmware's default" in t for t in texts(results, "warn"))
+
+
+def test_a_closed_loop_target_below_atmospheric_is_flagged():
+    results, _ = health(fome(boost_target=RAMP, boost_on=True, boost_type="Open + Closed Loop"))
+    assert any("never build boost" in t for t in texts(results, "warn"))
+    ok = health(fome(boost_target=[100, 100, 100, 130, 130, 130, 149, 149, 149], boost_on=True,
+                     boost_type="Open + Closed Loop"))[0]
+    assert not any("never build boost" in t for t in texts(ok, "warn"))

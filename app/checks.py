@@ -373,6 +373,39 @@ def build_rules(doc: TuneDoc, views: list[TableView]) -> list[dict]:
             "Boost control is on, but its table hasn't been set up (every cell is {value}).",
             z="boostTable", strict=True)
 
+    # A boost control table straight from the firmware's defaults has duty simply following the throttle, so
+    # full throttle holds the wastegate shut. Whether that's dangerous depends on boost control being on.
+    boost_on = not _off(_option(doc, "isBoostControlEnabled")) or not _off(_option(doc, "boostEnabled"))
+    for table_name, bins_name in (("boostTableOpenLoop", "boostTpsBins"), ("boostTable", "tpsBinsBoost")):
+        z, bins = doc.get(table_name), doc.get(bins_name)
+        if z is None or not z.is_table or bins is None or len(bins.values) != z.rows:
+            continue
+        if table_name == "boostTable" and "%" not in (z.units or "").lower():
+            continue  # under that name some firmware holds a pressure target, not duty
+        cells = [v for v in z.values if isinstance(v, float)]
+        if len(cells) != len(z.values) or not all(isinstance(b, float) for b in bins.values):
+            continue
+        follows_throttle = all(abs(v - bins.values[r]) <= 1 for r in range(z.rows) for v in z.row(r))
+        top = max(cells)
+        if follows_throttle and top >= 50:
+            add("static", "warn" if boost_on else "info", "Boost", "",
+                f"The boost control duty table is still the firmware's default: duty follows the throttle and "
+                f"reaches {top:g}% at full throttle. "
+                + ("Boost control is on, so full throttle holds the wastegate shut and boost keeps climbing. Set "
+                   "the duty to 0 and let the wastegate spring decide until it's tuned."
+                   if boost_on else "That's harmless while boost control is off, but set it to 0 before you turn "
+                   "boost control on."), passed=False)
+
+    # Closed-loop targets are absolute kPa. Below atmospheric they ask for no boost at all.
+    target, btype = doc.get("boostTableClosedLoop"), _option(doc, "boostType") or ""
+    if target is not None and target.is_table and boost_on and "closed" in btype.lower():
+        nums = [v for v in target.values if isinstance(v, float)]
+        if nums and max(nums) <= BOOST_EDGE_KPA:
+            add("static", "warn", "Boost", "",
+                f"Closed-loop boost control is on, but the target table never asks for more than {max(nums):g} kPa, "
+                "which is below atmospheric, so it will never build boost. Targets are absolute kPa: 7 psi is "
+                "about 149.", passed=False)
+
     # ---- gauges (TunerStudio display settings; they don't affect how the engine runs)
     if rev:
         add("cmp", "info", "Gauges", "The tach gauge (max {b}) covers the rev limit {a}.",

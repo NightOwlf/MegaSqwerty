@@ -25,7 +25,8 @@ def msl(rows, channels=CHANNELS, header=True) -> bytes:
     return ("\n".join(lines) + "\n").encode()
 
 
-def drive(lean=False, knock=False, peak_kpa=170.0, afr_ratio=1.0, hot=False, duty=60.0, pulls=1):
+def drive(lean=False, knock=False, peak_kpa=170.0, afr_ratio=1.0, hot=False, duty=60.0, pulls=1,
+          knock_idle=False):
     """Idle, cruise, then full-throttle pulls, at 20 samples a second."""
     rows, t = [], 0.0
     stoich = 14.7
@@ -37,7 +38,7 @@ def drive(lean=False, knock=False, peak_kpa=170.0, afr_ratio=1.0, hot=False, dut
         t += 0.05
 
     for _ in range(100):
-        row(850, 35, 0, 1.0, 1.0, 12)
+        row(850, 35, 0, 1.0, 1.0, 12, 2.0 if knock_idle and len(rows) < 10 else 0.0)
     for _ in range(100):
         row(2500, 60, 20, 1.0, 1.0, 28)
     for _ in range(pulls):
@@ -118,9 +119,10 @@ def mlg(channels, rows, version=2) -> bytes:
         struct.pack_into(">ff", field, 46, 1.0, 0.0)
         out += field
     for i, r in enumerate(rows):
-        out += bytes([0, i % 256]) + struct.pack(">H", i) + b"\0"
+        out += bytes([0, i % 256]) + struct.pack(">H", i)  # block type, counter, timestamp
         for v in r:
             out += struct.pack(">f", float(v))
+        out += b"\0"                                       # trailing checksum byte
     return bytes(out)
 
 
@@ -351,3 +353,38 @@ def test_deleting_a_tune_takes_its_logs_with_it(client, tmp_path):
     key = re.search(r'<code id="dkey" class="mono">([^<]+)</code>', client.get(f"/t/{slug}").text)
     client.request("DELETE", f"/t/{slug}", params={"key": key.group(1)})
     assert client.get(f"/t/{slug}/log/{log_slug}").status_code == 404
+
+
+def test_knock_lands_in_the_cell_it_happened_in():
+    r = report(rows=drive(knock=True))
+    cells = r.timing["cells"]
+    assert cells and {c["rpm"] for c in cells} <= {"4500", "5000"}  # knock ran 4750-5200 rpm
+    assert {c["kpa"] for c in cells} == {"160"}                     # at 170 kPa, nearest bin
+
+
+def test_knock_early_in_a_log_is_not_dropped():
+    """The cell was once located with the sample number instead of the load, which lost early samples."""
+    r = report(rows=drive(knock_idle=True))
+    assert r.timing and r.timing["cells"]
+    cell = r.timing["cells"][0]
+    assert cell["rpm"] == "1000" and cell["kpa"] in ("30", "40")  # idle: 850 rpm, 35 kPa
+    assert float(cell["new"]) <= float(cell["old"]) - 2
+
+
+def test_exhaust_temperature_in_fahrenheit_is_read_as_fahrenheit():
+    channels = CHANNELS + [("EGT", "F")]
+    warm = [r + [1500.0] for r in drive()]    # 1500 °F = 816 °C: hot, not damaging
+    r = report(data=msl(warm, channels))
+    assert any("logged in °F" in n for n in r.notes)
+    assert not any("Exhaust gas" in t for t in texts(r, "error") + texts(r, "warn"))
+    hot = [r[:-1] + [1800.0] for r in warm]   # 1800 °F = 982 °C
+    r2 = report(data=msl(hot, channels))
+    assert any("Exhaust gas temperature reached 982" in t for t in texts(r2, "error"))
+
+
+def test_a_table_is_only_compared_against_a_log_when_its_load_is_map():
+    _, _, _, views = tune_bits()
+    spark = next(v for v in views if v.id == "spark")
+    assert logs._load_is_map(spark)
+    spark.y_units, spark.y_label, spark.load = "%", "TPS", None  # an Alpha-N spark table
+    assert not logs._load_is_map(spark)

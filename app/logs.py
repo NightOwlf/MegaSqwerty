@@ -173,10 +173,10 @@ def parse_mlg(data: bytes) -> LogDoc:
         fmt.append((code, width, scale if scale else 1.0, transform))
         size += width
         at += entry
-    if record_len < size + 1 or record_len > size + 16:
+    head = 4  # block type, counter, timestamp; anything after the field data (a checksum) is ignored
+    if not size + head <= record_len <= size + head + 4:
         bad("its record length doesn't match its channels")
 
-    head = record_len - size  # block type, counter and timestamp before the field data
     rows, truncated, pos = 0, False, begin
     while pos + record_len <= len(data):
         if rows >= MAX_ROWS:
@@ -423,6 +423,16 @@ def _cell(bins: list, v: float) -> int | None:
     return min(range(len(bins)), key=lambda i: abs(bins[i] - v))
 
 
+def _load_is_map(v: TableView) -> bool:
+    """Whether a table's load axis is manifold pressure, so a log's MAP can be looked up in it."""
+    nums = [x for x in (v.y.values if v.y is not None else []) if isinstance(x, float)]
+    if (v.y_units or "").lower() == "kpa":
+        return True
+    if v.load is not None and v.load.known:
+        return v.load.measure == "MAP"
+    return bool(nums) and max(nums) > 105 and v.y_label in ("Load", "MAP", "")
+
+
 def _view(views: list[TableView], role: str) -> TableView | None:
     v = next((x for x in views if x.id == role), None)
     if v is None or v.x is None or v.y is None:
@@ -462,7 +472,7 @@ def analyze(log: LogDoc, doc: TuneDoc, views: list[TableView], cut_kpa: float | 
         c = ch["lambda_target"]
         lam_t = list(c.values) if _is_lambda(c) else [None if v is None else v / stoich for v in c.values]
     afr_view = _view(views, "afr")
-    if lam_t is None and afr_view is not None and lam is not None:
+    if lam_t is None and afr_view is not None and _load_is_map(afr_view) and lam is not None:
         mode = fuel_mode(afr_view.z, afr_view.units, afr_view.palette)
         scale = 1.0 if mode == "lambda" else stoich
         xb, yb = list(afr_view.x.values), list(afr_view.y.values)
@@ -585,7 +595,7 @@ def analyze(log: LogDoc, doc: TuneDoc, views: list[TableView], cut_kpa: float | 
 
     # ---- timing
     spark_view = _view(views, "spark")
-    if "advance" in ch and spark_view is not None and in_boost:
+    if "advance" in ch and spark_view is not None and _load_is_map(spark_view) and in_boost:
         xb, yb = list(spark_view.x.values), list(spark_view.y.values)
         over = []
         for i in in_boost:
@@ -599,13 +609,16 @@ def analyze(log: LogDoc, doc: TuneDoc, views: list[TableView], cut_kpa: float | 
                                     f"{_g(want)}°. Something is adding timing: check your corrections.", i)
 
     # ---- engine health
+    egt, egt_note = _to_c(ch["egt"]) if "egt" in ch else ([], "")
+    if egt_note:
+        r.notes.append(egt_note)
     for role, group, hi, err, text in (
             ("clt", "Temperature", 100.0, 107.0, "Coolant reached {v} °C"),
             ("iat", "Temperature", 60.0, 80.0, "Intake air reached {v} °C"),
             ("egt", "Temperature", 900.0, 950.0, "Exhaust gas temperature reached {v} °C")):
         if role not in ch:
             continue
-        vals = (clt if role == "clt" else iat if role == "iat" else list(ch[role].values))
+        vals = {"clt": clt, "iat": iat, "egt": egt}[role]
         i = max(range(log.rows), key=lambda k: (_at(vals, k) is not None, _at(vals, k) or -1e9))
         v = _at(vals, i)
         if v is None:
@@ -780,7 +793,7 @@ def _rate(values, t, i, window=0.3):
 def _ve_suggestion(doc: TuneDoc, views, t, rpm, kpa, lam, lam_t, clt, tps, inj, ch) -> dict | None:
     """VE cells worked out from the wideband: where it ran leaner than target, the cell needs more fuel."""
     ve = _view(views, "ve")
-    if ve is None or lam is None or lam_t is None:
+    if ve is None or not _load_is_map(ve) or lam is None or lam_t is None:
         return None
     xb, yb = list(ve.x.values), list(ve.y.values)
     if not all(isinstance(v, float) for v in xb + yb):
@@ -853,7 +866,7 @@ def _ve_suggestion(doc: TuneDoc, views, t, rpm, kpa, lam, lam_t, clt, tps, inj, 
 def _knock_suggestion(doc: TuneDoc, views, rpm, kpa, ch) -> dict | None:
     """Timing out of the cells where the ECU saw knock."""
     spark = _view(views, "spark")
-    if spark is None or "knock" not in ch:
+    if spark is None or not _load_is_map(spark) or "knock" not in ch:
         return None
     xb, yb = list(spark.x.values), list(spark.y.values)
     if not all(isinstance(v, float) for v in xb + yb):
@@ -862,8 +875,11 @@ def _knock_suggestion(doc: TuneDoc, views, rpm, kpa, ch) -> dict | None:
     for i, v in enumerate(ch["knock"].values):
         if v is None or v <= 0:
             continue
-        col, row = _cell(xb, _at(rpm, i) or 0), _cell(kpa, i) is not None and _cell(yb, kpa[i])
-        if col is None or row is None or row is False:
+        speed, load = _at(rpm, i), _at(kpa, i)
+        if speed is None or load is None:
+            continue
+        col, row = _cell(xb, speed), _cell(yb, load)
+        if col is None or row is None:
             continue
         idx = row * spark.z.cols + col
         worst[idx] = max(worst.get(idx, 0.0), float(v))
