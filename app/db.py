@@ -45,6 +45,7 @@ class Store:
     def __init__(self, data_dir: Path | str | None = None):
         self.data_dir = Path(data_dir) if data_dir else _pick_data_dir()
         self.tune_dir = self.data_dir / "tunes"
+        self.log_dir = self.data_dir / "logs"
         self.db_path = self.data_dir / "msq.db"
         self._cache: OrderedDict[str, TuneDoc] = OrderedDict()
         self._cache_lock = threading.Lock()
@@ -63,6 +64,7 @@ class Store:
 
     def init(self) -> None:
         self.tune_dir.mkdir(parents=True, exist_ok=True)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
         if not self.persistent:
             log.warning("storing tunes in %s, which is not a mounted volume: every redeploy deletes all tunes. "
                         "On Railway, add a volume mounted at /data.", self.data_dir)
@@ -82,6 +84,18 @@ class Store:
                     parsed_json TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS tunes_last_viewed ON tunes(last_viewed_at);
+                CREATE TABLE IF NOT EXISTS logs (
+                    slug TEXT PRIMARY KEY,
+                    tune_slug TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    last_viewed_at INTEGER NOT NULL,
+                    delete_key_hash TEXT NOT NULL,
+                    size INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    report_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS logs_tune ON logs(tune_slug);
+                CREATE INDEX IF NOT EXISTS logs_last_viewed ON logs(last_viewed_at);
                 CREATE TABLE IF NOT EXISTS uploads (
                     ip_hash TEXT NOT NULL,
                     ts INTEGER NOT NULL
@@ -193,7 +207,10 @@ class Store:
 
     def delete_tune(self, slug: str) -> None:
         with self.conn() as c:
+            gone = [r["slug"] for r in c.execute("SELECT slug FROM logs WHERE tune_slug=?", (slug,))]
             c.execute("DELETE FROM tunes WHERE slug=?", (slug,))
+        for log_slug in gone:
+            self.delete_log(log_slug)
         with self._cache_lock:
             self._cache.pop(slug, None)
         try:
@@ -214,9 +231,111 @@ class Store:
         for p in self.tune_dir.glob("*.msq"):
             if p.stem not in known and p.stat().st_mtime < time.time() - 3600:
                 p.unlink(missing_ok=True)
+        with self.conn() as c:
+            stale_logs = [r["slug"] for r in c.execute(
+                "SELECT slug FROM logs WHERE last_viewed_at < ? OR tune_slug NOT IN (SELECT slug FROM tunes)",
+                (cutoff,))]
+            known_logs = {r["slug"] for r in c.execute("SELECT slug FROM logs")}
+        for s in stale_logs:
+            self.delete_log(s)
+        for p in self.log_dir.glob("*.log"):
+            if p.stem not in known_logs and p.stat().st_mtime < time.time() - 3600:
+                p.unlink(missing_ok=True)
         if slugs:
             log.info("purged %d stale tunes", len(slugs))
         return len(slugs)
+
+    # ---------------------------------------------------------------- logs
+    def log_path(self, slug: str) -> Path:
+        if not SLUG_RE.match(slug):
+            raise ValueError("bad slug")
+        return self.log_dir / f"{slug}.log"
+
+    def create_log(self, raw: bytes, tune_slug: str, name: str, report: dict) -> tuple[str, str]:
+        delete_key = secrets.token_urlsafe(18)
+        now = int(time.time())
+        payload = json.dumps(report, separators=(",", ":"))
+        for _ in range(8):
+            slug = "".join(secrets.choice(SLUG_ALPHABET) for _ in range(SLUG_LEN))
+            path = self.log_path(slug)
+            if path.exists():
+                continue
+            tmp = path.with_suffix(".tmp")
+            tmp.write_bytes(raw)
+            os.replace(tmp, path)
+            try:
+                with self.conn() as c:
+                    c.execute(
+                        "INSERT INTO logs (slug, tune_slug, created_at, last_viewed_at, delete_key_hash, size, "
+                        "name, report_json) VALUES (?,?,?,?,?,?,?,?)",
+                        (slug, tune_slug, now, now, self._hash_key(delete_key), len(raw), name[:120], payload),
+                    )
+            except sqlite3.IntegrityError:
+                path.unlink(missing_ok=True)
+                continue
+            except Exception:
+                path.unlink(missing_ok=True)
+                raise
+            return slug, delete_key
+        raise RuntimeError("could not allocate slug")
+
+    def get_log(self, slug: str) -> dict | None:
+        if not SLUG_RE.match(slug or ""):
+            return None
+        with self.conn() as c:
+            row = c.execute("SELECT slug, tune_slug, created_at, size, name, report_json FROM logs WHERE slug=?",
+                            (slug,)).fetchone()
+        if row is None:
+            return None
+        try:
+            report = json.loads(row["report_json"])
+        except ValueError:
+            return None
+        return {"slug": row["slug"], "tune_slug": row["tune_slug"], "created_at": row["created_at"],
+                "size": row["size"], "name": row["name"], "report": report}
+
+    def logs_for(self, tune_slug: str) -> list[dict]:
+        if not SLUG_RE.match(tune_slug or ""):
+            return []
+        with self.conn() as c:
+            rows = c.execute("SELECT slug, name, created_at, report_json FROM logs WHERE tune_slug=? "
+                             "ORDER BY created_at DESC LIMIT 50", (tune_slug,)).fetchall()
+        out = []
+        for r in rows:
+            try:
+                report = json.loads(r["report_json"])
+            except ValueError:
+                continue
+            out.append({"slug": r["slug"], "name": r["name"], "created_at": r["created_at"],
+                        "summary": report.get("summary", {}), "seconds": report.get("seconds", 0)})
+        return out
+
+    def read_log_raw(self, slug: str) -> bytes | None:
+        try:
+            return self.log_path(slug).read_bytes()
+        except (OSError, ValueError):
+            return None
+
+    def touch_log(self, slug: str) -> None:
+        now = int(time.time())
+        with self.conn() as c:
+            c.execute("UPDATE logs SET last_viewed_at=? WHERE slug=? AND last_viewed_at < ?",
+                      (now, slug, now - TOUCH_INTERVAL))
+
+    def check_log_key(self, slug: str, key: str) -> bool:
+        if not SLUG_RE.match(slug or "") or not key:
+            return False
+        with self.conn() as c:
+            row = c.execute("SELECT delete_key_hash FROM logs WHERE slug=?", (slug,)).fetchone()
+        return bool(row) and hmac.compare_digest(row["delete_key_hash"], self._hash_key(key))
+
+    def delete_log(self, slug: str) -> None:
+        with self.conn() as c:
+            c.execute("DELETE FROM logs WHERE slug=?", (slug,))
+        try:
+            self.log_path(slug).unlink(missing_ok=True)
+        except (OSError, ValueError):
+            log.exception("failed removing log file for %s", slug)
 
     # ---------------------------------------------------------- rate limit
     @staticmethod

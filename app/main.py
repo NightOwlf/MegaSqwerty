@@ -22,6 +22,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from . import boost as boostmod
 from . import checks as checksmod
+from . import logs as logsmod
 from . import diff as diffmod
 from .axes import axis_text
 from . import edit as editmod
@@ -418,12 +419,13 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         dials, readouts = views.gauges(summary, doc)
         health = checksmod.run(doc, model.table_views)
         boost_card = boostmod.card(boostmod.assess(doc, model.table_views, tmap, health))
+        tune_logs = store.logs_for(slug)[:5]
         parent = edited_from(slug)
         og_title, og_desc = og_for(doc, summary, edited=parent is not None)
         delete_key = pop_delete_key(request, slug)
         resp = templates.TemplateResponse(request, "tune.html", {
             "slug": slug, "doc": doc, "tmap": tmap, "m": model, "fgrids": fgrids, "summary": summary,
-            "dials": dials, "readouts": readouts, "parent": parent, "health": health, "boost_card": boost_card,
+            "dials": dials, "readouts": readouts, "parent": parent, "health": health, "boost_card": boost_card, "tune_logs": tune_logs,
             "health_summary": checksmod.summary(health), "live_values": views.live_values(doc, dials, health),
             "load": next((v.load for v in model.featured if v.load is not None), None),
             "family": views.family_label(doc), "tune_label": views.tune_label(doc), "delete_key": delete_key,
@@ -553,6 +555,146 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         resp = RedirectResponse(f"/t/{new_slug}", status_code=303)
         set_key_cookie(resp, request, new_slug, key)
         return resp
+
+    # --------------------------------------------------------------- logs
+    def log_list_page(request: Request, slug: str, doc: TuneDoc, error: str | None = None, status: int = 200):
+        return templates.TemplateResponse(request, "log.html", {
+            "slug": slug, "doc": doc, "tune_label": views.tune_label(doc), "family": views.family_label(doc),
+            "logs": store.logs_for(slug), "error": error, "og_url": page_url(request),
+        }, status_code=status)
+
+    def load_log(slug: str, log_slug: str) -> dict:
+        row = store.get_log(log_slug) if SLUG_RE.match(log_slug or "") else None
+        if row is None or row["tune_slug"] != slug:
+            raise HTTPException(404)
+        return row
+
+    def report_page(request: Request, slug: str, row: dict, delete_key: str | None = None,
+                    flash: str | None = None, status: int = 200):
+        doc = store.get_doc(slug)
+        return templates.TemplateResponse(request, "log_report.html", {
+            "slug": slug, "log_slug": row["slug"], "name": row["name"], "r": row["report"], "doc": doc,
+            "tune_label": views.tune_label(doc) if doc else "", "delete_key": delete_key, "flash": flash,
+            "og_url": page_url(request),
+        }, status_code=status)
+
+    def read_report(doc: TuneDoc, data: bytes, filename: str) -> dict:
+        """Parse the log and compare it to the tune: boost cut, MAP sensor range and rev limit come from the tune."""
+        log = logsmod.parse_log(data, filename)
+        tmap = resolve_map(doc)
+        featured, other = all_tables(doc, tmap)
+        tviews = featured + other
+        a = boostmod.assess(doc, tviews, tmap)
+        r = logsmod.analyze(log, doc, tviews, cut_kpa=a.cut.value if a.cut is not None else None,
+                            map_max=a.map_kpa, rev=a.rev[1] if a.rev else None)
+        return logsmod.to_dict(r)
+
+    @app.get("/t/{slug}/log", response_class=HTMLResponse)
+    def log_list(request: Request, slug: str):
+        doc = load_doc(slug)
+        store.touch(slug)
+        return log_list_page(request, slug, doc)
+
+    @app.post("/t/{slug}/log")
+    async def log_upload(request: Request, slug: str):
+        doc = load_doc(slug)
+        if request.state._state.get("body_too_large"):
+            return log_list_page(request, slug, doc, MESSAGES[413], 413)
+        if store.over_limit(client_ip(request), limit):
+            return log_list_page(request, slug, doc, MESSAGES[429], 429)
+        try:
+            form = await request.form(max_files=1, max_fields=8)
+        except BodyTooLarge:
+            raise
+        except Exception:
+            return log_list_page(request, slug, doc, "The upload didn't come through. Try again.", 400)
+        f = form.get("file")
+        name = getattr(f, "filename", "") or "log"
+        data, err, status = await read_upload(form)
+        if err:
+            return log_list_page(request, slug, doc, err, status)
+        try:
+            report = await run_in_threadpool(read_report, doc, data, name)
+        except logsmod.LogError as e:
+            return log_list_page(request, slug, doc, str(e), 400)
+        except Exception:
+            log.exception("failed reading log for %s", slug)
+            return log_list_page(request, slug, doc, "That log couldn't be read.", 400)
+        log_slug, key = await run_in_threadpool(store.create_log, data, slug, name, report)
+        store.record_upload(client_ip(request))
+        log.info("stored log %s for tune %s (%d rows)", log_slug, slug, report.get("rows", 0))
+        resp = RedirectResponse(f"/t/{slug}/log/{log_slug}", status_code=303)
+        set_key_cookie(resp, request, log_slug, key)
+        return resp
+
+    @app.get("/t/{slug}/log/{log_slug}", response_class=HTMLResponse)
+    def log_report(request: Request, slug: str, log_slug: str):
+        load_doc(slug)
+        row = load_log(slug, log_slug)
+        store.touch_log(log_slug)
+        cookie = request.cookies.get(f"dk_{log_slug}")
+        delete_key = cookie if cookie and store.check_log_key(log_slug, cookie) else None
+        resp = report_page(request, slug, row, delete_key)
+        if delete_key:
+            resp.delete_cookie(f"dk_{log_slug}", path="/")
+        return resp
+
+    @app.get("/t/{slug}/log/{log_slug}/download")
+    def log_download(slug: str, log_slug: str):
+        row = load_log(slug, log_slug)
+        raw = store.read_log_raw(log_slug)
+        if raw is None:
+            raise HTTPException(404)
+        base = re.sub(r"[^A-Za-z0-9._-]+", "-", row["name"]).strip("-._")[:60] or f"{log_slug}.log"
+        binary = raw[:5] == b"MLVLG"
+        return Response(raw, media_type="application/octet-stream" if binary else "text/plain; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{base}"'})
+
+    @app.post("/t/{slug}/log/{log_slug}/apply")
+    async def log_apply(request: Request, slug: str, log_slug: str):
+        """Write a suggestion from the report into a new tune. The tune it came from is never modified."""
+        doc = load_doc(slug)
+        row = load_log(slug, log_slug)
+        try:
+            form = await request.form(max_files=0, max_fields=8)
+        except Exception:
+            return error_response(request, 400)
+        kind = str(form.get("kind") or "")
+        suggestion = row["report"].get(kind) if kind in ("ve", "timing") else None
+        if not suggestion:
+            return report_page(request, slug, row, flash="That suggestion isn't part of this report.", status=400)
+        if str(form.get("acknowledge") or "") != "yes":
+            return report_page(request, slug, row, flash="Tick the box to confirm you've read the changes.",
+                               status=400)
+        if store.over_limit(client_ip(request), limit):
+            return report_page(request, slug, row, flash=MESSAGES[429], status=429)
+        raw = store.read_raw(slug)
+        if raw is None:
+            raise HTTPException(404)
+        try:
+            new_raw, changed = await run_in_threadpool(logsmod.apply_suggestion, raw, doc, resolve_map(doc),
+                                                       suggestion)
+        except logsmod.LogError as e:
+            return report_page(request, slug, row, flash=str(e), status=400)
+        new_slug, key, err, status = await store_upload(request, new_raw, parent=slug)
+        if err:
+            return report_page(request, slug, row, flash=err, status=status)
+        log.info("applied %s corrections from log %s: tune %s (%d values)", kind, log_slug, new_slug, changed)
+        resp = RedirectResponse(f"/t/{new_slug}", status_code=303)
+        set_key_cookie(resp, request, new_slug, key)
+        return resp
+
+    @app.post("/t/{slug}/log/{log_slug}/delete")
+    async def log_delete(request: Request, slug: str, log_slug: str):
+        load_log(slug, log_slug)
+        try:
+            form = await request.form(max_files=0, max_fields=4)
+        except Exception:
+            return error_response(request, 400)
+        if not store.check_log_key(log_slug, str(form.get("key") or "").strip()):
+            return error_response(request, 403, "That delete key doesn't match this log.")
+        store.delete_log(log_slug)
+        return RedirectResponse(f"/t/{slug}/log", status_code=303)
 
     # ------------------------------------------------------------ compare
     @app.get("/compare", response_class=HTMLResponse)

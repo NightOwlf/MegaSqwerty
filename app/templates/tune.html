@@ -87,6 +87,18 @@
       </section>
       {% endif %}
 
+      <section class="win win-logs">
+        <header class="win-title">{{ icon('disk') }}<h2>Datalogs</h2>{% if tune_logs %}<span class="win-sub">{{ tune_logs|length }}</span>{% endif %}</header>
+        <div class="win-body">
+          {% if tune_logs %}
+          <ul class="slist">{% for l in tune_logs %}<li><a class="srow" href="/t/{{ slug }}/log/{{ l.slug }}"><span class="sname">{{ l.name }}</span><span class="sval"><span class="chk-tag tag-{{ l.summary.tone }}">{{ l.summary.short }}</span></span><span class="chev">{{ icon('right') }}</span></a></li>{% endfor %}</ul>
+          {% else %}
+          <p class="hint">Upload a log you took with this tune and it gets checked against it: lean mixtures in boost, knock, overboost, heat, injector duty — and which VE cells to correct.</p>
+          {% endif %}
+          <div class="actions"><a class="btn primary" href="/t/{{ slug }}/log">{{ icon('upload') }}<span>Read a log</span></a></div>
+        </div>
+      </section>
+
       <section class="win win-info">
         <header class="win-title">{{ icon('info') }}<h2>Tune Information</h2></header>
         <div class="win-body">

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon %}
+{% block title %}Read a log · {{ tune_label }} · MSQ Viewer{% endblock %}
+{% block bodyclass %}page-log{% endblock %}
+{% block main %}
+<nav class="crumbs"><a href="/t/{{ slug }}">{{ icon('left') }}<span>{{ tune_label }}</span></a><span class="crumb-sep">/</span><span class="crumb-cur">Read a log</span></nav>
+
+<div class="boost">
+<section class="win">
+  <header class="win-title">{{ icon('disk') }}<h1>Read a log</h1><span class="win-sub">{{ family }}{% if doc.version %} {{ doc.version }}{% endif %}</span></header>
+  <div class="win-body">
+    <p class="lede-sm">Upload a datalog you took with this tune. It's checked against the tune itself: what would hurt the engine, what looks off, what looks good — and, where the log is good enough to tell, which VE cells to correct and where to take timing out.</p>
+    {% if error %}<p class="flash err" role="alert">{{ icon('warn') }}<span>{{ error }}</span></p>{% endif %}
+    <form class="upload-card" method="post" action="/t/{{ slug }}/log" enctype="multipart/form-data" data-max="{{ max_bytes }}" data-autosubmit>
+      <label class="dropzone dropzone-sm">
+        <input type="file" name="file" accept=".msl,.csv,.tsv,.txt,.mlg" required>
+        <span class="dz-icon">{{ icon('upload') }}</span>
+        <span class="dz-main">Choose a log file</span>
+        <span class="dz-sub">.msl, .csv or .mlg · up to {{ max_mb }} MB</span>
+      </label>
+      <p class="upload-status mono" aria-live="polite"></p>
+      <noscript><button class="btn primary big" type="submit">Upload &amp; read</button></noscript>
+      <div class="notice">{{ icon('warn') }}<p><strong>ANYONE WITH THE LINK CAN SEE THIS LOG.</strong> A log records where and how you drove. Don't upload anything private.</p></div>
+    </form>
+    <p class="fine">In TunerStudio, logs are under <span class="mono">Data Logging → View/Analyse</span>, or on the SD card. A text log (<span class="mono">.msl</span> or <span class="mono">.csv</span>) is read most reliably; binary <span class="mono">.mlg</span> logs are read where their layout is the documented one.</p>
+  </div>
+</section>
+
+{% if logs %}
+<section class="win">
+  <header class="win-title">{{ icon('list') }}<h2>Logs read against this tune</h2><span class="win-sub">{{ logs|length }}</span></header>
+  <div class="win-body">
+    <ul class="slist">
+      {% for l in logs %}
+      <li><a class="srow" href="/t/{{ slug }}/log/{{ l.slug }}">
+        <span class="sname">{{ l.name }}<small class="shint">{{ l.seconds }} s</small></span>
+        <span class="sval"><span class="chk-tag tag-{{ l.summary.tone }}">{{ l.summary.short }}</span></span>
+        <span class="chev">{{ icon('right') }}</span>
+      </a></li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>
+{% endif %}
+</div>
+{% endblock %}
+
+{% block status %}<span class="led on"></span><span>{{ tune_label }}</span><span class="st-sep"></span><span>Read a log</span>{% endblock %}

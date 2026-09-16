@@ -68,6 +68,11 @@ The app binds `0.0.0.0:$PORT`. Optional env var: `UPLOADS_PER_HOUR` (default `20
 | `POST /t/{slug}/save` | Save edited values as a new tune. JSON `{"changes": {name: {index: number}}}` → `{"url", "slug"}` |
 | `GET /t/{slug}/boost` | Boost prep: what the tune has, and the questions |
 | `POST /t/{slug}/boost` | `action=preview` shows the plan; `action=create` writes it as a new tune |
+| `GET /t/{slug}/log` | Upload a datalog, and the logs already read against this tune |
+| `POST /t/{slug}/log` | Parse and analyse a log, then 303 to its report |
+| `GET /t/{slug}/log/{log}` | The report. `/download` gets the original log back |
+| `POST /t/{slug}/log/{log}/apply` | Write the VE or timing suggestions into a new tune |
+| `POST /t/{slug}/log/{log}/delete` | Delete a log with the key from its upload |
 | `GET /compare`, `POST /compare` | Pick two tunes, or paste A and upload B |
 | `GET /d/{a}/{b}` | Cell-by-cell diff, plus a list of settings that differ |
 | `GET /healthz` | Healthcheck |
@@ -273,6 +278,48 @@ or speed signal falls back to the least boost, not the most. When the tune has n
 safely, the whole target becomes the lowest point you asked for, and the plan says what to turn on.
 
 **None of this makes a tune safe.** It's a conservative starting point for logging with a wideband.
+
+## Read a datalog
+
+**Read a log** on the Dash (`/t/{slug}/log`, `app/logs.py`) takes a datalog you recorded with that tune and
+says what it shows. Text logs (`.msl`, `.csv`, `.tsv`) are read most reliably; binary `.mlg` logs are read to
+the documented MLVLG layout, and anything that doesn't add up is refused with a message telling you to export
+text from TunerStudio rather than being guessed at. Channel names differ between firmware, so channels are
+matched by pattern (`AFR`, `AFR1`, `Lambda`, `O2`, `Engine Speed`…) and the report always lists which channel
+it used for what, and which checks couldn't run because a channel wasn't logged. MAP in psi or bar and
+temperatures in °F are converted, and the report says so.
+
+The log is checked **against the tune it came from** — its boost cut, MAP sensor range, rev limit, AFR target
+table and spark table:
+
+- **Fix**: lean in boost against target, knock, boost hitting the cut, MAP pegged at the sensor's ceiling,
+  boost overshooting its target, injectors past 90% duty, coolant or EGT past a damaging temperature, fuel
+  pressure falling away in boost.
+- **Check**: lean at full throttle, very rich in boost, boost falling short of target, injectors past 85%,
+  full throttle before the engine is warm, low battery voltage, closed-loop fuel working hard, more timing in
+  boost than the spark table asks for.
+- **Good** and **Note**: what matched target, peak boost, and the rest.
+
+It also picks out every full-throttle pull (when, how long, RPM range, peak boost, leanest λ, peak advance,
+whether it knocked or went lean) and charts RPM, MAP, mixture against target, timing, knock and boost duty.
+
+### What to change, from the log
+
+Where the log is good enough to tell, the report suggests edits and you apply them with one button, as a new
+tune with its own link and a diff (the original is never touched):
+
+- **VE cells from the wideband.** Settled samples only: warm engine, throttle and RPM not moving fast, no
+  accel enrichment, injectors not maxed out, and the mixture matched to the RPM and load from ~0.35 s earlier,
+  since the sensor reads exhaust that has already left the engine. A cell needs 8 samples (12 in boost) before
+  it is touched, moves at most 15% in one pass, and may only be leaned out by 5% in boost.
+- **Timing where it knocked**, at least 2° out of each cell the ECU reported knock in, never more than 6°,
+  and only ever downward.
+
+Applying re-reads the written file: every cell must be inside the clamp the report promised, nothing else may
+have changed, and Tune Health must still find nothing to fix, or the edit is refused.
+
+Logs are stored like tunes — **anyone with the link can see them**, they have their own delete key, they go
+when the tune goes, and they're purged after 180 days without a view.
 
 ## Abuse controls
 

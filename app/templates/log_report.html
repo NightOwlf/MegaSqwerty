@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, readout, keybox %}
+{% block title %}Log: {{ r.summary.short }} · {{ tune_label }} · MSQ Viewer{% endblock %}
+{% block bodyclass %}page-log{% endblock %}
+{% set led = {'ok': 'on', 'warn': 'warn', 'error': 'bad', 'info': ''} %}
+{% set tag = {'error': 'Fix', 'warn': 'Check', 'info': 'Note', 'ok': 'Good'} %}
+{% block main %}
+<nav class="crumbs"><a href="/t/{{ slug }}">{{ icon('left') }}<span>{{ tune_label }}</span></a><span class="crumb-sep">/</span><a href="/t/{{ slug }}/log">Logs</a><span class="crumb-sep">/</span><span class="crumb-cur">{{ name }}</span></nav>
+
+<div class="boost">
+{% if delete_key %}{{ keybox(delete_key, "Log") }}{% endif %}
+{% if flash %}<p class="flash err" role="alert">{{ icon('warn') }}<span>{{ flash }}</span></p>{% endif %}
+
+<section class="win">
+  <header class="win-title">{{ icon('shield') }}<h1>What this log shows</h1><span class="win-sub">{{ name }}</span></header>
+  <div class="win-body">
+    <p class="verdict verdict-{{ r.summary.tone }}"><span class="led {{ led[r.summary.tone] }}"></span><b>{{ r.summary.verdict }}</b></p>
+    {% if r.stats %}<div class="cluster cluster-strip">{% for s in r.stats %}{{ readout(s.label, s.value, s.units) }}{% endfor %}</div>{% endif %}
+    {% set problems = r.findings|selectattr('level', 'in', ['error', 'warn'])|list %}
+    {% if problems %}
+    <ul class="chk-list">{% for f in problems %}
+      <li class="chk chk-{{ f.level }}"><span class="chk-tag">{{ tag[f.level] }}</span><span class="chk-text">{{ f.text }}{% if f.where %} <small class="chk-where">{{ f.where }}</small>{% endif %}</span><span class="chk-group">{{ f.group }}</span></li>
+    {% endfor %}</ul>
+    {% endif %}
+    {% set good = r.findings|selectattr('level', 'equalto', 'ok')|list %}
+    {% set notes = r.findings|selectattr('level', 'equalto', 'info')|list %}
+    {% if good %}
+    <h3 class="sub-h">What looks good</h3>
+    <ul class="chk-list">{% for f in good %}<li class="chk chk-ok"><span class="chk-tag">Good</span><span class="chk-text">{{ f.text }}</span><span class="chk-group">{{ f.group }}</span></li>{% endfor %}</ul>
+    {% endif %}
+    {% if notes %}
+    <details class="chk-more"><summary>{{ notes|length }} note{{ 's' if notes|length != 1 }}</summary>
+      <ul class="chk-list">{% for f in notes %}<li class="chk chk-info"><span class="chk-tag">Note</span><span class="chk-text">{{ f.text }}{% if f.where %} <small class="chk-where">{{ f.where }}</small>{% endif %}</span><span class="chk-group">{{ f.group }}</span></li>{% endfor %}</ul>
+    </details>
+    {% endif %}
+    <p class="chk-fine">These checks look for the mistakes that hurt engines. A clean log doesn't prove a tune is safe, and a log can only show what its channels recorded.</p>
+  </div>
+</section>
+
+{% if r.charts %}
+<section class="win">
+  <header class="win-title">{{ icon('curve') }}<h2>The drive</h2><span class="win-sub">{{ r.seconds }} s · {{ '{:,}'.format(r.rows) }} samples</span></header>
+  <div class="win-body">
+    {% for chart in r.charts %}
+    <figure class="logchart">
+      <figcaption>{{ chart.title }}</figcaption>
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="{{ chart.title }}">
+        {% for s in chart.series %}<polyline class="ser {{ s.cls }}" points="{{ s.points }}"/>{% endfor %}
+      </svg>
+      <div class="legend legend-log">
+        {% for s in chart.series %}<span class="lg"><i class="sw {{ s.cls }}"></i>{{ s.label }} <span class="mono dim">{{ s.lo }}–{{ s.hi }}{% if s.units %} {{ s.units }}{% endif %}</span></span>{% endfor %}
+      </div>
+    </figure>
+    {% endfor %}
+    <p class="hint">Each trace is scaled to its own range (shown beside its name), so they can share one picture. Time runs left to right.</p>
+  </div>
+</section>
+{% endif %}
+
+{% if r.pulls %}
+<section class="win">
+  <header class="win-title">{{ icon('accel') }}<h2>Full-throttle pulls</h2><span class="win-sub">{{ r.pulls|length }}</span></header>
+  <div class="win-body">
+    <table class="ltable">
+      <thead><tr><th>At</th><th>For</th><th>RPM</th><th>Peak boost</th><th>Leanest</th><th>Advance</th><th></th></tr></thead>
+      <tbody>
+        {% for p in r.pulls %}
+        <tr class="{{ 'binding' if p.knock or p.lean }}">
+          <th scope="row" class="mono">{{ p.start }} s</th>
+          <td class="mono">{{ p.seconds }} s</td>
+          <td class="mono">{{ p.rpm_from }}–{{ p.rpm_to }}</td>
+          <td class="mono">{{ p.peak_psi }} psi</td>
+          <td class="mono">{% if p.leanest_lambda %}λ {{ p.leanest_lambda }}{% else %}—{% endif %}</td>
+          <td class="mono">{% if p.max_advance %}{{ p.max_advance }}°{% else %}—{% endif %}</td>
+          <td>{% if p.knock %}<span class="chk-tag tag-error">knock</span>{% endif %}{% if p.lean %}<span class="chk-tag tag-error">lean</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% for sug in [r.ve, r.timing] if sug %}
+<section class="win">
+  <header class="win-title">{{ icon('pencil') }}<h2>{{ 'Correct the VE table from this log' if sug.kind == 've' else 'Take timing out where it knocked' }}</h2><span class="win-sub">{{ sug.label }}</span></header>
+  <div class="win-body">
+    <p>{{ sug.text }}</p>
+    <table class="ltable">
+      <thead><tr><th>RPM</th><th>Load</th><th>Now</th><th>Suggested</th><th>Change</th><th>Samples</th></tr></thead>
+      <tbody>
+        {% for c in sug.cells[:24] %}
+        <tr class="{{ 'binding' if c.boost }}">
+          <th scope="row" class="mono">{{ c.rpm }}</th><td class="mono">{{ c.kpa }} kPa</td>
+          <td class="mono">{{ c.old }}</td><td class="mono">{{ c.new }}</td>
+          <td class="mono">{{ '%+g'|format(c.pct) }}{{ '%' if sug.kind == 've' else '°' }}</td>
+          <td class="mono dim">{{ c.samples }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if sug.cells|length > 24 %}<p class="hint">Showing the first 24 of {{ sug.cells|length }} cells. All of them are applied.</p>{% endif %}
+    <form method="post" action="/t/{{ slug }}/log/{{ log_slug }}/apply" class="create">
+      <input type="hidden" name="kind" value="{{ sug.kind }}">
+      <label class="check"><input type="checkbox" name="acknowledge" value="yes"><span>{% if sug.kind == 've' %}I've read these changes. Cells move at most 15% in one pass (5% leaner in boost), and I'll log again afterwards to check them.{% else %}I understand this only takes timing out where the ECU reported knock, and that I need to find why it knocked.{% endif %}</span></label>
+      <button class="btn primary" type="submit">{{ icon('share') }}<span>Apply as a new tune</span></button>
+      <p class="fine">Creates a new tune with its own link and a diff against this one. This tune stays exactly as it is.</p>
+    </form>
+  </div>
+</section>
+{% endfor %}
+
+<section class="win">
+  <header class="win-title">{{ icon('info') }}<h2>About this log</h2></header>
+  <div class="win-body">
+    {% if r.notes %}{% for n in r.notes %}<p class="hint">{{ n }}</p>{% endfor %}{% endif %}
+    {% if r.used %}
+    <h3 class="sub-h">Channels it read</h3>
+    <ul class="pill-list">{% for role, channel in r.used %}<li>{{ role }} <code class="mono">{{ channel }}</code></li>{% endfor %}</ul>
+    {% endif %}
+    {% if r.missing %}
+    <h3 class="sub-h">Not in this log</h3>
+    <p class="hint">These checks couldn't run. Add the channels in TunerStudio's datalog settings to get more out of the next log: {{ r.missing|join(', ') }}.</p>
+    {% endif %}
+    <div class="actions">
+      <a class="btn" href="/t/{{ slug }}/log/{{ log_slug }}/download">{{ icon('download') }}<span>Download the log</span></a>
+      <a class="btn" href="/t/{{ slug }}/log">{{ icon('upload') }}<span>Read another log</span></a>
+      <a class="btn" href="/t/{{ slug }}/boost">{{ icon('boost') }}<span>Boost prep</span></a>
+      <button class="btn" type="button" data-copy-link>{{ icon('link') }}<span>Copy link</span></button>
+    </div>
+    <details class="danger">
+      <summary>{{ icon('trash') }}<span>Delete this log</span></summary>
+      <form method="post" action="/t/{{ slug }}/log/{{ log_slug }}/delete">
+        <label>Delete key <input name="key" autocomplete="off" autocapitalize="off" spellcheck="false" required></label>
+        <button class="btn danger-btn" type="submit">Delete</button>
+      </form>
+    </details>
+  </div>
+</section>
+</div>
+{% endblock %}
+
+{% block status %}<span class="led {{ led[r.summary.tone] }}"></span><span>{{ name }}</span><span class="st-sep"></span><span>{{ r.summary.short }}</span><span class="st-grow"></span><span class="st-dim">{{ r.seconds }} s · {{ '{:,}'.format(r.rows) }} samples</span>{% endblock %}
+
+{% block after %}<div class="bubble" role="status" hidden></div>{% endblock %}
