@@ -61,7 +61,7 @@
 <section class="win">
   <header class="win-title">{{ icon('accel') }}<h2>Full-throttle pulls</h2><span class="win-sub">{{ r.pulls|length }}</span></header>
   <div class="win-body">
-    <table class="ltable">
+    <div class="tbl-scroll"><table class="ltable">
       <thead><tr><th>At</th><th>For</th><th>RPM</th><th>Peak boost</th><th>Leanest</th><th>Advance</th><th></th></tr></thead>
       <tbody>
         {% for p in r.pulls %}
@@ -76,7 +76,7 @@
         </tr>
         {% endfor %}
       </tbody>
-    </table>
+    </table></div>
   </div>
 </section>
 {% endif %}
@@ -86,7 +86,7 @@
   <header class="win-title">{{ icon('pencil') }}<h2>{{ 'Correct the VE table from this log' if sug.kind == 've' else 'Take timing out where it knocked' }}</h2><span class="win-sub">{{ sug.label }}</span></header>
   <div class="win-body">
     <p>{{ sug.text }}</p>
-    <table class="ltable">
+    <div class="tbl-scroll"><table class="ltable">
       <thead><tr><th>RPM</th><th>Load</th><th>Now</th><th>Suggested</th><th>Change</th><th>Samples</th></tr></thead>
       <tbody>
         {% for c in sug.cells[:24] %}
@@ -98,7 +98,7 @@
         </tr>
         {% endfor %}
       </tbody>
-    </table>
+    </table></div>
     {% if sug.cells|length > 24 %}<p class="hint">Showing the first 24 of {{ sug.cells|length }} cells. All of them are applied.</p>{% endif %}
     <form method="post" action="/t/{{ slug }}/log/{{ log_slug }}/apply" class="create">
       <input type="hidden" name="kind" value="{{ sug.kind }}">

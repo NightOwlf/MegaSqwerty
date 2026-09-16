@@ -161,21 +161,21 @@
     {% for n in plan.notes %}<p class="flash warn">{{ icon('warn') }}<span>{{ n }}</span></p>{% endfor %}
 
     <h3 class="sub-h">What sets the limit</h3>
-    <table class="ltable">
+    <div class="tbl-scroll"><table class="ltable">
       <thead><tr><th>Limit</th><th>Allows</th><th>Why</th></tr></thead>
       <tbody>
         {% for lim in plan.limits %}
         <tr class="{{ 'binding' if lim.binding }}"><th scope="row">{{ lim.label }}</th><td class="mono">{{ g(lim.psi) }} psi</td><td>{{ lim.reason }}</td></tr>
         {% endfor %}
       </tbody>
-    </table>
+    </table></div>
 
     {% if plan.schedule %}
     <h3 class="sub-h">Boost by {{ plan.answers.schedule }}</h3>
-    <table class="ltable">
+    <div class="tbl-scroll"><table class="ltable">
       <thead><tr><th>{{ 'Gear' if plan.answers.schedule == 'gear' else 'From' }}</th><th>You asked</th><th>Set to</th><th></th></tr></thead>
       <tbody>{% for r in plan.schedule %}<tr><th scope="row">{{ r.label }}</th><td class="mono">{{ g(r.asked) }} psi</td><td class="mono">{{ g(r.psi) }} psi</td><td>{{ r.note }}</td></tr>{% endfor %}</tbody>
-    </table>
+    </table></div>
     {% endif %}
 
     {% if plan.items %}

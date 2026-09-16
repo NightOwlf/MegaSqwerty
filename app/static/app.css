@@ -919,3 +919,25 @@ body.editing [contenteditable=true]:focus { outline: 2px solid var(--sel); backg
 .chk-tag.tag-error { background: var(--err-bg); border-color: var(--err-line); color: var(--err-ink); }
 .win-logs .slist { margin-bottom: 10px; }
 .win-logs .sname { font-size: 13px; overflow-wrap: anywhere; }
+
+/* ---------- boost & log pages on a phone ---------- */
+.tbl-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.ltable tbody th, .ltable td.mono { white-space: nowrap; }
+@media (max-width: 719px) {
+  .boost { max-width: none; }
+  .fact { grid-template-columns: 10px minmax(0, 1fr); }
+  .fact b, .fact .fact-v, .fact small { grid-column: 2; }
+  .fact-v { font-weight: 700; }
+  .qin input, .q input, .q select { width: 100%; }
+  .qin { flex-wrap: nowrap; }
+  .bactions .btn, .create .btn { width: 100%; max-width: none; justify-content: center; }
+  .ltable { font-size: 12.5px; }
+  .ltable th, .ltable td { padding: 5px 6px; }
+  .pitem { grid-template-columns: minmax(0, 1fr); gap: 1px; }
+  .pitem code, .pitem span { grid-row: auto; grid-column: 1; }
+  .speedrow { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .logchart svg { height: 110px; }
+  .legend-log { gap: 2px 10px; font-size: 11.5px; }
+  .steps { padding-left: 18px; font-size: 13px; }
+  .win-plan .win-body { padding: 10px; }
+}
