@@ -398,3 +398,17 @@ def test_a_blocked_setup_cant_be_created(client):
                                                     "plan_sig": ans.signature()})
     assert refused.status_code == 400 and "needs fixing" in refused.text
     assert len(client.get("/compare").text) > 0  # nothing was stored
+
+
+@pytest.mark.parametrize("sensor,kpa", [
+    ("MPX4250", 250.0), ("MPXH6400", 400.0), ("Bosch 3 bar", 300.0), ("MPX4100", 105.0),
+    ("DENSO183", 183.0),   # rusEFI/FOME name a sensor after the pressure it reads
+    ("CUSTOM", None),      # a name that says nothing: ask rather than guess
+])
+def test_the_map_sensor_range_is_read_from_the_sensor_name(sensor, kpa):
+    doc = parse_msq(rus(map_sensor=sensor))
+    tmap = resolve_map(doc)
+    featured, other = all_tables(doc, tmap)
+    a = boost.assess(doc, featured + other, tmap)
+    assert a.map_kpa == kpa
+    assert (sensor in a.map_source) if kpa else a.map_source == ""

@@ -83,6 +83,19 @@ def axis_text(label: str, units: str, fallback: str = "") -> str:
     return label or units or fallback
 
 
+# The stoichiometric ratio, under the names different firmware give it. Needed to read an AFR table as lambda.
+STOICH_NAMES = ("stoich", "stoichRatioPrimary", "stoichRatio", "stoichiometricRatio", "afrStoich")
+
+
+def stoich_of(doc: TuneDoc, default: float = 14.7) -> float:
+    for name in STOICH_NAMES:
+        c = doc.get(name)
+        v = c.values[0] if c is not None and c.values else None
+        if isinstance(v, float) and 6 <= v <= 16:
+            return v
+    return default
+
+
 # ------------------------------------------------------------------ boost / vacuum
 
 ATMOSPHERE_KPA = 101.325  # sea level; a boost gauge reads relative to the air outside

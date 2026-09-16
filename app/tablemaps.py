@@ -153,7 +153,9 @@ def _spec_view(doc: TuneDoc, tmap: dict, t: dict) -> TableView | None:
         y=y,
         x_label=x_label,
         y_label=y_label,
-        units=str(t.get("units") or meta_units(tmap, z)),
+        # The file's own units win: a target table saved as AFR says units="afr" even when the tablemap,
+        # built from the ini's default display mode, says lambda.
+        units=str(z.units or t.get("units") or meta_units(tmap, z)),
         featured=t.get("featured", True) is not False,
         x_units=x_units,
         y_units=y_units,

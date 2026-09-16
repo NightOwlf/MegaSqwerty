@@ -22,7 +22,7 @@ import re
 import struct
 from dataclasses import asdict, dataclass, field
 
-from .axes import ATMOSPHERE_KPA, BOOST_EDGE_KPA
+from .axes import ATMOSPHERE_KPA, BOOST_EDGE_KPA, stoich_of
 from .parser import Constant, TuneDoc
 from .render import fuel_mode
 from .tablemaps import TableView
@@ -453,8 +453,7 @@ def analyze(log: LogDoc, doc: TuneDoc, views: list[TableView], cut_kpa: float | 
     iat, iat_note = _to_c(ch["iat"]) if "iat" in ch else ([None] * log.rows, "")
     r.notes += [n for n in (clt_note, iat_note) if n]
 
-    stoich = next((c.value for c in [doc.get("stoich")] if c is not None and isinstance(c.value, float)
-                   and 6 <= c.value <= 16), 14.7)
+    stoich = stoich_of(doc)
     lam = lam_t = None
     if "lambda" in ch:
         c = ch["lambda"]

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import operator
 
-from .axes import BOOST_EDGE_KPA, PLACEHOLDERS, placeholder_parts
+from .axes import BOOST_EDGE_KPA, PLACEHOLDERS, STOICH_NAMES, placeholder_parts, stoich_of
 from .parser import TuneDoc
 from .render import fuel_mode
 from .tablemaps import TableView
@@ -252,10 +252,11 @@ def build_rules(doc: TuneDoc, views: list[TableView]) -> list[dict]:
         if _scalar(doc, name):
             add("range", "error", "Fuel", f"{label} is {{a}}.", f"{label} is {{a}}, so fuel can't be calculated.",
                 a=[name, "value"], lo=lo, units=units)
-    if _scalar(doc, "stoich"):
+    stoich_name = next((n for n in STOICH_NAMES if _scalar(doc, n)), None)
+    if stoich_name:
         add("range", "warn", "Fuel", "Stoichiometric ratio is {a}:1.",
             "Stoichiometric ratio {a}:1 is outside 6–16, beyond gasoline, E85 and methanol.",
-            a=["stoich", "value"], lo=6, hi=16)
+            a=[stoich_name, "value"], lo=6, hi=16)
 
     # ---- main tables
     for tid in MAIN_TABLES:
@@ -296,7 +297,9 @@ def build_rules(doc: TuneDoc, views: list[TableView]) -> list[dict]:
         elif tid == "afr":
             mode = fuel_mode(z, v.units, v.palette)
             if mode:
-                scale = (["stoich", "value"] if _scalar(doc, "stoich") else 14.7) if mode == "afr" else 1.0
+                stoich_name = next((n for n in STOICH_NAMES if _scalar(doc, n)), None)
+                scale = 1.0 if mode == "lambda" else (
+                    [stoich_name, "value"] if stoich_name else stoich_of(doc))
                 add("cells", "warn", "Fuel", "Targets stay between λ 0.65 and 1.20.",
                     "Target is outside λ 0.65–1.20 in {cells} (first {value} at {where}).",
                     lo=0.65, hi=1.2, scale=scale, **grid)

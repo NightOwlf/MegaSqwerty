@@ -3,6 +3,8 @@ import html
 import json
 import re
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from app import checks
@@ -135,3 +137,58 @@ def test_every_rule_kind_used_is_one_edit_js_knows():
     js = open("app/static/edit.js").read()
     for kind in ("cmp", "range", "ascending", "placeholder", "coverage", "boostcut", "static", "cells", "spike", "rows"):
         assert f'"{kind}"' in js, kind
+
+
+def fome(units="afr", cells=None, stoich=14.7) -> bytes:
+    """A FOME tune whose target table is saved the way the ECU wrote it, with the units it used."""
+    rpm, load = [500, 4000, 8000], [10, 55, 100]
+    targets = cells if cells is not None else [14.7] * 6 + [12.2, 11.8, 11.5]
+
+    def table(name, vals, u, digits=1):
+        return (f'<constant cols="3" digits="{digits}" name="{name}" rows="3" units="{u}">'
+                + " ".join(str(v) for v in vals) + "</constant>")
+
+    def array(name, vals, u):
+        return (f'<constant cols="1" digits="0" name="{name}" rows="3" units="{u}">'
+                + " ".join(str(v) for v in vals) + "</constant>")
+
+    parts = [
+        table("veTable", [40, 45, 50, 55, 60, 65, 70, 75, 80], "%"),
+        array("veRpmBins", rpm, "RPM"), array("veLoadBins", load, "kPa"),
+        table("ignitionTable", [20, 26, 30, 24, 30, 34, 14, 22, 28], "deg"),
+        array("ignitionRpmBins", rpm, "RPM"), array("ignitionLoadBins", load, "kPa"),
+        table("lambdaTable", targets, units, 2),
+        array("lambdaRpmBins", rpm, "RPM"), array("lambdaLoadBins", load, "kPa"),
+        f'<constant digits="1" name="stoichRatioPrimary" units=":1">{stoich}</constant>',
+        '<constant digits="0" name="rpmHardLimit" units="rpm">7000</constant>',
+        '<constant digits="2" name="injector_flow" units="cc/min">440.0</constant>',
+        '<constant digits="3" name="displacement" units="L">2.000</constant>',
+        '<constant digits="0" name="cylindersCount">4</constant>',
+    ]
+    return ('<?xml version="1.0" encoding="ISO-8859-1"?><msq xmlns="http://www.msefi.com/:msq">'
+            '<versionInfo signature="rusEFI (FOME) Vthpnp.2026.05.01.vthpnp.1"/><page>'
+            + "".join(parts) + "</page></msq>").encode()
+
+
+@pytest.mark.parametrize("units,cells,stoich", [
+    ("afr", None, 14.7),                                            # saved as AFR, as this ECU writes it
+    ("lambda", [1.0] * 6 + [0.83, 0.80, 0.78], 14.7),               # saved as lambda
+    ("afr", [9.0] * 6 + [7.5, 7.3, 7.2], 9.0),                      # saved as AFR on E85
+])
+def test_a_target_table_is_read_in_the_units_the_file_says(units, cells, stoich):
+    """The tablemap's units come from the ini's default display mode; the file knows how it was actually saved."""
+    results, summary = health(fome(units, cells, stoich))
+    assert not [r["text"] for r in results if r["status"] == "warn" and "λ 0.65" in r["text"]]
+    assert "Targets stay between λ 0.65 and 1.20." in texts(results, "ok")
+    assert summary["tone"] == "ok"
+
+
+def test_the_stoich_ratio_is_found_under_the_name_the_firmware_uses():
+    from app.axes import stoich_of
+    from app.render import fuel_mode
+
+    doc = parse_msq(fome("afr", stoich=9.0))
+    assert stoich_of(doc) == 9.0  # FOME calls it stoichRatioPrimary, not stoich
+    featured, other = all_tables(doc, resolve_map(doc))
+    target = next(v for v in featured + other if v.id == "afr")
+    assert target.units == "afr" and fuel_mode(target.z, target.units, target.palette) == "afr"

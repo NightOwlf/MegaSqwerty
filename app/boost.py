@@ -31,7 +31,7 @@ import re
 from dataclasses import asdict, dataclass, field
 
 from . import checks as checksmod
-from .axes import ATMOSPHERE_KPA, BOOST_EDGE_KPA, placeholder_parts
+from .axes import ATMOSPHERE_KPA, BOOST_EDGE_KPA, placeholder_parts, stoich_of
 from .edit import EditError, apply_changes, edit_digits
 from .parser import Constant, MsqError, TuneDoc, parse_msq
 from .render import fuel_mode
@@ -352,6 +352,10 @@ def _map_sensor(doc: TuneDoc) -> tuple[float | None, str]:
         for pattern, kpa in _MAP_SENSORS:
             if re.search(pattern, text, re.I):
                 return kpa, f"{c.name} = “{text}”"
+        # Sensors named after what they read: DENSO183, TDK400. Three digits in kPa, and no more than the name says.
+        m = re.search(r"(\d{3})(?!\d)", text)
+        if m and 100 <= int(m.group(1)) <= 1000:
+            return float(m.group(1)), f"{c.name} = “{text}”"
     return None, ""
 
 
@@ -516,8 +520,7 @@ def assess(doc: TuneDoc, views: list[TableView], tmap: dict | None = None, healt
     inj = _first_scalar(doc, ("injector_flow",))
     a.injector_cc = inj[1] if inj and 50 <= inj[1] <= 3000 else None
     a.rev = _first_scalar(doc, checksmod.REV_LIMIT_NAMES)
-    stoich = _scalar(doc, "stoich")
-    a.stoich = stoich if stoich and 6 <= stoich <= 16 else 14.7
+    a.stoich = stoich_of(doc)
     if doc.family in ("rusEFI", "FOME"):
         a.incorporate = True
     else:
