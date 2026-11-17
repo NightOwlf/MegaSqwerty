@@ -48,6 +48,7 @@
       </label>
       <button class="btn sm primary" type="button" data-lv-share title="Copy a link that opens at this exact moment, with these channels">{{ icon('link') }}<span>Copy link</span></button>
       <a class="btn sm" href="/l/{{ log_slug }}/download" title="Download the original log file">{{ icon('download') }}<span class="lv-wide">Download</span></a>
+      {% if tune_slug %}<button class="btn sm" type="button" data-lv-history title="Backups of this tune: restore or download any of them">History</button>{% endif %}
       <button class="btn sm" type="button" data-lv-opts title="Display options" aria-label="Display options">⚙</button>
       <button class="btn sm" type="button" data-lv-help title="Keyboard shortcuts and help">?</button>
     </div>
@@ -160,6 +161,14 @@
     </div>
     <p class="fine">To put it on the car: load the .msq in TunerStudio, check it, then burn it. Log again afterwards; one pass gets close, the second gets it right.</p>
     <button class="btn" type="button" data-dlg-close>Close</button>
+  </div>
+</div>
+<div class="lv-dlg" data-dlg="history" hidden>
+  <div class="lv-dlg-in">
+    <h2>History</h2>
+    <p class="dim">Backups of this tune: one before VE Analyze is applied, one before every restore, and one every 10 minutes while it's being edited. Restoring changes it for everyone on the link, and backs up what was there first, so nothing is ever lost.</p>
+    <div class="lv-hist" data-history-list></div>
+    <div class="lv-dlg-btns"><button class="btn" type="button" data-history-backup>＋ Back up now</button><span class="st-grow"></span><button class="btn primary" type="button" data-dlg-close>Done</button></div>
   </div>
 </div>
 <div class="lv-dlg" data-dlg="opts" hidden>

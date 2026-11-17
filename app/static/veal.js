@@ -30,7 +30,7 @@
     decelHold: 1.0,    // s to wait after fuel cut
     lag: "auto",       // wideband delay: "auto" (measured from the log) or seconds
     lagByRpm: true,    // exhaust takes longer to reach the sensor at low RPM: scale the delay with it
-    maxChange: 25,     // % a cell may move in one pass
+    maxChange: 15,     // % a cell may move in one pass: cautious, so one bad stretch of log can't wreck a cell
     minData: 0.5,      // s of data a cell needs for full authority
     smooth: 0.15,      // 0–1: how much neighbouring cells with data are pulled together
     lamMin: 0.6,

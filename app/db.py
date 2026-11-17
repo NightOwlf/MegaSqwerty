@@ -104,6 +104,15 @@ class Store:
                     ts INTEGER NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS uploads_ip_ts ON uploads(ip_hash, ts);
+                CREATE TABLE IF NOT EXISTS versions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    slug TEXT NOT NULL,
+                    at INTEGER NOT NULL,
+                    label TEXT NOT NULL,
+                    sha TEXT NOT NULL,
+                    raw BLOB NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS versions_slug ON versions(slug, at);
                 """
             )
             # Added with tune editing: the slug an edited copy was saved from.
@@ -281,9 +290,45 @@ class Store:
             row = c.execute("SELECT delete_key_hash FROM tunes WHERE slug=?", (slug,)).fetchone()
         return bool(row) and hmac.compare_digest(row["delete_key_hash"], self._hash_key(key))
 
+    # ------------------------------------------------------------ versions
+    # Backups of an edited tune, taken before every big change (VE Analyze applied, a restore) and every 10
+    # minutes while it's being edited. Kept as long as the tune is; at most MAX_VERSIONS automatic ones.
+    MAX_VERSIONS = 400
+
+    def add_version(self, slug: str, raw: bytes, label: str) -> int | None:
+        """Back up `raw` (the tune as it is before a change). Skips a duplicate of the latest backup."""
+        sha = hashlib.sha256(raw).hexdigest()
+        with self.conn() as c:
+            last = c.execute("SELECT sha FROM versions WHERE slug=? ORDER BY id DESC LIMIT 1", (slug,)).fetchone()
+            if last and last["sha"] == sha and label == "Auto-save":
+                return None
+            cur = c.execute("INSERT INTO versions (slug, at, label, sha, raw) VALUES (?,?,?,?,?)",
+                            (slug, int(time.time()), label[:120], sha, gzip.compress(raw, 6)))
+            n = c.execute("SELECT COUNT(*) FROM versions WHERE slug=? AND label='Auto-save'", (slug,)).fetchone()[0]
+            if n > self.MAX_VERSIONS:  # thin the oldest automatic backups; named ones stay
+                c.execute("DELETE FROM versions WHERE id IN (SELECT id FROM versions WHERE slug=? AND label='Auto-save' "
+                          "ORDER BY id LIMIT ?)", (slug, n - self.MAX_VERSIONS))
+            return cur.lastrowid
+
+    def versions(self, slug: str) -> list[dict]:
+        with self.conn() as c:
+            return [{"id": r["id"], "at": r["at"], "label": r["label"], "sha": r["sha"][:12]} for r in c.execute(
+                "SELECT id, at, label, sha FROM versions WHERE slug=? ORDER BY id DESC", (slug,))]
+
+    def version_raw(self, slug: str, vid: int) -> tuple[bytes, dict] | None:
+        with self.conn() as c:
+            r = c.execute("SELECT id, at, label, raw FROM versions WHERE slug=? AND id=?", (slug, vid)).fetchone()
+        return (gzip.decompress(r["raw"]), {"id": r["id"], "at": r["at"], "label": r["label"]}) if r else None
+
+    def last_version_at(self, slug: str) -> int:
+        with self.conn() as c:
+            r = c.execute("SELECT MAX(at) FROM versions WHERE slug=?", (slug,)).fetchone()
+        return r[0] or 0
+
     def delete_tune(self, slug: str) -> None:
         self._rev_cache.pop(slug, None)
         with self.conn() as c:
+            c.execute("DELETE FROM versions WHERE slug=?", (slug,))
             gone = [r["slug"] for r in c.execute("SELECT slug FROM logs WHERE tune_slug=?", (slug,))]
             c.execute("DELETE FROM tunes WHERE slug=?", (slug,))
         for log_slug in gone:

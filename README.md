@@ -382,6 +382,17 @@ Routes: `GET /t/{slug}/rev` (what pages poll), `POST /t/{slug}/notes`, `POST /t/
 edited copy; `{"fork": true}` for a separate copy), and the token-only `/admin/restore/{tune,log}` that put
 links back under their old slugs when storage moved to the volume.
 
+### Backups and undo
+
+A shared tune keeps backups for as long as it exists: one before VE Analyze is applied, one before every
+restore, and one every 10 minutes while it's being edited (named ones are kept forever, automatic ones up to
+400). **History** lists them with *Restore* and *Download*, plus *Back up now* and *the original* it was made
+from. Restoring changes the tune for everyone on the link and backs up what was there first, so nothing is
+lost. VE Analyze never changes a tune by itself: a run ends in a **suggestion** (shown in the table and in
+Compare) with **Apply to tune**, which backs the tune up first, or **Discard**; after applying, **Undo VE
+Analyze** puts it back in one tap. Its default limit is 15% per cell per run, so a bad stretch of log can't
+wreck a cell, and running again moves it further if the data agrees.
+
 ### What changed: before and after
 
 Whenever a table differs from the tune it came from (after VE Analyze, after editing, or when you open

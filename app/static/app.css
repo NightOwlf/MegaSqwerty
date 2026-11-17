@@ -1425,3 +1425,15 @@ body.page-viewer .main { max-width: none; padding-block: 8px 12px; padding-inlin
 .lv-together .btn { width: 100%; justify-content: center; }
 .lv-together input { width: 100%; margin-top: 6px; min-height: 34px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: 4px; background: var(--field); color: var(--text); font: 12px var(--mono); }
 .lv-together input[hidden] { display: none; }
+
+/* ---------- VE Analyze: apply / discard / undo, and the History list ---------- */
+.lv-ve-apply { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-bottom: 6px; padding: 8px 10px; border-radius: 4px; font-size: 12.5px; }
+.lv-ve-apply[hidden] { display: none; }
+.lv-ve-apply.pending { border: 1px solid var(--sel); background: linear-gradient(rgba(53, 116, 240, .12), rgba(53, 116, 240, .12)), var(--win); }
+.lv-ve-apply.done { border: 1px solid var(--ok-line, var(--line)); background: var(--ok-bg, var(--win)); }
+.lv-ve-apply .btn.sm { min-height: 32px; }
+.lv-hist { display: grid; gap: 4px; max-height: min(55vh, 460px); margin-bottom: 8px; overflow-y: auto; }
+.lv-hrow { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--win-2); font-size: 12.5px; }
+.lv-hrow > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.lv-hrow.now { border-color: var(--sel); }
+.lv-hrow .btn.sm { flex: none; min-height: 30px; }

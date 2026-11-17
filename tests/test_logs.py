@@ -668,3 +668,37 @@ def test_live_checks_are_cheap(client):
     full = client.get(f"{url}/index.json?tune={copy}").json()
     assert "channels" in full and len(client.get(f"{url}/index.json?tune={copy}&lite=1").content) < len(
         client.get(f"{url}/index.json?tune={copy}").content)
+
+
+def test_every_shared_tune_keeps_backups_to_go_back_to(client):
+    """Backups before a named change (VE Analyze), on a timer while editing, before a restore; any can be restored."""
+    slug = upload_tune(client, sp(load=LOAD_BOOST, boostLimit=170))
+    assert client.post(f"/t/{slug}/versions", json={"label": "x"}).status_code == 400  # originals never change
+    copy = client.post(f"/t/{slug}/save", json={"changes": {"veTable": {"0": 40.0}}}).json()["slug"]
+    ve = lambda: parse_msq(client.get(f"/t/{copy}.msq").content).get("veTable").values
+
+    # the first in-place save backs up (no backup yet), then saves within 10 minutes don't
+    client.post(f"/t/{copy}/save", json={"changes": {"veTable": {"0": 41.0}}})
+    client.post(f"/t/{copy}/save", json={"changes": {"veTable": {"0": 42.0}}})
+    vs = client.get(f"/t/{copy}/versions").json()["versions"]
+    assert [v["label"] for v in vs] == ["Auto-save"]
+    # applying VE Analyze backs up first, by name
+    client.post(f"/t/{copy}/save", json={"changes": {"veTable": {"0": 55.0, "1": 56.0}}, "checkpoint": "Before VE Analyze"})
+    vs = client.get(f"/t/{copy}/versions").json()["versions"]
+    assert vs[0]["label"] == "Before VE Analyze" and ve()[0] == pytest.approx(55.0)
+
+    # undo VE Analyze: restore that backup; the state just before is backed up too, so this can be undone
+    r = client.post(f"/t/{copy}/restore", json={"id": vs[0]["id"]}).json()
+    assert r["ok"] and ve()[0] == pytest.approx(42.0)
+    assert r["versions"][0]["label"].startswith("Before restoring “Before VE Analyze”")
+    client.post(f"/t/{copy}/restore", json={"id": r["versions"][0]["id"]})
+    assert ve()[0] == pytest.approx(55.0)
+    # all the way back to the tune it was made from
+    client.post(f"/t/{copy}/restore", json={"parent": True})
+    orig = parse_msq(client.get(f"/t/{slug}.msq").content).get("veTable").values
+    assert ve()[0] == pytest.approx(orig[0])
+    # a named backup on demand, and any backup downloads as a .msq
+    vid = client.post(f"/t/{copy}/versions", json={"label": "Before the 3rd-gear pulls"}).json()["id"]
+    dl = client.get(f"/t/{copy}/versions/{vid}.msq")
+    assert dl.status_code == 200 and "-backup-" in dl.headers["content-disposition"] and parse_msq(dl.content)
+    assert client.post(f"/t/{copy}/restore", json={"id": 999999}).status_code == 404

@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -441,6 +442,13 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
                 doc = await run_in_threadpool(parse_msq, new_raw)
             except MsqError as e:
                 return fail(str(e))
+            # Back up what's being replaced: always before a named change (VE Analyze applied), and every
+            # 10 minutes while it's being edited.
+            label = str(payload.get("checkpoint") or "").strip()[:80]
+            if label:
+                store.add_version(slug, raw, label)
+            elif time.time() - store.last_version_at(slug) > 600:
+                store.add_version(slug, raw, "Auto-save")
             await run_in_threadpool(store.replace_tune, slug, new_raw, doc)
             log.info("updated edited tune %s in place (%d values)", slug, changed)
             return JSONResponse({"url": f"/t/{slug}", "slug": slug, "changed": changed, "key": own,
@@ -505,6 +513,76 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         if rev is None:
             raise HTTPException(404)
         return JSONResponse({"rev": rev}, headers={"Cache-Control": "no-store"})
+
+    def shared_copy(slug: str):
+        """-> (meta) of an edited copy, or a JSON error: originals never change, so they have no history."""
+        load_doc(slug)
+        meta = store.get_meta(slug)
+        return meta if meta is not None and meta["parent"] else None
+
+    @app.get("/t/{slug}/versions")
+    def tune_versions(slug: str):
+        """The backups of a shared tune, newest first, plus what it was made from."""
+        meta = shared_copy(slug)
+        parent = None
+        if meta is not None:
+            pdoc = store.get_doc(meta["parent"])
+            parent = {"slug": meta["parent"], "label": views.tune_label(pdoc) if pdoc else "", "exists": pdoc is not None}
+        return JSONResponse({"versions": store.versions(slug) if meta is not None else [], "parent": parent,
+                             "editable": meta is not None}, headers={"Cache-Control": "no-store"})
+
+    @app.post("/t/{slug}/versions")
+    async def tune_checkpoint(request: Request, slug: str):
+        """Back up the tune as it is now, with a name ("Before VE Analyze", "Before the 3rd-gear pulls"…)."""
+        if shared_copy(slug) is None:
+            return JSONResponse({"error": "The original upload never changes, so it doesn't need a backup."}, status_code=400)
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        label = str(payload.get("label") or "").strip()[:80] if isinstance(payload, dict) else ""
+        vid = store.add_version(slug, store.read_raw(slug) or b"", label or "Backup")
+        return JSONResponse({"id": vid, "versions": store.versions(slug)})
+
+    @app.post("/t/{slug}/restore")
+    async def tune_restore(request: Request, slug: str):
+        """Put a shared tune back to a backup (or to the tune it was made from). What it was just before is
+        backed up first, so a restore can itself be undone."""
+        meta = shared_copy(slug)
+        if meta is None:
+            return JSONResponse({"error": "The original upload never changes: there's nothing to restore."}, status_code=400)
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        payload = payload if isinstance(payload, dict) else {}
+        if payload.get("parent"):
+            src = store.read_raw(meta["parent"])
+            what = "the original it was made from"
+        else:
+            got = store.version_raw(slug, int(payload.get("id") or 0))
+            src, what = (got[0], f"“{got[1]['label']}”") if got else (None, "")
+        if not src:
+            return JSONResponse({"error": "That backup isn't there any more."}, status_code=404)
+        try:
+            doc = await run_in_threadpool(parse_msq, src)
+        except MsqError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        store.add_version(slug, store.read_raw(slug) or b"", f"Before restoring {what}"[:120])
+        await run_in_threadpool(store.replace_tune, slug, src, doc)
+        log.info("restored tune %s to %s", slug, what)
+        return JSONResponse({"ok": True, "rev": store.rev(slug), "versions": store.versions(slug)})
+
+    @app.get("/t/{slug}/versions/{vid}.msq")
+    def tune_version_download(slug: str, vid: int):
+        load_doc(slug)
+        got = store.version_raw(slug, vid)
+        if got is None:
+            raise HTTPException(404)
+        stamp = time.strftime("%Y%m%d-%H%M", time.gmtime(got[1]["at"]))
+        name = msq_filename(store.get_doc(slug), slug).removesuffix(".msq") + f"-backup-{stamp}.msq"
+        return Response(got[0], media_type="application/octet-stream",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-cache"})
 
     @app.post("/t/{slug}/editkey")
     async def tune_edit_key(request: Request, slug: str):

@@ -1154,6 +1154,13 @@
      you send shows your changes. Saving again updates your copy in place (this browser keeps its key);
      someone else editing your copy gets their own, so nobody overwrites anybody. Auto-save does it for you. */
   var saveBarClosed = false;
+  // A VE Analyze result waiting to be applied or discarded (kept across a reload, never auto-saved).
+  var vePending = (function () { try { return localStorage.getItem("msq.lv.vepending:" + TUNE) === "1"; } catch (e) { return false; } })();
+  function setVePending(on) {
+    vePending = on;
+    try { if (on) localStorage.setItem("msq.lv.vepending:" + TUNE, "1"); else localStorage.removeItem("msq.lv.vepending:" + TUNE); } catch (e) { /* ignore */ }
+    renderVeApply(); renderSaveBars();
+  }
   var OWN_KEY = "msq.lv.own", saving = null, saveAgain = false, autoTimer = 0, saveErr = "", lastSaved = null;
   var autoSave = true;  // always on when a page opens: turning it off lasts only until a reload
   var EKEY = "msq.lv.ekey";
@@ -1190,11 +1197,12 @@
       $("[data-save-compare]", bar).hidden = !n && !changedCells();
       $("[data-autosave]", bar).checked = autoSave;
       label.classList.toggle("err", !!saveErr);
-      if (saveErr) label.textContent = "Not saved: " + saveErr;
+      if (vePending && n) label.textContent = "VE Analyze suggests " + plural(n, "change") + ": not applied yet";
+      else if (saveErr) label.textContent = "Not saved: " + saveErr;
       else if (saving) label.textContent = "Saving…";
       else if (n) label.textContent = plural(n, "unsaved change") + (tablesN > 1 ? " in " + tablesN + " tables" : "") + (autoSave ? " · saving…" : "");
       else label.textContent = "✓ Saved" + (copy ? " · " + plural(changedCells(), "cell") + " changed from the original" : "");
-      btn.textContent = n ? "Save & share" : "Share";
+      btn.textContent = vePending && n ? "Review" : n ? "Save & share" : "Share";
       btn.disabled = !!saving;
     });
   }
@@ -1208,10 +1216,10 @@
   }
   function scheduleAuto(ms) {
     clearTimeout(autoTimer);
-    if (!autoSave || !TUNE || !editCount() || ve.running) return;
+    if (!autoSave || !TUNE || !editCount() || ve.running || vePending) return;
     autoTimer = setTimeout(function () { pushEdits().catch(function () { /* shown in the bar */ }); }, ms == null ? 1500 : ms);
   }
-  function pushEdits() {
+  function pushEdits(checkpoint) {
     if (!TUNE) return Promise.reject(new Error("no tune"));
     if (saving) { saveAgain = true; return saving; }
     if (!editCount()) return Promise.resolve(lastSaved);
@@ -1220,7 +1228,7 @@
     saveErr = "";
     saving = fetch("/t/" + TUNE + "/save", {
       method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({ changes: sent, key: owned()[TUNE] || "" })
+      body: JSON.stringify({ changes: sent, key: owned()[TUNE] || "", checkpoint: checkpoint || "" })
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (j) { return [r.ok, j]; });
     }, function () { return [false, { error: "check your connection." }]; }).then(function (res) {
@@ -1422,6 +1430,7 @@
         '<p class="lv-ve-status mono" aria-live="polite">Plays through the log and works out each VE cell from the wideband. Nothing is changed until you save.</p>' +
         '<div class="lv-ve-bar"><i></i></div>' +
       "</div>" +
+      '<div class="lv-ve-apply" hidden></div>' +
       '<div class="lv-ve-warn" hidden></div>' +
       '<div class="lv-ve-main"><div class="lv-ve-gridbox"><div class="lv-th"><b>' + esc(t.label) + '</b><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button></div><div class="lv-grid"></div>' + toolbar() +
         '<p class="lv-tn">' + esc((t.yl || "Load") + (t.yu ? " (" + t.yu + ")" : "") + " ↑ · " + (t.xl || "RPM") + " →") + " · after a run, select cells to adjust them</p></div>" +
@@ -1429,7 +1438,7 @@
           '<div class="lv-ve-why"></div>' +
           '<details class="lv-ve-set"><summary>Filters &amp; settings</summary>' +
             opt("minClt", "Min coolant", 70, 1, "°C") +
-            opt("maxChange", "Max change per cell", 25, 1, "%") +
+            opt("maxChange", "Max change per cell", 15, 1, "% per run (run again for more)") +
             opt("minData", "Data for full change", 0.5, 0.1, "s per cell") +
             opt("tpsRate", "Throttle moving faster than", 30, 1, "%/s") +
             opt("mapRate", "MAP moving faster than", 80, 1, "kPa/s") +
@@ -1474,6 +1483,7 @@
     });
     renderSaveBars();
     renderFilters();
+    renderVeApply();
     if (root.classList.contains("cells-big")) $$("[data-cells]").forEach(function (x) { x.textContent = "Fit"; x.classList.add("on"); });
     if (also.length) also.forEach(function (s, i) {
       fetch("/l/" + s + "/index.json" + query).then(function (r) { return r.json(); }).then(function (j) {
@@ -1620,6 +1630,93 @@
       return m;
     });
   }
+  /* The apply / discard / undo strip under VE Analyze's status. */
+  var veUndo = null;  // after applying: how to undo it ({id} of the backup, or {parent: true})
+  function renderVeApply() {
+    var box = $(".lv-ve-apply");
+    if (!box) return;
+    var n = ve.table && edits[ve.table.name] ? Object.keys(edits[ve.table.name]).length : 0;
+    if (vePending && n) {
+      box.hidden = false; box.className = "lv-ve-apply pending";
+      box.innerHTML = "<span><b>VE Analyze suggests " + plural(n, "cell") + "</b> · not applied yet. The tune is backed up before it changes.</span>" +
+        '<span class="st-grow"></span><button class="btn sm" type="button" data-save-compare>Compare</button>' +
+        '<button class="btn sm" type="button" data-ve-discard>Discard</button><button class="btn sm primary" type="button" data-ve-apply>Apply to tune</button>';
+    } else if (veUndo) {
+      box.hidden = false; box.className = "lv-ve-apply done";
+      box.innerHTML = "<span><b>✓ Applied to the tune.</b> The tune as it was before is backed up.</span><span class=\"st-grow\"></span>" +
+        '<button class="btn sm" type="button" data-lv-history>History</button><button class="btn sm" type="button" data-ve-undo>↶ Undo VE Analyze</button>';
+    } else box.hidden = true;
+  }
+  function applyVE(btn) {
+    if (!editCount()) return;
+    btn.disabled = true;
+    var wasCopy = !!(idx.tune && idx.tune.parent), stamp = new Date().toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    vePending = false;
+    pushEdits("Before VE Analyze (" + stamp + ")").then(function () {
+      try { localStorage.removeItem("msq.lv.vepending:" + TUNE); } catch (e) { /* ignore */ }
+      if (!wasCopy) { veUndo = { parent: true }; renderVeApply(); toast("Applied. The original upload is untouched, so Undo goes straight back to it."); return; }
+      return fetch("/t/" + TUNE + "/versions", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (j) {
+        var v = (j.versions || []).filter(function (x) { return /^Before VE Analyze/.test(x.label); })[0];
+        veUndo = v ? { id: v.id } : { parent: true };
+        renderVeApply(); toast("Applied to the tune. “" + (v ? v.label : "Backup") + "” is in History.");
+      });
+    }, function () { vePending = true; btn.disabled = false; renderVeApply(); alert("That didn't save. Check your connection and try again."); });
+  }
+  function undoVE(btn) {
+    if (!veUndo || !confirm("Put the tune back to how it was before VE Analyze? (What's there now is backed up too.)")) return;
+    btn.disabled = true;
+    restoreTo(veUndo).then(function () { veUndo = null; renderVeApply(); toast("Back to how it was before VE Analyze."); },
+      function () { btn.disabled = false; });
+  }
+  function restoreTo(what) {
+    return fetch("/t/" + TUNE + "/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(what) })
+      .then(function (r) { return r.json(); }).then(function (j) {
+        if (!j.ok) { alert(j.error || "That didn't restore. Try again."); throw new Error("restore"); }
+        idx.tune.rev = null;  // make the next check pull the restored values in
+        return new Promise(function (ok) { sync(true); setTimeout(ok, 600); });
+      });
+  }
+
+  /* History: every backup of this tune, to restore or download. */
+  function openHistory() {
+    var dlg = $d('[data-dlg="history"]'), list = $d("[data-history-list]");
+    dlg.hidden = false;
+    list.innerHTML = '<p class="dim">Loading…</p>';
+    var fmtAt = function (s) { return new Date(s * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); };
+    fetch("/t/" + TUNE + "/versions", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (j) {
+      $d("[data-history-backup]").hidden = !j.editable;
+      if (!j.editable) { list.innerHTML = '<p class="dim">This is an uploaded original: it never changes, so it has no history. The first edit makes a shared copy, and that copy keeps backups.</p>'; return; }
+      list.innerHTML = '<div class="lv-hrow now"><span><b>Now</b> <span class="dim">the tune as it is</span></span></div>' +
+        (j.versions || []).map(function (v) {
+          return '<div class="lv-hrow"><span><b>' + esc(v.label) + '</b> <span class="dim mono">' + fmtAt(v.at) + "</span></span>" +
+            '<a class="btn sm" href="/t/' + TUNE + "/versions/" + v.id + '.msq" download title="Download this backup">⬇</a>' +
+            '<button class="btn sm" type="button" data-restore="' + v.id + '">Restore</button></div>';
+        }).join("") +
+        (j.parent && j.parent.exists ? '<div class="lv-hrow"><span><b>The original</b> <span class="dim">' + esc(j.parent.label || j.parent.slug) + "</span></span>" +
+          '<a class="btn sm" href="/t/' + j.parent.slug + '.msq" download>⬇</a><button class="btn sm" type="button" data-restore-parent>Restore</button></div>' : "") +
+        (!(j.versions || []).length ? '<p class="dim">No backups yet. One is made before VE Analyze is applied, before any restore, and every 10 minutes while the tune is being edited.</p>' : "");
+    }, function () { list.innerHTML = '<p class="dim">History couldn\'t be loaded. Check your connection.</p>'; });
+  }
+  (function () {
+    var dlg = $d('[data-dlg="history"]');
+    dlg.addEventListener("click", function (e) {
+      var b = e.target.closest("[data-restore], [data-restore-parent]");
+      if (b) {
+        var parent = b.hasAttribute("data-restore-parent"), what = parent ? { parent: true } : { id: +b.dataset.restore };
+        var name = b.closest(".lv-hrow").querySelector("b").textContent;
+        if (!confirm("Put the tune back to “" + name + "”? What's there now is backed up first, so you can come back.")) return;
+        b.disabled = true;
+        restoreTo(what).then(function () { toast("Restored “" + name + "”. Everyone on this link sees it."); openHistory(); }, function () { b.disabled = false; });
+        return;
+      }
+      if (e.target.closest("[data-history-backup]")) {
+        var nm = prompt("Name this backup", "Before the next pulls");
+        if (nm === null) return;
+        fetch("/t/" + TUNE + "/versions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label: nm }) })
+          .then(function (r) { return r.json(); }).then(function (j) { if (j.error) alert(j.error); else { toast("Backed up: " + (nm || "Backup")); openHistory(); } });
+      }
+    });
+  })();
   function fmtLen(s) { return s >= 60 ? Math.floor(s / 60) + " min " + Math.round(s % 60) + " s" : (s || 0).toFixed(1) + " s"; }
   function veOpts() {
     var o = {};
@@ -1768,9 +1865,12 @@
     var t = ve.table, res = engine.finish();
     ve.result = res;
     ve.grid.opts.live = null;
-    // the result becomes the VE table's edits, so it can be adjusted by hand and saved with anything else
+    // The result is a suggestion: the VE table's edits, shown and adjustable, but not saved until "Apply to
+    // tune" (which backs the tune up first). "Discard" throws it away.
     delete edits[t.name];
     res.changed.forEach(function (c) { setValue(t, c.i, c.to); });
+    vePending = res.changed.length > 0;
+    setVePending(vePending);
     editsChanged(t);
     ve.grid.paint();
     res.changed.forEach(function (c) { ve.grid.flash(c.i); });
@@ -1794,7 +1894,7 @@
         (other ? " from this tune. Against the VE the ECU actually ran: " : ": ") + richer + " richer, " + leaner + " leaner, " +
         avgP.toFixed(1) + "% on average, biggest " + (pcts[bi] > 0 ? "+" : "") + pcts[bi].toFixed(1) + "% at " +
         binText(t.x[big.i % t.cols]) + " rpm / " + binText(t.y[Math.floor(big.i / t.cols)]) + (t.yu ? " " + t.yu : "") +
-        (autoSave ? ". It's saved to your link: adjust any cell, or Share it." : ". Adjust cells if you like, then Save & share.");
+        ". Nothing is changed yet: check it (Compare shows before and after), adjust cells if you like, then Apply to tune.";
     }
     renderCompare();
     var warn = $(".lv-ve-warn");
@@ -2263,7 +2363,16 @@
     b = e.target.closest("[data-ve]");
     if (b) { if (b.dataset.ve === "run") runVE(); else ve.running = false; return; }
     b = e.target.closest("[data-save-tune]");
+    if (b && vePending && editCount()) { setTab("ve"); return; }
     if (b) { saveAndShare(b); return; }
+    b = e.target.closest("[data-ve-apply]");
+    if (b) { applyVE(b); return; }
+    b = e.target.closest("[data-ve-discard]");
+    if (b) { if (confirm("Throw away VE Analyze's suggestion? The tune stays as it is.")) { var vt = ve.table; delete edits[vt.name]; setVePending(false); editsChanged(vt); } return; }
+    b = e.target.closest("[data-ve-undo]");
+    if (b) { undoVE(b); return; }
+    b = e.target.closest("[data-lv-history]");
+    if (b) { openHistory(); return; }
     b = e.target.closest("[data-save-close]");
     if (b) { saveBarClosed = true; renderSaveBars(); return; }
     b = e.target.closest("[data-save-compare]");
