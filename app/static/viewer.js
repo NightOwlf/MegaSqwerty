@@ -772,13 +772,50 @@
     }
     html.push('<tr class="lv-tx"><th></th>' + t.x.map(function (v) { return "<th>" + binText(v) + "</th>"; }).join("") + "</tr>");
     this.el.innerHTML = '<div class="lv-tw" tabindex="0"><table class="lv-tt' + (this.opts.big ? " big" : "") + '"><tbody>' +
-      html.join("") + '</tbody></table><i class="lv-dot" hidden></i></div>';
+      html.join("") + '</tbody></table><i class="lv-dot" hidden></i></div>' +
+      '<button type="button" class="lv-zreset" hidden>⤡ Fit table</button>';
     this.wrap = $(".lv-tw", this.el);
     this.cells = [];
     var self = this;
     $$("td", this.el).forEach(function (td) { self.cells[+td.dataset.k] = td; });
     this.paint();
     this.bind();
+    this.pinchable();
+  };
+  /* Pinch a table to zoom into it (two fingers, any direction); it scrolls sideways when zoomed in, and
+     "Fit table" or pinching back out shows all of it again. */
+  Grid.prototype.pinchable = function () {
+    var self = this, w = this.wrap, g = null;
+    this.zoomLv = 1;
+    var reset = $(".lv-zreset", this.el);
+    reset.addEventListener("click", function () { self.setZoom(1); });
+    w.addEventListener("touchstart", function (e) {
+      if (e.touches.length !== 2) return;
+      e.preventDefault();
+      var a = e.touches[0], b = e.touches[1], r = w.getBoundingClientRect(), mx = (a.clientX + b.clientX) / 2 - r.left;
+      g = { d: Math.max(20, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)), z: self.zoomLv,
+            fx: (mx + w.scrollLeft) / (w.scrollWidth || 1), mx: mx };
+    }, { passive: false });
+    w.addEventListener("touchmove", function (e) {
+      if (!g || e.touches.length !== 2) return;
+      e.preventDefault();
+      var a = e.touches[0], b = e.touches[1];
+      self.setZoom(Math.max(1, Math.min(3.5, g.z * Math.max(20, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)) / g.d)));
+      w.scrollLeft = g.fx * w.scrollWidth - g.mx;
+    }, { passive: false });
+    var end = function (e) { if (e.touches.length < 2) g = null; };
+    w.addEventListener("touchend", end); w.addEventListener("touchcancel", end);
+  };
+  Grid.prototype.setZoom = function (z) {
+    var tbl = this.wrap.querySelector("table"), on = z > 1.02;
+    this.zoomLv = on ? z : 1;
+    tbl.style.width = on ? (z * 100).toFixed(1) + "%" : "";
+    tbl.style.fontSize = on ? Math.min(16, 10.5 * Math.sqrt(z) * 1.08).toFixed(1) + "px" : "";
+    if (on) tbl.style.setProperty("--zh", Math.round(Math.min(40, 19 * Math.sqrt(z) * 1.1)) + "px"); else tbl.style.removeProperty("--zh");
+    tbl.classList.toggle("zoomed", on);
+    $(".lv-zreset", this.el).hidden = !on;
+    if (!on) this.wrap.scrollLeft = 0;
+    this.paint();
   };
   Grid.prototype.paint = function (only) {
     var t = this.t, rg = this.opts.range || range(t), self = this, ks = only || this.cells.map(function (_, k) { return k; });
@@ -2364,8 +2401,8 @@
     if (seen || !window.matchMedia("(pointer: coarse)").matches) return;
     var box = document.createElement("div");
     box.className = "lv-hint";
-    box.innerHTML = "<p><b>Two fingers</b> to zoom · <b>drag sideways</b> to move through the log · <b>double-tap</b> to zoom in · " +
-      "<b>tap a channel name</b> to change it</p><button type=\"button\" class=\"btn sm primary\">Got it</button>";
+    box.innerHTML = "<p><b>Two fingers</b> on a graph to zoom · <b>drag sideways</b> to move through the log · <b>double-tap</b> to zoom in · " +
+      "<b>pinch a table</b> to make it bigger · <b>tap a channel name</b> to change it</p><button type=\"button\" class=\"btn sm primary\">Got it</button>";
     graphs.appendChild(box);
     var done = function () { box.remove(); try { localStorage.setItem("msq.lv.hint", "1"); } catch (e) { /* ignore */ } };
     box.querySelector("button").addEventListener("click", done);
@@ -2408,7 +2445,7 @@
     }
     renderSaveBars();
     renderSections();
-    try { if (localStorage.getItem("msq.lv.cells") === "big") setCellSize(true); } catch (e) { /* ignore */ }
+    try { localStorage.removeItem("msq.lv.cells"); } catch (e) { /* ignore */ }
     var repaintT = 0;
     window.addEventListener("resize", function () { clearTimeout(repaintT); repaintT = setTimeout(function () { allGrids().forEach(function (g) { g.paint(); }); }, 150); });
     loadNote.hidden = true;

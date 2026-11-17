@@ -1398,3 +1398,13 @@ body.page-viewer .main { max-width: none; padding-block: 8px 12px; padding-inlin
 .lv-tv { white-space: nowrap; }
 .lv-th select { min-width: 0; flex: 1 1 auto; }
 @media (max-width: 899px) and (orientation: landscape), (max-width: 400px) { .lv-secword { display: none; } }
+
+/* tables: always fitted, pinch to zoom in (Bigger is gone) */
+.lv-sizebtn { display: none !important; }
+.lv-tw { touch-action: pan-x pan-y; }
+.lv-tt.zoomed td, .lv-tt.zoomed th { height: var(--zh) !important; padding: 0 2px; }
+.lv-tt.zoomed { min-width: 0 !important; letter-spacing: 0; }
+.lv-grid { position: relative; }
+.lv-zreset { position: absolute; top: 4px; right: 4px; z-index: 3; min-height: 30px; padding: 0 10px; border: 1px solid var(--sel); border-radius: 15px; background: var(--sel); color: #fff; font: 600 12px var(--ui); box-shadow: var(--shadow); cursor: pointer; }
+.lv-zreset[hidden] { display: none; }
+.lv-tt tr:first-child th:first-child { width: 2.7em; }
