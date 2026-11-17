@@ -242,3 +242,21 @@ def test_a_live_session_relays_between_the_car_and_a_tuner(client, fx):
 def test_the_ecu_protocol_in_the_browser():
     r = subprocess.run(["node", "--test", str(Path(__file__).parent / "js" / "ecu.test.js")], capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_log_viewers_on_the_same_link_play_together(client):
+    """Live view in the log viewer: what one page sends (play, pause, scrub), the others on that log get."""
+    from test_logs import drive, msl
+    url = client.post("/logs", files={"file": ("d.msl", msl(drive()), "text/plain")}, follow_redirects=False).headers["location"]
+    slug = url.split("/l/")[1].split("?")[0]
+    with client.websocket_connect(f"/l/{slug}/together") as a:
+        assert a.receive_json() == {"t": "here", "n": 1}
+        with client.websocket_connect(f"/l/{slug}/together") as b:
+            assert b.receive_json() == {"t": "here", "n": 2}
+            assert a.receive_json() == {"t": "here", "n": 2}
+            a.send_text('{"t":"s","pos":12.5,"v":[10,20],"playing":true,"at":1,"speed":2}')
+            assert b.receive_json()["pos"] == 12.5          # the other page follows
+        assert a.receive_json() == {"t": "here", "n": 1}
+    with client.websocket_connect("/l/aaaaaaaaaa/together") as gone:
+        with pytest.raises(Exception):
+            gone.receive_json()                            # no such log: closed

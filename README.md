@@ -382,6 +382,16 @@ Routes: `GET /t/{slug}/rev` (what pages poll), `POST /t/{slug}/notes`, `POST /t/
 edited copy; `{"fork": true}` for a separate copy), and the token-only `/admin/restore/{tune,log}` that put
 links back under their old slugs when storage moved to the volume.
 
+### Watching a log together
+
+A log link is shared viewing by default (**● Live view**): when anyone on it plays, pauses, scrubs or zooms,
+everyone else on the link follows, through a small relay per log (`/l/{log}/together`). **Private** goes
+through the log alone. The connection is only open while someone is using the page (it closes after 10
+idle minutes or when the page is hidden), so open tabs left alone don't keep the server awake.
+
+**Shape** (with a table in 3D) edits the map by dragging: drag a point up or down; its neighbours follow
+by a little for a smooth change, or tap cells first to move a selection together (slopes, regions).
+
 ### Live tuning (`/live`)
 
 Tune a running car from anywhere: someone at the car connects the ECU to a page, and a tuner opens a link on

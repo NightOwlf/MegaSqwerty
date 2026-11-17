@@ -122,6 +122,53 @@ def register(app, store, templates, deps) -> None:
         await to_viewers(s, st)
         await send(s.car, st)
 
+    # ------------------------------------------------- shared playback in the log viewer
+    # Everyone looking at the same log link in "Live view" sees the same thing: whoever plays, pauses, scrubs or
+    # zooms sends it, and the others follow. The server just passes it on (and says how many are here).
+    rooms: dict[str, set] = {}
+
+    @app.websocket("/l/{log_slug}/together")
+    async def log_together(ws: WebSocket, log_slug: str):
+        await ws.accept()
+        if not re.match(r"^[A-Za-z0-9]{10}$", log_slug or "") or store.get_log(log_slug) is None:
+            await ws.close(code=4404)
+            return
+        room = rooms.setdefault(log_slug, set())
+        room.add(ws)
+
+        async def count():
+            msg = json.dumps({"t": "here", "n": len(room)})
+            for o in list(room):
+                try:
+                    await o.send_text(msg)
+                except Exception:
+                    room.discard(o)
+        await count()
+        try:
+            while True:
+                text = await ws.receive_text()
+                if len(text) > 4000:
+                    continue
+                for o in list(room):
+                    if o is not ws:
+                        try:
+                            await o.send_text(text)
+                        except Exception:
+                            room.discard(o)
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            log.exception("log together socket error")
+        finally:
+            room.discard(ws)
+            if not room:
+                rooms.pop(log_slug, None)
+            else:
+                try:
+                    await count()
+                except Exception:
+                    pass
+
     # ---------------------------------------------------------------- pages
     @app.get("/live", response_class=HTMLResponse)
     def live_start_page(request: Request):

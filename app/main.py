@@ -205,8 +205,8 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
     async def security_headers(request: Request, call_next):
         resp = await call_next(request)
         csp = CSP
-        if request.url.path.startswith("/live"):
-            # the live page's WebSocket: name it, since older Safari (a tuner's iPhone) doesn't count wss: as 'self'
+        if request.url.path.startswith(("/live", "/l/")):
+            # the live page's WebSocket (and the log viewer's shared playback): name it, since older Safari (a tuner's iPhone) doesn't count wss: as 'self'
             host = re.sub(r"[^A-Za-z0-9.:\-]", "", request.headers.get("host", ""))
             if host:
                 csp = csp.replace("connect-src 'self'", f"connect-src 'self' wss://{host} ws://{host}")

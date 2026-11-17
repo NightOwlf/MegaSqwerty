@@ -209,7 +209,7 @@
     if (view.t0 + span > tMax) view.t0 = tMax - span;
     view.t1 = view.t0 + span;
   }
-  function setView(t0, t1) { view.t0 = t0; view.t1 = t1; clampView(); scatterDirty = true; invalidate(); saveSoon(); }
+  function setView(t0, t1) { view.t0 = t0; view.t1 = t1; clampView(); scatterDirty = true; invalidate(); saveSoon(); together.send(); }
   function zoom(f, at) {
     if (at == null) at = T[cur] >= view.t0 && T[cur] <= view.t1 ? T[cur] : (view.t0 + view.t1) / 2;
     setView(at - (at - view.t0) * f, at + (view.t1 - at) * f);
@@ -223,7 +223,7 @@
   function setCursor(i, doFollow) {
     cur = Math.max(0, Math.min(N - 1, i));
     if (doFollow) follow();
-    invalidate(); saveSoon();
+    invalidate(); saveSoon(); together.send();
   }
   function play(on) {
     if (on && ve.running) return;
@@ -232,8 +232,77 @@
     var b = $("[data-lv=play]");
     b.textContent = on ? "⏸" : "▶"; b.classList.toggle("on", on);
     if (on) requestAnimationFrame(tick);
-    invalidate();
+    invalidate(); together.send(true);
   }
+  /* "Live view": everyone on this log link sees the same moment. Whoever plays, pauses, scrubs or zooms sends
+     it and the others follow; "Private" neither sends nor follows. The connection is only open while someone
+     is using the page (it closes after 10 idle minutes or when the page is hidden), so an open tab left alone
+     doesn't keep the server busy. */
+  var together = (function () {
+    var ws = null, open = false, mode = "live", applying = false, last = 0, timer = 0, here = 1, lastUse = Date.now(), idleT = 0;
+    try { if (sessionStorage.getItem("msq.lv.private") === "1") mode = "private"; } catch (e) { /* ignore */ }
+    function render() {
+      var b = $('[data-lv="together"]');
+      if (!b) return;
+      b.classList.toggle("on", mode === "live");
+      b.innerHTML = mode === "live" ? "● Live view" + (open && here > 1 ? " · " + here + " here" : "") : "Private";
+      b.title = mode === "live" ? "Everyone on this log link sees what you play, pause and scrub, and you see theirs. Tap for Private."
+                                : "Private: you play the log on your own. Tap for Live view.";
+    }
+    function connect() {
+      if (ws || mode !== "live" || document.hidden || !idx) return;
+      var proto = location.protocol === "https:" ? "wss://" : "ws://";
+      ws = new WebSocket(proto + location.host + "/l/" + SLUG + "/together");
+      ws.onopen = function () { open = true; render(); };
+      ws.onclose = function () { open = false; ws = null; here = 1; render(); if (mode === "live" && !document.hidden && Date.now() - lastUse < 600000) setTimeout(connect, 3000); };
+      ws.onmessage = function (e) {
+        var m; try { m = JSON.parse(e.data); } catch (err) { return; }
+        if (m.t === "here") { here = m.n; render(); return; }
+        if (m.t !== "s" || mode !== "live" || !T) return;
+        applying = true;
+        try {
+          if (m.speed && m.speed !== speed) { speed = m.speed; $("[data-lv-speed]").value = String(speed); }
+          if (m.v) { view.t0 = m.v[0]; view.t1 = m.v[1]; clampView(); scatterDirty = true; }
+          if (m.playing) {
+            cur = nearest(m.pos + Math.max(0, (Date.now() - m.at) / 1000) * (m.speed || 1));
+            if (!playing) play(true);
+            playT = T[cur];
+          } else {
+            if (playing) play(false);
+            cur = nearest(m.pos);
+          }
+          invalidate();
+        } finally { applying = false; }
+      };
+    }
+    function stop() { if (ws) { try { ws.close(); } catch (e) { /* ignore */ } } ws = null; open = false; render(); }
+    function used() {
+      lastUse = Date.now();
+      clearTimeout(idleT); idleT = setTimeout(function () { if (!playing) stop(); }, 600000);
+      if (!ws) connect();
+    }
+    ["pointerdown", "keydown", "wheel", "touchstart"].forEach(function (ev) { document.addEventListener(ev, used, { passive: true, capture: true }); });
+    document.addEventListener("visibilitychange", function () { if (document.hidden) setTimeout(function () { if (document.hidden) stop(); }, 60000); else used(); });
+    return {
+      start: function () { render(); used(); },
+      send: function (force) {
+        if (applying || mode !== "live" || !T) return;
+        if (playing && !force) return;  // while playing, the others play along by themselves
+        clearTimeout(timer);
+        var go = function () {
+          last = Date.now();
+          if (ws && open) ws.send(JSON.stringify({ t: "s", pos: T[cur], v: [view.t0, view.t1], playing: playing, at: Date.now(), speed: speed }));
+        };
+        if (force || Date.now() - last > 80) go(); else timer = setTimeout(go, 80);
+      },
+      toggle: function () {
+        mode = mode === "live" ? "private" : "live";
+        try { sessionStorage.setItem("msq.lv.private", mode === "private" ? "1" : "0"); } catch (e) { /* ignore */ }
+        if (mode === "live") { used(); setTimeout(function () { together.send(true); }, 400); } else stop();
+        render();
+      }
+    };
+  })();
   function tick(now) {
     if (!playing) return;
     if (lastFrame) {
@@ -629,6 +698,7 @@
     allGrids().forEach(function (g) { g.paint(); });
     invalidate();
   }
+  var shapeMode = false;
   function want3d() { try { return localStorage.getItem("msq.lv.3d") === "1"; } catch (e) { return false; } }
   Grid.prototype.set3d = function (on) {
     this.is3d = on;
@@ -637,6 +707,9 @@
     if (this.s3) { this.s3.cv.hidden = !on; if (on) this.s3.draw(); }
     var b = this.el.parentNode && this.el.parentNode.querySelector("[data-3d]");
     if (b) b.classList.toggle("on", on);
+    var sb = this.el.parentNode && this.el.parentNode.querySelector("[data-shape]");
+    if (sb) { sb.hidden = !on || !this.opts.editable; sb.classList.toggle("on", shapeMode); }
+    if (this.s3) this.s3.cv.classList.toggle("shaping", shapeMode && on);
   };
 
   /* The table as a 3D surface: drag to turn it, pinch or wheel to zoom, tap a point to select that cell. */
@@ -659,7 +732,7 @@
     ctx.fillStyle = "#0b0c0e"; ctx.fillRect(0, 0, W, H);
     var vals = [], lo = Infinity, hi = -Infinity;
     for (k = 0; k < C * R; k++) {
-      var v = g.opts.surf ? g.opts.surf(k) : g.opts.live ? g.opts.live(k) : valueAt(t, k);
+      var v = this.preview && k in this.preview ? this.preview[k] : g.opts.surf ? g.opts.surf(k) : g.opts.live ? g.opts.live(k) : valueAt(t, k);
       vals[k] = v; if (v < lo) lo = v; if (v > hi) hi = v;
     }
     if (g.opts.zr) { lo = g.opts.zr[0]; hi = g.opts.zr[1]; }  // side-by-side surfaces share one height scale
@@ -703,6 +776,12 @@
     if (g.opts.marks) mark(g.opts.marks(), "#ff9f0a", 2.2);
     if (t.p && !g.opts.live) mark(vals.map(function (v, j) { return Math.abs(v - t.p[j]) > 0.5 * Math.pow(10, -t.d) ? j : -1; }).filter(function (j) { return j >= 0; }), "#ff9f0a", 2.2);
     mark(g.selected(), "#ffffff", 3.5);
+    if (this.preview) {
+      mark(Object.keys(this.preview).map(Number), "#ffd54a", 4);
+      ctx.textAlign = "center"; ctx.fillStyle = "#ffd54a"; ctx.font = "bold 14px system-ui, sans-serif";
+      ctx.fillText((this.delta >= 0 ? "+" : "") + this.delta.toFixed(Math.max(1, t.d)) + (t.units ? " " + t.units : ""), W / 2, 6);
+      ctx.font = "10.5px ui-monospace, Menlo, Consolas, monospace";
+    }
     if (g.pos) {
       var fx = g.pos[0], fy = g.pos[1], cv0 = interpTable(t, function (j) { return vals[j]; }, fx, fy);
       var top = proj(fx, fy, cv0), base = proj(fx, fy, lo);
@@ -721,8 +800,31 @@
       var ids = Object.keys(pts);
       if (ids.length === 2) {
         var a = pts[ids[0]], b = pts[ids[1]];
-        pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z: self.cam.zoom }; start = null;
-      } else start = { x: e.clientX, y: e.clientY, yaw: self.cam.yaw, pitch: self.cam.pitch, moved: false };
+        pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z: self.cam.zoom }; start = null; self.preview = null;
+      } else {
+        start = { x: e.clientX, y: e.clientY, yaw: self.cam.yaw, pitch: self.cam.pitch, moved: false };
+        var g = self.g;
+        if (shapeMode && g.opts.editable && !g.opts.live) {
+          // Shape: the point under the finger (and the selection, if it's in it) moves up and down
+          var r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, best = -1, bd = 34 * 34;
+          self.pts.forEach(function (p, k) { var d = (p[0] - x) * (p[0] - x) + (p[1] - y) * (p[1] - y); if (d < bd) { bd = d; best = k; } });
+          if (best >= 0) {
+            var t = g.t, C = t.cols, w = {}, sel = g.selected();
+            if (sel.indexOf(best) >= 0) sel.forEach(function (k) { w[k] = 1; });
+            else {  // no selection: a soft brush, so one drag makes a smooth hill, not a spike
+              var br = Math.floor(best / C), bc = best % C;
+              for (var dr = -1; dr <= 1; dr++) for (var dc = -1; dc <= 1; dc++) {
+                var rr = br + dr, cc = bc + dc;
+                if (rr >= 0 && rr < t.rows && cc >= 0 && cc < C) w[rr * C + cc] = dr || dc ? 0.4 : 1;
+              }
+            }
+            var lo = Infinity, hi = -Infinity, base = {};
+            for (var k = 0; k < t.z.length; k++) { var vv = valueAt(t, k); if (vv < lo) lo = vv; if (vv > hi) hi = vv; }
+            Object.keys(w).forEach(function (k) { base[k] = valueAt(t, +k); });
+            start.shape = { w: w, base: base, per: Math.max(hi - lo, 1) / 180, key: best };
+          }
+        }
+      }
     });
     cv.addEventListener("pointermove", function (e) {
       if (!(e.pointerId in pts)) return;
@@ -737,11 +839,26 @@
       var dx = e.clientX - start.x, dy = e.clientY - start.y;
       if (Math.abs(dx) + Math.abs(dy) > 4) start.moved = true;
       if (!start.moved) return;
+      if (start.shape) {
+        var sh = start.shape, d = -dy * sh.per, unit = Math.pow(10, -self.g.t.d);
+        self.preview = {};
+        Object.keys(sh.w).forEach(function (k) { self.preview[k] = Math.round((sh.base[k] + d * sh.w[k]) / unit) * unit; });
+        self.delta = d;
+        self.draw(); return;
+      }
       self.cam.yaw = start.yaw + dx * 0.01;
       self.cam.pitch = Math.max(0.08, Math.min(1.5, start.pitch + dy * 0.008));
       self.draw();
     });
     var up = function (e) {
+      if (start && start.shape && start.moved && self.preview) {  // the drag is the edit: write it to the table
+        var t = self.g.t, pv = self.preview;
+        Object.keys(pv).forEach(function (k) { setValue(t, +k, pv[k]); });
+        self.preview = null; self.delta = 0;
+        editsChanged(t);
+        delete pts[e.pointerId]; start = null; return;
+      }
+      self.preview = null;
       var tap = start && !start.moved && Object.keys(pts).length === 1;
       delete pts[e.pointerId];
       if (Object.keys(pts).length < 2) pinch = null;
@@ -1082,7 +1199,7 @@
   function buildSlot(slot) {
     var t = slot.t;
     var opts = idx.tables.map(function (o, i) { return "<option value=" + i + (o === t ? " selected" : "") + ">" + esc(o.label) + "</option>"; }).join("");
-    slot.el.innerHTML = '<div class="lv-th"><select aria-label="Table">' + opts + '</select><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button></div>' +
+    slot.el.innerHTML = '<div class="lv-th"><select aria-label="Table">' + opts + '</select><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div>' +
       '<div class="lv-ovrow"><span>Cells show</span><select class="lv-ovsel" aria-label="What the cells show">' +
         '<option value="">Values</option><option value="time">Time in each cell</option>' +
         (idx.roles && idx.roles.knock != null ? '<option value="knock">Knock retard (most)</option>' : "") +
@@ -1446,7 +1563,7 @@
       "</div>" +
       '<div class="lv-ve-apply" hidden></div>' +
       '<div class="lv-ve-warn" hidden></div>' +
-      '<div class="lv-ve-main"><div class="lv-ve-gridbox"><div class="lv-th"><b>' + esc(t.label) + '</b><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button></div><div class="lv-grid"></div>' + toolbar() +
+      '<div class="lv-ve-main"><div class="lv-ve-gridbox"><div class="lv-th"><b>' + esc(t.label) + '</b><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div><div class="lv-grid"></div>' + toolbar() +
         '<p class="lv-tn">' + esc((t.yl || "Load") + (t.yu ? " (" + t.yu + ")" : "") + " ↑ · " + (t.xl || "RPM") + " →") + " · after a run, select cells to adjust them</p></div>" +
         '<div class="lv-ve-side">' +
           '<div class="lv-ve-why"></div>' +
@@ -2358,6 +2475,7 @@
       else if (a === "zout") zoom(2);
       else if (a === "fit") setView(tMin, tMax);
       else if (a === "sec") { selMode = !selMode; secStart = null; renderSections(); invalidate(); }
+      else if (a === "together") together.toggle();
       return;
     }
     b = e.target.closest("[data-sec], [data-sec-del], [data-sec-go]");
@@ -2399,6 +2517,14 @@
     }
     b = e.target.closest("[data-cells]");
     if (b) { setCellSize(!root.classList.contains("cells-big")); return; }
+    b = e.target.closest("[data-shape]");
+    if (b) {
+      shapeMode = !shapeMode;
+      allGrids().concat(ve.grid ? [ve.grid] : []).forEach(function (g) { if (g.is3d) g.set3d(true); });
+      toast(shapeMode ? "Shape: drag a point up or down. Tap cells first to move a whole area together (great for slopes). Tap Shape again to turn the map."
+                      : "Back to turning the map. Tap Shape to edit by dragging.");
+      return;
+    }
     b = e.target.closest("[data-3d]");
     if (b) {
       var box = b.closest(".lv-table, .lv-ve-gridbox"), gr = null;
@@ -2456,7 +2582,7 @@
   $d(".lv-help").addEventListener("click", function (e) {
     if (e.target === this || e.target.closest("[data-lv-help-close]")) this.hidden = true;
   });
-  $("[data-lv-speed]").addEventListener("change", function () { speed = +this.value || 1; invalidate(); });
+  $("[data-lv-speed]").addEventListener("change", function () { speed = +this.value || 1; invalidate(); together.send(true); });
   function applyPreset(name) {
     var pr = PRESETS[name];
     if (!pr) return;
@@ -2754,6 +2880,7 @@
     renderSaveBars();
     renderNotes();
     renderSections();
+    together.start();
     try { localStorage.removeItem("msq.lv.cells"); } catch (e) { /* ignore */ }
     var repaintT = 0;
     window.addEventListener("resize", function () { clearTimeout(repaintT); repaintT = setTimeout(function () { allGrids().forEach(function (g) { g.paint(); }); }, 150); });
