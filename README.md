@@ -366,6 +366,20 @@ It works the way a desktop log viewer does (`app/static/viewer.js`, plain canvas
 - **Edit the tables**: drag (or tap, then *Range*) across cells, then type a value and Enter, or use −/+,
   ±1%, *Interp* (fill between the selection's corners), *Smooth* and *Revert* (back to the original tune).
 
+### Editing together, live
+
+**Share → Edit together** gives a link that lets a friend edit *the same tune* with you (it makes your own
+edited copy first if the tune is someone's original). Every page open on that tune checks for changes every
+3 seconds and pulls them in without a refresh: changed cells flash and a notice says what moved. Edits are
+saved cell by cell, so two people changing different cells never undo each other. The link carries an
+*edit key* (not the delete key) in its `#k=`, which the page stores and then drops from the address bar so
+*Copy link* never hands it on. A tune also has **Notes** (what was changed, what to log next) that everyone on
+the link sees update live, and copies carry them. Auto-save is on whenever a page opens; edits not yet saved
+when a page closes are kept in the browser and saved on the next visit.
+
+Routes: `GET /t/{slug}/rev` (what pages poll), `POST /t/{slug}/notes`, `POST /t/{slug}/editkey` (owner only),
+and `POST /t/{slug}/save` with `{"fork": true}` for a copy with no changes yet.
+
 ### What changed: before and after
 
 Whenever a table differs from the tune it came from (after VE Analyze, after editing, or when you open

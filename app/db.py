@@ -106,8 +106,14 @@ class Store:
                 """
             )
             # Added with tune editing: the slug an edited copy was saved from.
-            if "parent" not in {r["name"] for r in c.execute("PRAGMA table_info(tunes)")}:
+            cols = {r["name"] for r in c.execute("PRAGMA table_info(tunes)")}
+            if "parent" not in cols:
                 c.execute("ALTER TABLE tunes ADD COLUMN parent TEXT")
+            # Added with editing together: shared notes, and a key that lets friends edit (but not delete).
+            if "notes" not in cols:
+                c.execute("ALTER TABLE tunes ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+            if "edit_key_hash" not in cols:
+                c.execute("ALTER TABLE tunes ADD COLUMN edit_key_hash TEXT NOT NULL DEFAULT ''")
 
     @contextmanager
     def conn(self):
@@ -158,6 +164,43 @@ class Store:
                 raise
             return slug, delete_key
         raise RuntimeError("could not allocate slug")
+
+    def edit_key(self, slug: str) -> str:
+        """A fresh key that lets whoever holds it edit this tune in place (not delete it)."""
+        key = secrets.token_urlsafe(12)
+        with self.conn() as c:
+            c.execute("UPDATE tunes SET edit_key_hash=? WHERE slug=?", (self._hash_key(key), slug))
+        return key
+
+    def can_edit(self, slug: str, key: str) -> bool:
+        """The delete key (the owner) or the edit key (friends editing together)."""
+        if not SLUG_RE.match(slug or "") or not key:
+            return False
+        with self.conn() as c:
+            row = c.execute("SELECT delete_key_hash, edit_key_hash FROM tunes WHERE slug=?", (slug,)).fetchone()
+        if not row:
+            return False
+        h = self._hash_key(key)
+        return hmac.compare_digest(row["delete_key_hash"], h) or bool(row["edit_key_hash"]) and hmac.compare_digest(row["edit_key_hash"], h)
+
+    def rev(self, slug: str) -> str | None:
+        """Changes whenever the tune's values or notes change: what open pages poll to stay current."""
+        if not SLUG_RE.match(slug or ""):
+            return None
+        with self.conn() as c:
+            row = c.execute("SELECT sha256, notes FROM tunes WHERE slug=?", (slug,)).fetchone()
+        if not row:
+            return None
+        return row["sha256"][:16] + hashlib.sha256((row["notes"] or "").encode()).hexdigest()[:8]
+
+    def notes(self, slug: str) -> str:
+        with self.conn() as c:
+            row = c.execute("SELECT notes FROM tunes WHERE slug=?", (slug,)).fetchone()
+        return (row["notes"] or "") if row else ""
+
+    def set_notes(self, slug: str, text: str) -> None:
+        with self.conn() as c:
+            c.execute("UPDATE tunes SET notes=? WHERE slug=?", (text, slug))
 
     def replace_tune(self, slug: str, raw: bytes, doc: TuneDoc) -> None:
         """Overwrite an edited copy in place (its owner saving again), so its link shows the latest edits."""

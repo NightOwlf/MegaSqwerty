@@ -417,15 +417,16 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         if raw is None:
             raise HTTPException(404)
         changes = payload.get("changes") if isinstance(payload, dict) else None
+        fork = isinstance(payload, dict) and payload.get("fork") is True and not changes
         try:
-            new_raw, changed = await run_in_threadpool(editmod.apply_changes, raw, changes)
+            new_raw, changed = (raw, 0) if fork else await run_in_threadpool(editmod.apply_changes, raw, changes)
         except editmod.EditError as e:
             return fail(str(e))
         # Saving again to an edited copy you made (you hold its key): update it in place, so the link you
         # already sent shows the latest. Uploaded originals are never overwritten, and nobody else's copy is.
         own = str(payload.get("key") or "").strip() if isinstance(payload, dict) else ""
         meta = store.get_meta(slug)
-        if own and meta is not None and meta["parent"] and store.check_delete_key(slug, own):
+        if own and not fork and meta is not None and meta["parent"] and store.can_edit(slug, own):
             try:
                 doc = await run_in_threadpool(parse_msq, new_raw)
             except MsqError as e:
@@ -433,15 +434,57 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             await run_in_threadpool(store.replace_tune, slug, new_raw, doc)
             log.info("updated edited tune %s in place (%d values)", slug, changed)
             return JSONResponse({"url": f"/t/{slug}", "slug": slug, "changed": changed, "key": own,
-                                 "updated": True, "file": msq_filename(doc, slug)})
+                                 "updated": True, "file": msq_filename(doc, slug), "rev": store.rev(slug)})
         new_slug, key, err, status = await store_upload(request, new_raw, parent=slug)
         if err:
             return fail(err, status)
         log.info("saved edited tune %s from %s (%d values)", new_slug, slug, changed)
+        store.set_notes(new_slug, store.notes(slug))  # a copy carries the notes it was made from
+        edit_key = store.edit_key(new_slug)
         resp = JSONResponse({"url": f"/t/{new_slug}", "slug": new_slug, "changed": changed, "key": key,
-                             "updated": False, "file": msq_filename(store.get_doc(new_slug), new_slug)})
+                             "edit_key": edit_key, "updated": False,
+                             "file": msq_filename(store.get_doc(new_slug), new_slug), "rev": store.rev(new_slug)})
         set_key_cookie(resp, request, new_slug, key)
         return resp
+
+    @app.get("/t/{slug}/rev")
+    def tune_rev(slug: str):
+        """What open viewers poll (every few seconds) to pick up edits and notes made somewhere else."""
+        rev = store.rev(slug)
+        if rev is None:
+            raise HTTPException(404)
+        return JSONResponse({"rev": rev}, headers={"Cache-Control": "no-store"})
+
+    @app.post("/t/{slug}/editkey")
+    async def tune_edit_key(request: Request, slug: str):
+        """The owner of an edited copy asks for a key to share, so a friend can edit the same tune live."""
+        load_doc(slug)
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        key = str(payload.get("key") or "").strip() if isinstance(payload, dict) else ""
+        meta = store.get_meta(slug)
+        if not (meta and meta["parent"] and store.check_delete_key(slug, key)):
+            return JSONResponse({"error": "Only the person who made this copy can share it for editing."}, status_code=403)
+        return JSONResponse({"edit_key": store.edit_key(slug)})
+
+    @app.post("/t/{slug}/notes")
+    async def tune_notes(request: Request, slug: str):
+        """Shared notes on a tune, for friends tuning it together. Needs the tune's delete or edit key."""
+        load_doc(slug)
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse({"error": "Those notes didn't come through. Try again."}, status_code=400)
+        text = str(payload.get("notes") or "") if isinstance(payload, dict) else ""
+        key = str(payload.get("key") or "").strip() if isinstance(payload, dict) else ""
+        if len(text) > 8000:
+            return JSONResponse({"error": "Notes can be up to 8,000 characters."}, status_code=400)
+        if not store.can_edit(slug, key):
+            return JSONResponse({"error": "Only someone editing this tune can change its notes."}, status_code=403)
+        store.set_notes(slug, text.replace("\r\n", "\n"))
+        return JSONResponse({"ok": True, "rev": store.rev(slug)})
 
     @app.get("/t/{slug}", response_class=HTMLResponse)
     def tune_view(request: Request, slug: str):
@@ -913,6 +956,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             idle = doc.get("useSeparateVeForIdle")
             tune = {"slug": tune_slug, "label": views.tune_label(doc), "stoich": stoich_of(doc),
                     "file": msq_filename(doc, tune_slug), "parent": None, "changed": 0,
+                    "notes": store.notes(tune_slug), "rev": store.rev(tune_slug),
                     "idle_ve": bool(idle and idle.values and str(idle.values[0]).strip('"').lower() == "true")}
             # An edited copy: send the values it was edited from, so whoever opens the link sees what changed.
             src = edited_from(tune_slug)

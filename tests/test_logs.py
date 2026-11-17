@@ -601,3 +601,37 @@ def test_the_report_gives_mixture_as_afr():
     lean = next(f for f in r.findings if f.text.startswith("Lean in boost"))
     assert "AFR 14.0 against a target of 11.5" in lean.text
     assert any(s["units"] == "AFR" for s in r.stats)
+
+
+def test_friends_can_edit_one_tune_together(client):
+    """An edit-together link: a second person edits the same copy in place, and both pages see each change."""
+    slug = upload_tune(client, sp(load=LOAD_BOOST, boostLimit=170))
+    fork = client.post(f"/t/{slug}/save", json={"fork": True}).json()
+    copy, owner, ek = fork["slug"], fork["key"], fork["edit_key"]
+    assert copy != slug and fork["changed"] == 0 and ek and ek != owner
+    rev0 = client.get(f"/t/{copy}/rev").json()["rev"]
+
+    friend = client.post(f"/t/{copy}/save", json={"changes": {"veTable": {"3": 77.7}}, "key": ek}).json()
+    assert friend["slug"] == copy and friend["updated"] is True        # the edit key edits in place...
+    rev1 = client.get(f"/t/{copy}/rev").json()["rev"]
+    assert rev1 != rev0                                                # ...and open pages see the change
+    me = client.post(f"/t/{copy}/save", json={"changes": {"veTable": {"4": 66.6}}, "key": owner}).json()
+    assert me["slug"] == copy                                          # both edits are on the one tune
+    z = parse_msq(client.get(f"/t/{copy}.msq").content).get("veTable").values
+    assert z[3] == pytest.approx(77.7) and z[4] == pytest.approx(66.6)
+
+    # notes: shared, need a key, carried into copies, and change the revision
+    assert client.post(f"/t/{copy}/notes", json={"notes": "pulled 2% at 100 kPa"}).status_code == 403
+    assert client.post(f"/t/{copy}/notes", json={"notes": "pulled 2% at 100 kPa", "key": ek}).json()["ok"]
+    assert client.get(f"/t/{copy}/rev").json()["rev"] != client.get(f"/t/{slug}/rev").json()["rev"]
+    url = client.post("/logs", files={"file": ("d.msl", msl(drive()), "text/plain")}).headers["location"]
+    assert client.get(f"{url}/index.json?tune={copy}").json()["tune"]["notes"] == "pulled 2% at 100 kPa"
+    other = client.post(f"/t/{copy}/save", json={"changes": {"veTable": {"5": 55.5}}}).json()
+    assert other["slug"] != copy                                       # no key: their own copy, as before
+    assert client.get(f"{url}/index.json?tune={other['slug']}").json()["tune"]["notes"] == "pulled 2% at 100 kPa"
+
+    # only the owner can hand out a (new) edit key; the original upload never becomes editable in place
+    assert client.post(f"/t/{copy}/editkey", json={"key": ek}).status_code == 403
+    assert client.post(f"/t/{copy}/editkey", json={"key": owner}).json()["edit_key"]
+    assert client.post(f"/t/{slug}/save", json={"changes": {"veTable": {"6": 44.4}}, "key": ek}).json()["slug"] != slug
+    assert client.get("/t/aaaaaaaaaa/rev").status_code == 404

@@ -144,13 +144,19 @@
   <div class="lv-dlg-in">
     <h2>Share your changes</h2>
     <p class="dim" data-saved-what></p>
-    <label class="field-row lv-linkrow"><span>Link</span><input type="text" readonly data-saved-link aria-label="Link to share"></label>
+    <label class="field-row lv-linkrow"><span>Link to look and make their own copy</span><input type="text" readonly data-saved-link aria-label="Link to share"></label>
     <div class="lv-dlg-btns lv-dlg-col">
       <button class="btn primary big" type="button" data-saved-copy>{{ icon('copy') }}<span>Copy link</span></button>
       <button class="btn big" type="button" data-saved-share hidden>{{ icon('share') }}<span>Send link…</span></button>
       <button class="btn big" type="button" data-saved-file hidden>{{ icon('share') }}<span>Send the .msq file…</span></button>
       <a class="btn big" data-saved-download href="#" download>{{ icon('download') }}<span>Download the .msq</span></a>
       <a class="btn big" data-saved-open href="#">{{ icon('grid') }}<span>Open the tune page</span></a>
+    </div>
+    <div class="lv-together">
+      <h3>Edit together</h3>
+      <p class="dim">A link that lets a friend edit <b>this same tune</b> with you: your changes and theirs show up on both phones within a few seconds, no refresh. Only send it to people you'd let change the tune (they can't delete it).</p>
+      <button class="btn big" type="button" data-together>{{ icon('link') }}<span>Copy the edit-together link</span></button>
+      <input type="text" readonly data-together-link hidden aria-label="Edit-together link">
     </div>
     <p class="fine">To put it on the car: load the .msq in TunerStudio, check it, then burn it. Log again afterwards; one pass gets close, the second gets it right.</p>
     <button class="btn" type="button" data-dlg-close>Close</button>

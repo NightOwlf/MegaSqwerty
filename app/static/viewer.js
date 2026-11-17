@@ -566,7 +566,8 @@
   }
   function cellText(v, d, narrow) {  // as many decimals as fit the cell (a table fitted to a phone: fewer)
     var a = Math.abs(v);
-    if (narrow) return v.toFixed(a >= 10 ? 0 : Math.min(d, 1));
+    // Narrow cells drop the second decimal only: an AFR target of 13.5 must read 13.5, never 14.
+    if (narrow) return v.toFixed(a >= 100 ? 0 : Math.min(d, 1));
     return v.toFixed(a >= 100 ? 0 : Math.min(d, a >= 10 ? 1 : 2));
   }
   function binText(v) { return Math.abs(v) >= 100 || v === Math.round(v) ? String(Math.round(v)) : v.toFixed(1); }
@@ -1154,7 +1155,15 @@
      someone else editing your copy gets their own, so nobody overwrites anybody. Auto-save does it for you. */
   var saveBarClosed = false;
   var OWN_KEY = "msq.lv.own", saving = null, saveAgain = false, autoTimer = 0, saveErr = "", lastSaved = null;
-  var autoSave = (function () { try { return localStorage.getItem("msq.lv.autosave") !== "0"; } catch (e) { return true; } })();
+  var autoSave = true;  // always on when a page opens: turning it off lasts only until a reload
+  var EKEY = "msq.lv.ekey";
+  function editKeys() { try { return JSON.parse(localStorage.getItem(EKEY) || "{}") || {}; } catch (e) { return {}; } }
+  function rememberEdit(slug, k) {
+    var o = editKeys(), ks;
+    o[slug] = k; ks = Object.keys(o);
+    while (ks.length > 80) delete o[ks.shift()];
+    try { localStorage.setItem(EKEY, JSON.stringify(o)); } catch (e) { /* storage unavailable */ }
+  }
   function owned() { try { return JSON.parse(localStorage.getItem(OWN_KEY) || "{}") || {}; } catch (e) { return {}; } }
   function remember(slug, k) {
     var o = owned(), ks;
@@ -1230,6 +1239,7 @@
   }
   function applySaved(sent, j) {
     if (j.key) remember(j.slug, j.key);
+    if (j.edit_key) rememberEdit(j.slug, j.edit_key);
     var fresh = j.slug !== TUNE;
     idx.tables.forEach(function (t) {
       var e = sent[t.name];
@@ -1250,6 +1260,8 @@
     if (j.file) idx.tune.file = j.file;
     lastSaved = j;
     compareSoon();
+    renderNotes();
+    syncSoon(0);  // pick up anything someone else saved meanwhile
     saveEdits();
     allGrids().forEach(function (g) { g.paint(); });
     renderSaveBars();
@@ -1272,6 +1284,7 @@
     saveNow();
     var url = location.href, dlg = $d('[data-dlg="saved"]'), copy = idx.tune && idx.tune.parent;
     $d("[data-saved-link]").value = url;
+    $d("[data-together-link]").hidden = true;
     $d("[data-saved-what]").textContent = copy
       ? "Whoever opens this link sees this log with your edited tune: " + plural(changedCells(), "cell") +
         " changed from the original, marked in orange. It keeps up as you edit and save. If they change it, they get their own copy to send back, so yours isn't overwritten."
@@ -1295,6 +1308,41 @@
       } catch (e) { /* not supported */ }
     }
     dlg.hidden = false;
+  }
+  /* A link that lets a friend edit this same tune with you: both pages update live. Makes an edited copy first
+     if this is someone's original (originals are never changed). */
+  function editTogether(btn) {
+    var label = btn.querySelector("span") || btn, old = label.textContent;
+    var show = function (k) {
+      var u = new URL(location.href);
+      u.hash = (location.hash || "#").replace(/&?k=[^&]*/, "") + "&k=" + k;
+      var box = $d("[data-together-link]");
+      box.value = u.toString(); box.hidden = false; box.focus(); box.select();
+      label.textContent = old;
+      copyText(box.value, label);
+    };
+    var fail = function (msg) { label.textContent = old; alert(msg || "That didn't work. Try again."); };
+    var ek = editKeys()[TUNE], own = owned()[TUNE];
+    if (ek) return show(ek);
+    label.textContent = "Setting it up…";
+    if (own && idx.tune.parent) {
+      fetch("/t/" + TUNE + "/editkey", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: own }) })
+        .then(function (r) { return r.json(); }).then(function (j) {
+          if (!j.edit_key) return fail(j.error);
+          rememberEdit(TUNE, j.edit_key); show(j.edit_key);
+        }, function () { fail(); });
+      return;
+    }
+    // not ours to change: make our own copy (carrying any unsaved edits), then share that
+    var body = editCount() ? { changes: edits } : { fork: true };
+    var sent = JSON.parse(JSON.stringify(edits));
+    fetch("/t/" + TUNE + "/save", { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); }).then(function (j) {
+        if (!j.slug) return fail(j.error);
+        applySaved(sent, j);
+        $d("[data-saved-link]").value = location.href;
+        show(j.edit_key);
+      }, function () { fail(); });
   }
   function saveAndShare(btn) {
     if (!editCount()) { openShare(); return; }
@@ -2125,6 +2173,8 @@
     if (h.v) { var m = /^(-?[\d.]+)-(-?[\d.]+)$/.exec(h.v); if (m && +m[2] > +m[1]) { view.t0 = +m[1]; view.t1 = +m[2]; } }
     clampView();
     if (h.c && /^\d+$/.test(h.c)) cur = Math.min(N - 1, +h.c);
+    if (h.k && TUNE && /^[A-Za-z0-9_-]{8,64}$/.test(h.k)) { remember(TUNE, h.k); rememberEdit(TUNE, h.k); }  // an edit-together link
+    if (h.k) setTimeout(saveNow, 0);  // take the key out of the address bar, so Copy link never hands it on
     if (h.s) h.s.split(",").forEach(function (part) {
       var m2 = /^(-?[\d.]+)-(-?[\d.]+)$/.exec(part);
       if (m2 && +m2[2] > +m2[1]) sections.push([Math.max(tMin, +m2[1]), Math.min(tMax, +m2[2])]);
@@ -2285,8 +2335,87 @@
     var cb = e.target.closest("[data-autosave]");
     if (!cb) return;
     autoSave = cb.checked;
-    try { localStorage.setItem("msq.lv.autosave", autoSave ? "1" : "0"); } catch (err) { /* ignore */ }
     renderSaveBars(); scheduleAuto(200);
+  });
+
+  /* ---------- editing together: stay in step with every other page on this tune ---------- */
+  var syncing = false, syncTimer = 0;
+  function syncSoon(ms) { clearTimeout(syncTimer); syncTimer = setTimeout(function () { sync(true); }, ms || 0); }
+  function sync(force) {
+    if (!TUNE || !idx || !idx.tune || syncing || saving || ve.running) return;
+    if (!force && document.hidden) return;
+    syncing = true;
+    var done = function () { syncing = false; };
+    fetch("/t/" + TUNE + "/rev", { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (!j || j.rev === idx.tune.rev) return done();
+      return fetch(base + "/index.json?tune=" + TUNE, { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (fresh) {
+        done();
+        if (!fresh.tune || fresh.tune.slug !== TUNE) return;
+        var moved = 0, flashes = {};
+        (fresh.tables || []).forEach(function (nt) {
+          var t = idx.tables.filter(function (x) { return x.name === nt.name; })[0];
+          if (!t || nt.z.length !== t.z.length) return;
+          for (var k = 0; k < t.z.length; k++) {
+            if (Math.abs(nt.z[k] - t.z[k]) > 1e-9) {
+              t.z[k] = nt.z[k];
+              if (!edited(t, k)) { moved++; (flashes[t.name] = flashes[t.name] || []).push(k); }
+            }
+          }
+          t.p = nt.p;
+        });
+        var notesChanged = (fresh.tune.notes || "") !== (idx.tune.notes || "");
+        idx.tune.rev = fresh.tune.rev; idx.tune.notes = fresh.tune.notes; idx.tune.changed = fresh.tune.changed;
+        allGrids().forEach(function (g) { g.paint(); (flashes[g.t.name] || []).forEach(function (k) { g.flash(k); }); });
+        renderSaveBars(); compareSoon();
+        if (notesChanged) renderNotes(true);
+        if (moved) toast("Updated live: " + plural(moved, "cell") + " changed on this tune");
+        else if (notesChanged) toast("Notes updated");
+      });
+    }).catch(done);
+  }
+  setInterval(function () { sync(false); }, 3000);
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) sync(true); });
+
+  var toastBox = null, toastT = 0;
+  function toast(msg) {
+    if (!toastBox) { toastBox = document.createElement("div"); toastBox.className = "lv-toast"; toastBox.setAttribute("role", "status"); document.body.appendChild(toastBox); }
+    toastBox.textContent = msg; toastBox.classList.add("on");
+    clearTimeout(toastT); toastT = setTimeout(function () { toastBox.classList.remove("on"); }, 3200);
+  }
+
+  /* Notes on the tune, shared with everyone on its link (and carried into copies). */
+  var notesT = 0;
+  function renderNotes(fromServer) {
+    var box = $(".lv-notesbox");
+    if (!box || !idx || !idx.tune) { if (box) box.hidden = true; return; }
+    box.hidden = false;
+    var ta = $("textarea", box), mine = !!owned()[TUNE];
+    if (!fromServer || document.activeElement !== ta) ta.value = idx.tune.notes || "";
+    ta.placeholder = mine ? "What you changed and why, what to log next… everyone on this link sees it."
+      : "Notes for this tune. Typing here makes your own copy (like editing a cell), which you can send back.";
+    $(".lv-notes-n", box).textContent = idx.tune.notes ? "" : "none yet";
+    if (idx.tune.notes && !box.open && fromServer) box.open = true;
+  }
+  root.addEventListener("input", function (e) {
+    var ta = e.target.closest && e.target.closest(".lv-notesbox textarea");
+    if (!ta) return;
+    clearTimeout(notesT);
+    var st = $(".lv-notes-st");
+    st.textContent = "…";
+    notesT = setTimeout(function () {
+      var text = ta.value, go = function () {
+        fetch("/t/" + TUNE + "/notes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notes: text, key: owned()[TUNE] || "" }) })
+          .then(function (r) { return r.json(); }).then(function (j) {
+            if (j.ok) { idx.tune.notes = text; idx.tune.rev = j.rev; st.textContent = "✓ saved"; $(".lv-notes-n").textContent = ""; }
+            else st.textContent = j.error || "not saved";
+          }, function () { st.textContent = "not saved: check your connection"; });
+      };
+      if (owned()[TUNE] && idx.tune.parent) return go();
+      // someone else's tune: make our own copy first, then write the notes on it
+      fetch("/t/" + TUNE + "/save", { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ fork: true }) })
+        .then(function (r) { return r.json(); }).then(function (j) { if (j.slug) { applySaved({}, j); go(); } else st.textContent = j.error || "not saved"; },
+          function () { st.textContent = "not saved: check your connection"; });
+    }, 900);
   });
 
   /* ---------- the share dialog and the display options ---------- */
@@ -2297,6 +2426,7 @@
       if (e.target.closest("[data-saved-copy]")) copyText(url, e.target.closest("[data-saved-copy]").querySelector("span") || e.target);
       else if (e.target.closest("[data-saved-share]")) navigator.share({ title: root.dataset.name + " · edited tune", url: url }).catch(function () { /* cancelled */ });
       else if (e.target.closest("[data-saved-file]") && shareFile) navigator.share({ files: [shareFile], title: shareFile.name }).catch(function () { /* cancelled */ });
+      else if (e.target.closest("[data-together]")) editTogether(e.target.closest("[data-together]"));
     });
     $d("[data-saved-link]").addEventListener("focus", function () { this.select(); });
   })();
@@ -2427,9 +2557,12 @@
     watch.forEach(load);
     var side = $(".lv-side");
     side.insertAdjacentHTML("afterbegin", saveBar());
+    if (TUNE) side.insertAdjacentHTML("afterbegin", '<details class="lv-notesbox" hidden><summary><b>Notes</b> <span class="dim lv-notes-n"></span>' +
+      '<span class="st-grow"></span><span class="lv-notes-st dim"></span></summary><textarea rows="4" maxlength="8000" aria-label="Notes on this tune"></textarea></details>');
     if (idx.tables && idx.tables.length) {
       root.classList.add("has-side");
       restoreEdits();
+      if (editCount()) setTimeout(function () { scheduleAuto(600); renderSaveBars(); }, 0);  // unsaved edits from before a reload: save them now
       $$(".lv-table").forEach(function (el, i) {
         var t = idx.tables[i === 0 ? 0 : Math.min(idx.tables.length - 1, 1)];
         if (i === 1 && idx.tables.length < 2) { el.hidden = true; return; }
@@ -2444,6 +2577,7 @@
       else side.hidden = true;
     }
     renderSaveBars();
+    renderNotes();
     renderSections();
     try { localStorage.removeItem("msq.lv.cells"); } catch (e) { /* ignore */ }
     var repaintT = 0;
