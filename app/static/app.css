@@ -1439,3 +1439,74 @@ body.page-viewer .main { max-width: none; padding-block: 8px 12px; padding-inlin
 .lv-hrow .btn.sm { flex: none; min-height: 30px; }
 .lv-tt td { padding: 0; }
 .lv-tt { font-variant-numeric: tabular-nums; }
+
+/* ---------- live tuning ---------- */
+body.page-live .main { max-width: 1200px; }
+.lt { display: grid; gap: 10px; }
+.lt-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.lt-head h1 { margin: 0; font-size: 18px; }
+.lt-pill { padding: 3px 10px; border-radius: 12px; font-size: 12.5px; font-weight: 700; }
+.lt-pill.on { background: #1f8f4e; color: #fff; }
+.lt-pill.warn { background: #c98a12; color: #fff; }
+.lt-pill.off { background: var(--win-3); color: var(--muted); }
+.lt-status { margin: 0; font-size: 12.5px; color: var(--muted); }
+.lt-setup { display: grid; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--win); }
+.lt-steps { display: grid; gap: 10px; margin: 0; padding-left: 20px; font-size: 13.5px; }
+.lt-steps li > .btn, .lt-steps li > label.btn { margin: 4px 6px 4px 0; }
+.lt-steps small { display: block; margin-top: 2px; }
+.lt-link { color: var(--link); text-decoration: underline; cursor: pointer; }
+.lt:not(.has-session) .lt-need-session { opacity: .45; pointer-events: none; }
+.lt:not(.ecu-on) [data-disconnect] { display: none; }
+.lt.ecu-on [data-connect], .lt.ecu-on [data-sim] { display: none; }
+.lt-noserial { display: none; margin: 0; padding: 8px 10px; border: 1px solid var(--warn-line); border-radius: 4px; background: var(--warn-bg); color: var(--warn-ink); font-size: 12.5px; }
+.lt.no-serial .lt-noserial { display: block; }
+.lt.no-serial [data-connect] { display: none; }
+.lt-share { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--sel); border-radius: 6px; background: linear-gradient(rgba(53, 116, 240, .1), rgba(53, 116, 240, .1)), var(--win); font-size: 13px; }
+.lt-share[hidden] { display: none; }
+.lt-share code { overflow-wrap: anywhere; font-size: 12px; }
+.lt-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.lt-safety { display: grid; gap: 6px; font-size: 13px; }
+.lt-opt { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-weight: 600; }
+.lt-opt select { min-height: 34px; padding: 0 6px; border: 1px solid var(--btn-line); border-radius: 4px; background: var(--btn-2); color: var(--text); font: inherit; }
+.lt-ask { position: sticky; bottom: 8px; z-index: 20; display: grid; gap: 8px; padding: 12px; border: 2px solid #e0a800; border-radius: 8px; background: var(--win); box-shadow: var(--shadow); font-size: 14px; }
+.lt-ask[hidden] { display: none; }
+.lt-ask p { margin: 0; }
+.lt-ask-b { display: flex; gap: 8px; }
+.lt-ask-b .btn { flex: 1; min-height: 44px; justify-content: center; font-size: 15px; }
+.lt-live { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); align-items: start; }
+.lt-gauges { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }
+.lt-g { display: grid; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--win); }
+.lt-g small { color: var(--muted); font-size: 11.5px; }
+.lt-g b { font-size: 22px; line-height: 1.15; }
+.lt-g i { color: var(--faint); font-size: 11px; font-style: normal; }
+.lt-chart { height: 220px; border: 1px solid var(--line); border-radius: 4px; background: #000; }
+.lt-chart canvas { display: block; width: 100%; height: 100%; }
+.lt-tablebox { display: grid; gap: 6px; padding: 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--win); }
+.lt-th { display: flex; align-items: center; gap: 8px; }
+.lt-th select { flex: 1; min-width: 0; height: 32px; border: 1px solid var(--btn-line); border-radius: 4px; background: var(--btn-2); color: var(--text); font: 700 13px var(--ui); }
+.lt-tv { color: var(--link); font-weight: 700; white-space: nowrap; }
+.lt-tt { width: 100%; border-collapse: collapse; table-layout: fixed; font: 11px/1 var(--ui); font-variant-numeric: tabular-nums; }
+.lt-tt td, .lt-tt th { height: 20px; padding: 0; border: 1px solid var(--hm-grid); text-align: center; overflow: hidden; white-space: nowrap; }
+.lt-tt td { color: #000; cursor: pointer; user-select: none; -webkit-user-select: none; }
+.lt-tt th { background: var(--ax); color: var(--ax-ink); font-weight: 600; }
+.lt-tt tr:first-child th:first-child { width: 2.7em; }
+.lt-tt td.sel { box-shadow: inset 0 0 0 2px #0a2a8a; filter: brightness(.85); }
+.lt-tt td.cur { outline: 2px solid #1f4fe0; outline-offset: -2px; font-weight: 800; }
+.lt-tt td.pend { background-image: repeating-linear-gradient(45deg, rgba(0, 0, 0, .22) 0 3px, transparent 3px 7px) !important; }
+.lt-tt td.hit { animation: lv-hit .6s ease-out; }
+.lt-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.lt-tools[hidden] { display: none; }
+.lt-tools input { width: 80px; min-height: 34px; padding: 0 6px; border: 1px solid var(--line-2); border-radius: 4px; background: var(--field); color: var(--text); font: 14px var(--mono); }
+.lt-tools .btn.sm, .lt-acts .btn.sm { min-height: 34px; }
+.lt-acts .btn.on { background: var(--sel); color: #fff; }
+.lt-log { grid-column: 1 / -1; padding: 6px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--win); font-size: 12.5px; }
+.lt-log ul { margin: 4px 0 0; padding: 0; max-height: 160px; overflow-y: auto; list-style: none; }
+.lt-log li { padding: 2px 0; border-top: 1px solid var(--line); }
+.lt-toast { position: fixed; left: 50%; bottom: max(18px, env(safe-area-inset-bottom)); z-index: 90; max-width: min(92vw, 520px); padding: 10px 14px; transform: translate(-50%, 20px); border-radius: 18px; background: rgba(20, 22, 26, .94); color: #fff; font-size: 13.5px; opacity: 0; pointer-events: none; transition: opacity .25s, transform .25s; }
+.lt-toast.on { opacity: 1; transform: translate(-50%, 0); }
+.lt-toast.bad { background: #8f1d1d; }
+@media (max-width: 860px) {
+  .lt-live { grid-template-columns: minmax(0, 1fr); }
+  .lt-chart { height: 170px; }
+  .lt-g b { font-size: 20px; }
+}

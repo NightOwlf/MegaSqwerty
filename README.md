@@ -382,6 +382,35 @@ Routes: `GET /t/{slug}/rev` (what pages poll), `POST /t/{slug}/notes`, `POST /t/
 edited copy; `{"fork": true}` for a separate copy), and the token-only `/admin/restore/{tune,log}` that put
 links back under their old slugs when storage moved to the volume.
 
+### Live tuning (`/live`)
+
+Tune a running car from anywhere: someone at the car connects the ECU to a page, and a tuner opens a link on
+a phone or computer to watch it run and change the tables, sent to the ECU in moments.
+
+- **At the car**, in Chrome or Edge on the laptop (Web Serial: no install): close TunerStudio (only one
+  program can use the ECU's USB port), choose the TunerStudio project folder, and *Connect the ECU*. The
+  project's own ECU definition (`projectCfg/mainController.ini`) says how to talk to it and where everything
+  is, so it works with any ECU TunerStudio drives over the framed protocol (`msEnvelope_1.0`: FOME, rusEFI,
+  MS3, Speeduino). The page checks the ECU's signature against the `.ini`, reads the whole tune from the ECU,
+  streams live data, and gives a link to send the tuner. *Try a simulated ECU* runs everything against a
+  pretend ECU and engine (same bytes, same commands) to try it without a car.
+- **The tuner** gets live gauges (AFR shown as AFR), a 30-second live graph, and any table with the cell the
+  engine is in outlined as it runs. Select cells, change them, and they go to the car.
+- **Safety, decided at the car**: remote changes *Off*, *Ask me before each change* (the default: the
+  driver taps Allow or Reject, refused after 30 s) or *Allow*. The car page is the only thing that writes to
+  the ECU, and checks every change first: only the tables' values, inside the ECU's range, at most 25% per
+  step on VE and +5° of timing per step. Changes go to the ECU's working memory and are read back; nothing is
+  permanent until someone **burns** (the tuner only if the driver allows it), and switching the car off
+  drops anything not burned. *Undo last change* puts the previous values back.
+- Each session keeps a **shared tune copy**, updated as changes land and backed up when burned, so the tune
+  page's History, Compare and .msq download cover the live session.
+
+The server only relays (`app/live.py`, one WebSocket per page; sessions in memory, and the car page restarts
+a session under the same link if the server restarts). The ECU side is `app/static/ecu.js` (framing, CRC32,
+the `.ini`'s command templates, value scaling, the simulator), the page `app/static/live.js`, and the `.ini`
+reader `app/ecuini.py`. Tested end to end against the simulator with the FOME `.ini` it was built from; it
+hasn't yet been run against a real ECU, so start with the car parked.
+
 ### Backups and undo
 
 A shared tune keeps backups for as long as it exists: one before VE Analyze is applied, one before every

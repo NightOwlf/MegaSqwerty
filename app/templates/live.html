@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Live tuning' if role == 'view' else 'Start live tuning' }} · MSQ Viewer{% endblock %}
+{% block bodyclass %}page-live{% endblock %}
+{% block scripts %}<script src="/static/ecu.js?v={{ asset_v }}" defer></script><script src="/static/live.js?v={{ asset_v }}" defer></script>{% endblock %}
+{% block main %}
+<div class="lt" id="live" data-role="{{ role }}" data-sid="{{ sid }}" data-key="{{ key }}">
+  <div class="lt-head">
+    <h1>{{ 'Live tuning' if role == 'view' else 'Live tuning: at the car' }}</h1>
+    <span class="lt-pill off">Connecting…</span>
+  </div>
+  <p class="lt-status mono" aria-live="polite">{% if role == 'car' and not sid %}Start here, on the laptop connected to the car.{% endif %}</p>
+
+  {% if role == 'car' %}
+  <section class="lt-setup">
+    <ol class="lt-steps">
+      <li><b>Close TunerStudio</b> (only one program can use the ECU's USB port at a time).</li>
+      <li><label class="btn primary big lt-file">{{ icon('folder') }}<span>Choose the TunerStudio project folder</span><input type="file" data-project webkitdirectory directory multiple hidden></label>
+        <small class="dim">The folder with <code>projectCfg/mainController.ini</code> and <code>CurrentTune.msq</code>. Or <label class="lt-link">choose the files<input type="file" data-files accept=".ini,.msq" multiple hidden></label>.</small></li>
+      <li class="lt-need-session"><button class="btn primary big" type="button" data-connect>Connect the ECU (USB)</button>
+        <button class="btn big" type="button" data-sim title="A pretend ECU and engine, to try everything without the car">Try a simulated ECU</button>
+        <button class="btn" type="button" data-disconnect>Disconnect</button></li>
+    </ol>
+    <p class="lt-noserial">This browser can't reach USB devices. On the car's laptop, open this page in <b>Chrome</b> or <b>Edge</b>. (The simulated ECU works anywhere.)</p>
+    <div class="lt-share" hidden>
+      <b>Send this link to your tuner</b> <small class="dim">(phone or computer, anywhere)</small>
+      <code class="mono" data-view-url></code>
+      <div class="lt-row"><button class="btn primary" type="button" data-copy-view>Copy link</button><button class="btn" type="button" data-share-view hidden>Send…</button></div>
+    </div>
+    <div class="lt-safety">
+      <label class="lt-opt"><span>Remote changes</span>
+        <select data-mode><option value="off">Off: the tuner can only watch</option><option value="ask" selected>Ask me before each change</option><option value="auto">Allow</option></select></label>
+      <label class="check sm"><input type="checkbox" data-allow-burn><span>Let the tuner burn (make changes permanent)</span></label>
+      <p class="fine">Changes go to the ECU's working memory and are only kept if someone burns them: switching the car off undoes anything not burned. Each change is limited to 25% on VE and +5° of timing, and every value stays inside the range the ECU allows. <b>The driver drives; tune from the passenger seat or parked.</b></p>
+    </div>
+    <div class="lt-ask" hidden></div>
+  </section>
+  {% else %}
+  <p class="lt-mode-note dim"></p>
+  {% endif %}
+
+  <section class="lt-live">
+    <div class="lt-gauges"></div>
+    <div class="lt-chart"><canvas></canvas></div>
+    <div class="lt-tablebox">
+      <div class="lt-th"><select data-table aria-label="Table"></select><span class="lt-tv mono"></span></div>
+      <div class="lt-grid"></div>
+      <div class="lt-tools" hidden>
+        <input type="text" inputmode="decimal" class="lt-val" placeholder="Value" aria-label="Value for the selected cells">
+        <button class="btn sm" type="button" data-act="set">Set</button>
+        <button class="btn sm" type="button" data-act="dec">−</button><button class="btn sm" type="button" data-act="inc">+</button>
+        <button class="btn sm" type="button" data-act="dn1">−1%</button><button class="btn sm" type="button" data-act="up1">+1%</button>
+        <button class="btn sm" type="button" data-act="clear">Clear</button>
+        <span class="lt-selinfo dim"></span>
+      </div>
+      <div class="lt-row lt-acts">
+        <button class="btn sm" type="button" data-act="range" title="Tap two cells to select everything between">Range</button>
+        <button class="btn sm" type="button" data-act="undo">↶ Undo last change</button>
+        <button class="btn sm" type="button" data-act="burn">Burn to ECU</button>
+        <a class="btn sm" data-tune-link href="#" hidden>Tune, history &amp; download</a>
+      </div>
+      <p class="fine">Tap cells to select them (Range: tap two corners), then change them. The cell the engine is in now is outlined; it moves as the car runs.</p>
+    </div>
+    <div class="lt-log"><b>Changes</b><ul></ul></div>
+  </section>
+  <div class="lt-toast" role="status"></div>
+</div>
+{% endblock %}

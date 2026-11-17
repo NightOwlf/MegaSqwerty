@@ -28,6 +28,7 @@ from . import logs as logsmod
 from . import diff as diffmod
 from .axes import axis_text, stoich_of
 from . import edit as editmod
+from . import live as livemod
 from . import views
 from .db import SLUG_RE, Store
 from .parser import MAX_BYTES, MsqError, TuneDoc, fmt_value, parse_msq
@@ -168,7 +169,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
 
     templates = Jinja2Templates(directory=HERE / "templates")
     asset_v = hashlib.sha1(b"".join((HERE / "static" / f).read_bytes()
-                                    for f in ("app.css", "app.js", "theme.js", "edit.js", "viewer.js", "veal.js"))).hexdigest()[:8]
+                                    for f in ("app.css", "app.js", "theme.js", "edit.js", "viewer.js", "veal.js", "ecu.js", "live.js"))).hexdigest()[:8]
     templates.env.globals.update(asset_v=asset_v, max_mb=MAX_MB, max_bytes=MAX_BYTES, icons=views.ICONS,
                                  log_max_mb=LOG_MAX_MB, log_max_bytes=LOG_MAX_BYTES,
                                  tab_names=views.TAB_NAMES, cat_labels=views.CATEGORY_LABELS,
@@ -1242,6 +1243,8 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             "prev": link(nav[j - 1]) if j > 0 else None, "next": link(nav[j + 1]) if j + 1 < len(nav) else None,
             "og_url": page_url(request),
         })
+
+    livemod.register(app, store, templates, {"client_ip": client_ip})
 
     return app
 
