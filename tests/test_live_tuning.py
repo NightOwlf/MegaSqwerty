@@ -39,6 +39,19 @@ lambdaTable = array, U08, 700, [16x16], "afr", 0.1, 0, 0, 25, 1
 #endif
 lambdaLoadBins = array, U16, 956, [16], "", 1, 0, 0, 1000, 0
 lambdaRpmBins = array, U16, 988, [16], "RPM", 1, 0, 0, 18000, 0
+idleRpmPid_pFactor = scalar, F32, 1100, "", 1, 0, 0, 10, 3
+boostPwmFrequency = scalar, U16, 1104, "Hz", 1, 0, 0, 3000, 0
+cltFuelCorrBins = array, F32, 1200, [4], "C", 1, 0, -40, 150, 0
+cltFuelCorr = array, F32, 1216, [4], "ratio", 1, 0, 0, 5, 2
+injector_flow = scalar, F32, 1232, "cc", 1, 0, 0, 5000, 1
+[ConstantsExtensions]
+   requiresPowerCycle = boostPwmFrequency
+[CurveEditor]
+   curve = cltFuelCorrCurve, "Warmup fuel multiplier"
+      xBins = cltFuelCorrBins, coolant
+      yBins = cltFuelCorr
+[UserDefined]
+   field = "Idle P gain", idleRpmPid_pFactor
 [OutputChannels]
    ochGetCommand = "O%2o%2c"
    ochBlockSize = 64
@@ -84,8 +97,15 @@ def test_the_ecu_definition_is_read_like_tunerstudio_reads_it():
     assert (t["x"], t["xch"], t["y"], t["ych"], t["z"]) == ("veRpmBins", "RPMValue", "veLoadBins", "veTableYAxis", "veTable")
     assert ecuini.command_bytes('"R%2o%2c"') == [b"R", {"n": 2, "k": "o"}, {"n": 2, "k": "c"}]
     live = ecuini.layout_for_live(ini)
-    assert set(live["constants"]) == {"veTable", "veLoadBins", "veRpmBins", "lambdaTable", "lambdaLoadBins", "lambdaRpmBins"}
+    assert {"veTable", "veLoadBins", "veRpmBins", "lambdaTable", "lambdaLoadBins", "lambdaRpmBins"} <= set(live["constants"])
     assert live["outputs"]["RPMValue"]["label"] == "RPM" and "veTableYAxis" in live["outputs"]
+    # what a remote tuner may change: tables, curves, settings with a range; never a power-cycle or protection one
+    assert live["editable"]["veTable"] == "table" and live["editable"]["cltFuelCorr"] == "curve"
+    assert live["editable"]["idleRpmPid_pFactor"] == "setting" and live["constants"]["idleRpmPid_pFactor"]["label"] == "Idle P gain"
+    for blocked in ("boostPwmFrequency", "injector_flow", "rpmHardLimit"):
+        assert blocked not in live["editable"]
+    assert live["powerCycle"] == ["boostPwmFrequency"]
+    assert live["curves"][0]["title"] == "Warmup fuel multiplier" and live["curves"][0]["xch"] == "coolant"
     with pytest.raises(ecuini.IniError):
         ecuini.parse("[Constants]\nfoo = 1\n")
 
@@ -104,7 +124,7 @@ def test_a_real_fome_definition_matches_its_tune():
     sizes = {"U08": 1, "S08": 1, "U16": 2, "S16": 2, "U32": 4, "S32": 4, "F32": 4}
     spans = []
     for name, c in live["constants"].items():
-        n = c["rows"] * c["cols"]
+        n = c["rows"] * c["cols"] if c["kind"] == "array" else 1
         end = c["offset"] + n * sizes[c["type"]]
         assert end <= size, name
         spans.append((c["offset"], end, name))

@@ -204,7 +204,15 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         resp = await call_next(request)
-        resp.headers.setdefault("Content-Security-Policy", CSP)
+        csp = CSP
+        if request.url.path.startswith("/live"):
+            # the live page's WebSocket: name it, since older Safari (a tuner's iPhone) doesn't count wss: as 'self'
+            host = re.sub(r"[^A-Za-z0-9.:\-]", "", request.headers.get("host", ""))
+            if host:
+                csp = csp.replace("connect-src 'self'", f"connect-src 'self' wss://{host} ws://{host}")
+        resp.headers.setdefault("Content-Security-Policy", csp)
+        if request.url.path.startswith("/live"):
+            resp.headers["Permissions-Policy"] = "serial=(self), screen-wake-lock=(self)"
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["Referrer-Policy"] = "same-origin"
         resp.headers["X-Frame-Options"] = "DENY"

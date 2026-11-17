@@ -228,10 +228,10 @@ def register(app, store, templates, deps) -> None:
         role = None
         if s is not None:
             role = "car" if secrets.compare_digest(k, s.car_key) else "view" if secrets.compare_digest(k, s.view_key) else None
-        if role is None:
+        await ws.accept()
+        if role is None:  # accepted first, so the page reads 4404 (a refusal before accepting reaches it as 1006)
             await ws.close(code=4404)
             return
-        await ws.accept()
         s.touched = time.time()
         if role == "car":
             if s.car is not None:

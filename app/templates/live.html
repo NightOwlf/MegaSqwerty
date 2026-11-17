@@ -41,8 +41,15 @@
   <section class="lt-live">
     <div class="lt-gauges"></div>
     <div class="lt-chart"><canvas></canvas></div>
+    <div class="lt-panes"><button type="button" class="on" data-pane="tables">Tables &amp; curves</button><button type="button" data-pane="settings">Settings</button></div>
+    <div class="lt-set" hidden>
+      <input type="search" placeholder="Search settings (idle, launch, accel, cranking…)" aria-label="Search settings" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <ul></ul>
+      <p class="fine">The driver approves every settings change. Settings that need a power cycle, or that set how the engine is wired, timed, measured or protected (pins, trigger, injectors, sensors, rev and boost limits, knock), aren't here: change those at the car in TunerStudio.</p>
+    </div>
     <div class="lt-tablebox">
       <div class="lt-th"><select data-table aria-label="Table"></select><span class="lt-tv mono"></span></div>
+      <p class="lt-ro dim" hidden>View only: this one can't be changed remotely (it needs a power cycle, or it sets how the engine is wired or protected).</p>
       <div class="lt-grid"></div>
       <div class="lt-tools" hidden>
         <input type="text" inputmode="decimal" class="lt-val" placeholder="Value" aria-label="Value for the selected cells">

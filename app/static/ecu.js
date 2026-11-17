@@ -12,6 +12,16 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
+  /* Run f soon, as its own task: always yields to the page (unlike a promise), and isn't slowed in a background
+     tab (unlike a timer, which Chrome holds to about once a second there). */
+  var soon = (function () {
+    if (typeof MessageChannel === "undefined") return function (f) { setTimeout(f, 0); };
+    var ch = new MessageChannel(), q = [];
+    ch.port1.onmessage = function () { var f = q.shift(); if (f) f(); };
+    if (ch.port1.unref) ch.port1.unref();  // node (tests): don't keep the process alive
+    return function (f) { q.push(f); ch.port2.postMessage(0); };
+  })();
+
   /* ---------- CRC32 (zlib) ---------- */
   var CRC = (function () {
     var t = new Uint32Array(256);
@@ -217,19 +227,21 @@
 
   /* ---------- Web Serial ---------- */
   function serialPipe(port) {
-    var listeners = [], reader = null, writer = port.writable.getWriter(), stopped = false;
+    var listeners = [], reader = null, writer = port.writable.getWriter(), stopped = false, dead = false;
     (function pump() {
       reader = port.readable.getReader();
       (function loop() {
         reader.read().then(function (r) {
-          if (r.done || stopped) return;
+          if (r.done || stopped) { dead = true; return; }
           listeners.forEach(function (f) { f(r.value); });
           loop();
-        }, function () { /* port closed */ });
+        }, function () { dead = true; });  // unplugged, or the ECU reset its USB
       })();
     })();
     return {
-      write: function (b) { return writer.write(b); },
+      port: port,
+      isDead: function () { return dead; },
+      write: function (b) { return dead ? Promise.reject(new Error("The USB link to the ECU dropped.")) : writer.write(b); },
       onData: function (f) { listeners.push(f); },
       close: function () {
         stopped = true;
@@ -239,10 +251,28 @@
       }
     };
   }
+  function openPort(port) {
+    return port.open({ baudRate: 115200 }).then(function () { return serialPipe(port); }, function (e) {
+      if (e && /open|busy|access|use/i.test(e.message || "")) {
+        throw new Error("The ECU's port is in use: close TunerStudio (or anything else connected to the ECU) and try again.");
+      }
+      throw e;
+    });
+  }
   function connectSerial() {
     if (!("serial" in navigator)) return Promise.reject(new Error("This browser can't reach USB devices. Use Chrome or Edge on a computer."));
-    return navigator.serial.requestPort({}).then(function (port) {
-      return port.open({ baudRate: 115200 }).then(function () { return serialPipe(port); });
+    return navigator.serial.requestPort({}).then(openPort);
+  }
+  /* After the USB link drops (the ECU reset while cranking, a loose cable): open the same device again
+     without asking, once it's back. -> a new pipe, or null if it isn't there yet. */
+  function reopenSerial(old) {
+    var info = old && old.getInfo ? old.getInfo() : {};
+    return navigator.serial.getPorts().then(function (ports) {
+      var same = ports.filter(function (p) { var i = p.getInfo(); return i.usbVendorId === info.usbVendorId && i.usbProductId === info.usbProductId; });
+      var port = same.indexOf(old) >= 0 ? old : same[0];
+      if (!port) return null;
+      var closed = port.readable ? port.close().catch(function () { /* already closed */ }) : Promise.resolve();
+      return closed.then(function () { return openPort(port); }).catch(function () { return null; });
     });
   }
 
@@ -316,7 +346,7 @@
       var deliver = function () { listeners.forEach(function (f) { f(out); }); };
       // a USB round trip of a few ms; but a timer in a background tab is slowed to ~1/s by the browser, which real
       // USB isn't, so there the reply comes straight back instead
-      if (typeof document !== "undefined" && document.hidden) Promise.resolve().then(deliver);
+      if (typeof document !== "undefined" && document.hidden) soon(deliver);
       else setTimeout(deliver, 2 + Math.random() * 3);
     }
     function u16(b, at) { return little ? b[at] | (b[at + 1] << 8) : (b[at] << 8) | b[at + 1]; }
@@ -373,7 +403,41 @@
     return page;
   }
 
+  /* What a remote change may do (the car page applies this to every request). -> null, or why not. */
+  function checkChange(layout, tables, table, cells, STOICH, title) {
+    STOICH = STOICH || 14.7;
+    title = title || function (n) { return n; };
+    var tableDef = function (z) { return (layout.tables || []).concat(layout.curves || []).filter(function (t) { return t.z === z; })[0]; };
+    var c = layout.constants[table], vals = tables[table], kind = (layout.editable || {})[table];
+    if (!c || !vals || !kind) return title(table) + " can't be changed remotely (it needs a power cycle, or it sets how the engine is wired or protected): change it at the car in TunerStudio.";
+    var ks = Object.keys(cells || {});
+    if (!ks.length || ks.length > 64) return "Change between 1 and 64 cells at a time.";
+    var nm = table + " " + (c.units || ""), ign = /ign|timing|advance|spark/i.test(table) && /deg/i.test(c.units || "");
+    var ve = /ve/i.test(table) && c.units === "%", afr = /lambda|afr/i.test(nm) && kind === "table";
+    var toAfr = /lambda/i.test(c.units || "") ? STOICH : 1, def = tableDef(table), loads = def && def.y ? tables[def.y] : null;
+    for (var i = 0; i < ks.length; i++) {
+      var k = +ks[i], v = +cells[ks[i]], old = vals[k];
+      if (!(k >= 0 && k < vals.length) || !(v === v)) return "That cell isn't in " + title(table) + ".";
+      if ((c.lo != null && v < c.lo - 1e-9) || (c.hi != null && v > c.hi + 1e-9)) return title(table) + " must stay between " + c.lo + " and " + c.hi + ".";
+      if (afr) {
+        var a = v * toAfr, ao = old * toAfr, load = loads ? loads[Math.floor(k / tables[def.x].length)] : 0;
+        if (a < 10 || a > 18) return "Target AFR has to stay between 10.0 and 18.0.";
+        if (Math.abs(a - ao) > 1.0 + 1e-9) return "More than 1.0 AFR in one step on the target. Make it in smaller steps.";
+        if (load > 100 && a > 15.0) return "No leaner than 15.0 AFR in boost (above 100 kPa).";
+        continue;
+      }
+      if (ign && v - old > 5 + 1e-9) return "More than 5° more timing in one step. Add it in smaller steps.";
+      if (ve && old > 0 && Math.abs(v / old - 1) > 0.25) return "More than 25% in one step on " + title(table) + ". Make it in smaller steps.";
+      if (!ign && !ve) {
+        var span = c.lo != null && c.hi != null ? c.hi - c.lo : Math.abs(old) || 1;
+        if (Math.abs(old) > 1e-9 ? Math.abs(v / old - 1) > 0.25 && Math.abs(v - old) > span * 0.02 : Math.abs(v - old) > span * 0.1)
+          return "That's a big jump for " + title(table) + " (more than 25%). Make it in smaller steps.";
+      }
+    }
+    return null;
+  }
+
   return { crc32: crc32, frame: frame, template: template, build: build, Link: Link, Ecu: Ecu, decodeConstants: decodeConstants,
            decodeOutputs: decodeOutputs, encodeCells: encodeCells, rawFor: rawFor, count: count, SIZE: SIZE,
-           connectSerial: connectSerial, simPipe: simPipe, pageFromMsq: pageFromMsq };
+           soon: soon, checkChange: checkChange, connectSerial: connectSerial, reopenSerial: reopenSerial, simPipe: simPipe, pageFromMsq: pageFromMsq };
 });

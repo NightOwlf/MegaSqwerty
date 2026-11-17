@@ -33,12 +33,24 @@
   function connectWs() {
     var proto = location.protocol === "https:" ? "wss://" : "ws://";
     ws = new WebSocket(proto + location.host + "/live/" + SID + "/ws?k=" + encodeURIComponent(KEY));
-    ws.onopen = function () { wsOpen = true; pill(); if (ROLE === "car") pushState(); };
+    ws.onopen = function () {
+      wsOpen = true; pill();
+      if (ROLE === "car") {
+        pushState();
+        if (running) { chKey = ""; send({ t: "tables", tables: tables }); }  // a fresh session (server restarted) needs the tune again
+      }
+    };
     ws.onclose = function (e) {
       wsOpen = false; pill();
       if (e.code === 4404) {
-        if (ROLE === "car" && sess && layout) { restartSession(); return; }
-        $(".lt-status").textContent = "This live session has ended (the link is no longer active).";
+        if (ROLE === "car") {
+          if (carFiles) { $(".lt-status").textContent = "Reconnecting the session…"; setTimeout(restartSession, 500); }
+          else $(".lt-status").textContent = "The session needs starting again: choose the project folder (the ECU stays connected).";
+          return;
+        }
+        // the server restarted and the car hasn't started the session again yet: keep trying
+        $(".lt-mode-note").textContent = "Waiting for the car to come back online…";
+        setTimeout(connectWs, 5000);
         return;
       }
       if (e.code === 4000) { toast("This session was opened on another computer; this page stopped sending.", true); return; }
@@ -75,11 +87,11 @@
         if (vals) Object.keys(m.cells).forEach(function (k) { vals[+k] = m.cells[k]; });
         clearPending(m.id, m.table, m.cells);
       }
-      logChange(m); flashCells(m.table, m.cells); renderTable();
+      logChange(m); flashCells(m.table, m.cells); renderTable(); if ((layout.editable || {})[m.table] === "setting") renderSettings();
       if (ROLE === "view" && m.by === "driver") toast("The driver changed " + Object.keys(m.cells).length + " cell(s) in " + title(m.table));
     } else if (m.t === "rejected") { clearPending(m.id); toast("Not changed: " + (m.why || "refused"), true); renderTable(); }
     else if (m.t === "burned") { toast("Burned to the ECU: the changes are now permanent."); state.needBurn = false; renderState(); }
-    else if (m.t === "notice") toast(m.text || "");
+    else if (m.t === "notice") { toast(m.text || ""); $(".lt-mode-note") && ($(".lt-mode-note").textContent = m.text || ""); }
     else if (ROLE === "car" && (m.t === "set" || m.t === "undo" || m.t === "burn")) carRequest(m);
   }
 
@@ -92,6 +104,7 @@
     if (msq) fd.append("msq", msq, msq.name || "CurrentTune.msq");
     if (sess) { fd.append("sid", sess.id); fd.append("car_key", sess.car_key); fd.append("view_key", sess.view_key); fd.append("tune", sess.tune || ""); }
     $(".lt-status").textContent = "Reading the ECU definition…";
+    var resumed = !!(SID && sess && sess.id === SID);
     return fetch("/live/start", { method: "POST", body: fd }).then(function (r) { return r.json(); }).then(function (j) {
       if (j.error) throw new Error(j.error);
       sess = { id: j.id, car_key: j.car_key, view_key: j.view_key, tune: j.tune };
@@ -102,8 +115,10 @@
     }).then(function (l) {
       layout = l; carFiles = files;
       root.classList.add("has-session");
-      renderShare(); renderTablePicker(); connectWs();
-      $(".lt-status").textContent = "Ready. Connect the ECU (TunerStudio must be closed: only one program can use the ECU's USB port).";
+      renderShare(); renderTablePicker();
+      if (!ws || ws.readyState > 1) connectWs();
+      $(".lt-status").textContent = running ? "Session reconnected. ECU connected: " + (state.ecuSignature || "")
+        : "Ready. Connect the ECU (TunerStudio must be closed: only one program can use the ECU's USB port).";
     });
   }
   var carFiles = null;
@@ -162,11 +177,11 @@
   }
   function pollLoop() {
     if (!running || !ecu) return;
-    if (queue.length) return work().then(function () { Promise.resolve().then(pollLoop); });
+    if (queue.length) return work().then(function () { ECU.soon(pollLoop); });
     var started = Date.now();
     ecu.och().then(function (block) {
       och = ECU.decodeOutputs(layout, block, ecu.little);
-      reads++; pushHist(); drawLive();
+      fails = 0; reads++; pushHist(); drawLive();
       var now = Date.now();
       if (now - rateT >= 1000) { state.ecuHz = Math.round(reads * 1000 / (now - rateT)); reads = 0; rateT = now; pill(); }
       if (now - lastSent >= 33) {
@@ -178,12 +193,53 @@
       // ~60 reads a second. With the page in the background Chrome slows timers right down, so there the next
       // read follows straight on (the ECU's own reply time paces it) and only the sending is limited.
       var wait = Math.max(0, 16 - (Date.now() - started));
-      if (document.hidden || !wait) Promise.resolve().then(pollLoop); else setTimeout(pollLoop, wait);
+      if (document.hidden || !wait) ECU.soon(pollLoop); else setTimeout(pollLoop, wait);
     }, function (e) {
+      fails++;
+      if (pipe && pipe.port && (pipe.isDead() || fails >= 3)) return reconnectEcu();
       $(".lt-status").textContent = "Lost the ECU: " + e.message + ". Retrying…";
-      setTimeout(pollLoop, 800);
+      setTimeout(pollLoop, 300);
     });
   }
+  var fails = 0, reconnecting = false;
+  /* The USB link dropped (an ECU reset while cranking, a loose cable): open the same device again as soon as
+     it's back, check it's the same ECU, and re-read the tune (an ECU that restarted lost anything not burned). */
+  function reconnectEcu() {
+    if (reconnecting || !running) return;
+    reconnecting = true;
+    var old = pipe.port;
+    try { pipe.close(); } catch (e) { /* ignore */ }
+    $(".lt-status").textContent = "The USB link to the ECU dropped: reconnecting…";
+    send({ t: "notice", text: "The car's ECU connection dropped for a moment: reconnecting…" });
+    var attempt = function (n) {
+      if (!running) { reconnecting = false; return; }
+      ECU.reopenSerial(old).then(function (pp) {
+        if (!pp) return setTimeout(function () { attempt(n + 1); }, 1000);
+        pipe = pp;
+        ecu = new ECU.Ecu(new ECU.Link(pipe, layout.comms.blockReadTimeout || 3000), layout);
+        return ecu.signature().then(function (sig) {
+          if (layout.comms.signature && sig.trim() !== layout.comms.signature.trim()) throw new Error("a different ECU answered: " + sig);
+          return ecu.readPage();
+        }).then(function (page) {
+          var fresh = ECU.decodeConstants(layout, page, ecu.little), lost = 0;
+          Object.keys(fresh).forEach(function (k) {
+            (fresh[k] || []).forEach(function (v, i) { if (tables[k] && Math.abs(tables[k][i] - v) > 1e-6) lost++; });
+          });
+          tables = fresh;
+          send({ t: "tables", tables: tables });
+          if (lost) {
+            state.needBurn = false; undoStack = [];
+            send({ t: "notice", text: "The ECU restarted: changes that weren't burned are gone (the tables show what it has now)." });
+          } else send({ t: "notice", text: "The car's ECU is back." });
+          reconnecting = false; fails = 0;
+          $(".lt-status").textContent = "ECU reconnected: " + state.ecuSignature;
+          pushState(); renderAll(); pollLoop();
+        });
+      }).catch(function () { setTimeout(function () { attempt(n + 1); }, 1000); });
+    };
+    attempt(0);
+  }
+  if ("serial" in navigator) navigator.serial.addEventListener("connect", function () { if (running && pipe && pipe.isDead && pipe.isDead()) reconnectEcu(); });
 
   /* Every change goes through here, one at a time, between live-data reads. */
   function carRequest(m) {
@@ -193,32 +249,22 @@
     if (why) { send({ t: "rejected", id: m.id, why: why }); return; }
     var mode = modeSel().value;
     if (mode === "off") { send({ t: "rejected", id: m.id, why: "The driver has remote changes turned off." }); return; }
-    if (mode === "ask") return askDriver(m);
+    if (mode === "ask" || (layout.editable || {})[m.table] === "setting") return askDriver(m);  // settings: always asked
     queue.push({ kind: "set", m: m, by: "tuner" });
   }
-  function check(table, cells) {
-    var c = layout.constants[table], vals = tables[table];
-    var isZ = (layout.tables || []).some(function (t) { return t.z === table; });
-    if (!c || !vals || !isZ) return "That isn't a table that can be changed live.";
-    var ks = Object.keys(cells || {});
-    if (!ks.length || ks.length > 64) return "Change between 1 and 64 cells at a time.";
-    var ign = /ign|timing|advance|spark/i.test(table), pct = c.units === "%" || /^ve/i.test(table);
-    for (var i = 0; i < ks.length; i++) {
-      var k = +ks[i], v = +cells[ks[i]], old = vals[k];
-      if (!(k >= 0 && k < vals.length) || !(v === v)) return "That cell isn't in the table.";
-      if ((c.lo != null && v < c.lo - 1e-9) || (c.hi != null && v > c.hi + 1e-9)) return title(table) + " must stay between " + c.lo + " and " + c.hi + ".";
-      if (pct && old > 0 && Math.abs(v / old - 1) > 0.25) return "More than 25% in one step on " + title(table) + ". Make it in smaller steps.";
-      if (ign && v - old > 5) return "More than 5° more timing in one step. Add it in smaller steps.";
-    }
-    return null;
-  }
+  /* What a remote change may do. The car page is the only thing that writes to the ECU, so this is the rule:
+     only what the layout marks editable (tables, curves, settings; never what needs a power cycle, or that
+     sets how the engine is wired, timed, measured or protected), inside the ECU's range, in moderate steps. */
+  function check(table, cells) { return ECU.checkChange(layout, tables, table, cells, STOICH, title); }
   function askDriver(m) {
     var box = $(".lt-ask");
     var c = layout.constants[m.table], vals = tables[m.table], ks = Object.keys(m.cells), big = 0;
     ks.forEach(function (k) { var o = vals[+k]; if (o) big = Math.max(big, Math.abs(m.cells[k] / o - 1) * 100); });
     box.hidden = false;
-    box.innerHTML = "<p><b>The tuner wants to change " + ks.length + " cell" + (ks.length === 1 ? "" : "s") + " in " + esc(title(m.table)) + "</b>" +
-      (big ? " (up to " + big.toFixed(1) + "%)" : "") + ". It goes to the ECU's working memory now, not burned.</p>" +
+    var isSet = (layout.editable || {})[m.table] === "setting";
+    box.innerHTML = "<p><b>The tuner wants to " + (isSet ? "set " + esc(title(m.table)) + " from " + fmt(vals[0], c.digits) + " to " + fmt(m.cells[ks[0]], c.digits) + (c.units ? " " + esc(c.units) : "")
+        : "change " + ks.length + " cell" + (ks.length === 1 ? "" : "s") + " in " + esc(title(m.table))) + "</b>" +
+      (big && !isSet ? " (up to " + big.toFixed(1) + "%)" : "") + ". It goes to the ECU's working memory now, not burned.</p>" +
       '<div class="lt-ask-b"><button class="btn" type="button" data-ask="no">Reject</button><button class="btn primary" type="button" data-ask="yes">Allow</button></div>' +
       '<label class="check sm"><input type="checkbox" data-ask-always><span>Allow from now on (switches to “Allow”)</span></label>';
     var t = setTimeout(function () { finish(false, "The driver didn't answer in time."); }, 30000);
@@ -274,32 +320,39 @@
 
   /* ---------------------------------------------------------------- shared: tables, gauges, graph */
   var curTable = null, sel = {}, rangeMode = false, anchor = null;
-  function title(z) { var t = (layout && layout.tables || []).filter(function (x) { return x.z === z; })[0]; return t ? t.title : z; }
+  function allDefs() { return layout ? (layout.tables || []).concat(layout.curves || []) : []; }
+  function title(z) {
+    var t = allDefs().filter(function (x) { return x.z === z; })[0], c = layout && layout.constants[z];
+    return t && t.title ? t.title : c && c.label ? c.label : z;
+  }
   function usableTables() {
     return (layout && layout.tables || []).filter(function (t) { return tables[t.z] && tables[t.x] && tables[t.y]; });
   }
   function renderTablePicker() {
     var sel2 = $("[data-table]");
     if (!sel2 || !layout) return;
-    var list = (layout.tables || []);
+    var list = (layout.tables || []), curves = (layout.curves || []).filter(function (c) { return c.title; }), ed = layout.editable || {};
     var pick = function (re) { return list.filter(function (t) { return re.test(t.z); })[0]; };
     var first = [pick(/^veTable$/), pick(/^ignitionTable$/), pick(/^lambdaTable$|^afrTable$/)].filter(Boolean);
     var rest = list.filter(function (t) { return first.indexOf(t) < 0; });
-    sel2.innerHTML = first.concat(rest).map(function (t) { return '<option value="' + esc(t.z) + '">' + esc(t.title) + "</option>"; }).join("");
+    var opt = function (t) { return '<option value="' + esc(t.z) + '">' + esc(t.title) + (ed[t.z] ? "" : " (view only)") + "</option>"; };
+    sel2.innerHTML = '<optgroup label="Tables">' + first.concat(rest).map(opt).join("") + "</optgroup>" +
+      (curves.length ? '<optgroup label="Curves">' + curves.map(opt).join("") + "</optgroup>" : "");
     if (!curTable && first[0]) curTable = first[0].z;
     sel2.value = curTable || "";
   }
-  function tableDef() { return (layout && layout.tables || []).filter(function (t) { return t.z === curTable; })[0]; }
+  function tableDef(z) { var want = z || curTable; return allDefs().filter(function (t) { return t.z === want; })[0]; }
   function renderTable() {
     var box = $(".lt-grid"), t = tableDef();
     if (!box) return;
-    if (!t || !tables[t.z]) { box.innerHTML = '<p class="dim">' + (layout ? "Waiting for the tune from the ECU…" : "") + "</p>"; return; }
-    var c = layout.constants[t.z], z = tables[t.z], xs = tables[t.x], ys = tables[t.y], C = xs.length, R = ys.length;
+    if (!t || !tables[t.z] || !tables[t.x]) { box.innerHTML = '<p class="dim">' + (layout ? "Waiting for the tune from the ECU…" : "") + "</p>"; return; }
+    var c = layout.constants[t.z], z = tables[t.z], xs = tables[t.x], ys = t.y ? tables[t.y] : [""], C = xs.length, R = ys.length;
+    $(".lt-ro").hidden = !!(layout.editable || {})[t.z];
     var lo = Infinity, hi = -Infinity;
     z.forEach(function (v) { if (v < lo) lo = v; if (v > hi) hi = v; });
     var d = c.digits == null ? 1 : c.digits, h = [];
     for (var r = R - 1; r >= 0; r--) {
-      h.push("<tr><th>" + bin(ys[r]) + "</th>");
+      h.push("<tr><th>" + (t.y ? bin(ys[r]) : esc(c.units || "")) + "</th>");
       for (var cc = 0; cc < C; cc++) {
         var k = r * C + cc, v = z[k];
         var cls = (sel[k] ? " sel" : "") + (pending[t.z + ":" + k] ? " pend" : "");
@@ -339,7 +392,7 @@
   function cursor() {
     var t = tableDef(), box = $(".lt-grid");
     if (!t || !box || !tables[t.x]) return;
-    var fx = where(tables[t.x], och[t.xch]), fy = where(tables[t.y], och[t.ych]);
+    var fx = where(tables[t.x], och[t.xch]), fy = t.y ? where(tables[t.y], och[t.ych]) : 0;
     if (lastCur != null) { var o = box.querySelector('td[data-k="' + lastCur + '"]'); if (o) o.classList.remove("cur"); }
     lastCur = null;
     if (fx === fx && fy === fy) {
@@ -350,7 +403,7 @@
     $(".lt-tv").textContent = v === v ? fmt(v, c.digits == null ? 1 : c.digits) + (c.units ? " " + c.units : "") : "";
   }
   function interp(t, fx, fy) {
-    var z = tables[t.z], C = tables[t.x].length, R = tables[t.y].length, c0 = Math.floor(fx), r0 = Math.floor(fy);
+    var z = tables[t.z], C = tables[t.x].length, R = t.y ? tables[t.y].length : 1, c0 = Math.floor(fx), r0 = Math.floor(fy);
     var c1 = Math.min(C - 1, c0 + 1), r1 = Math.min(R - 1, r0 + 1), a = fx - c0, b = fy - r0, at = function (r, c) { return z[r * C + c]; };
     return (at(r0, c0) * (1 - a) + at(r0, c1) * a) * (1 - b) + (at(r1, c0) * (1 - a) + at(r1, c1) * a) * b;
   }
@@ -462,6 +515,7 @@
   function requestChange(fn, note) {
     var t = tableDef(), vals = tables[curTable], cells = {};
     if (!t || !vals) return;
+    if (!(layout.editable || {})[curTable]) { toast(title(curTable) + " can't be changed remotely: change it at the car in TunerStudio.", true); return; }
     Object.keys(sel).forEach(function (k) {
       var nv = fn(vals[+k]);
       var d = layout.constants[curTable].digits == null ? 1 : layout.constants[curTable].digits, u = Math.pow(10, d);
@@ -510,6 +564,26 @@
       }
       return;
     }
+    var sg = e.target.closest("[data-setgo]");
+    if (sg) {
+      var li = sg.closest("[data-set]"), name = li.dataset.set, nv = parseFloat(li.querySelector("input").value);
+      if (!(nv === nv)) { li.querySelector("input").focus(); return; }
+      var cells = { 0: nv };
+      if (ROLE === "car") {
+        var why = check(name, cells);
+        if (why) { toast(why, true); return; }
+        queue.push({ kind: "set", m: { table: name, cells: cells }, by: "driver" });
+      } else { var id = ++reqN; pending[name + ":0"] = id; send({ t: "set", id: id, table: name, cells: cells }); toast("Sent: the driver approves settings changes."); }
+      li.querySelector("input").value = "";
+      return;
+    }
+    var tabb = e.target.closest("[data-pane]");
+    if (tabb) {
+      $$("[data-pane]").forEach(function (x) { x.classList.toggle("on", x === tabb); });
+      $(".lt-tablebox").hidden = tabb.dataset.pane !== "tables"; $(".lt-set").hidden = tabb.dataset.pane !== "settings";
+      if (tabb.dataset.pane === "settings") renderSettings();
+      return;
+    }
     var gb = e.target.closest("[data-gadd]");
     if (gb) { pickGauge(); return; }
     gb = e.target.closest("[data-gdel]");
@@ -523,6 +597,7 @@
     else if (e.target.closest("[data-copy-view]")) copy(location.origin + "/live/" + SID + "?k=" + encodeURIComponent(sess.view_key));
     else if (e.target.closest("[data-share-view]")) navigator.share({ title: "Live tuning", url: location.origin + "/live/" + SID + "?k=" + encodeURIComponent(sess.view_key) }).catch(function () { /* cancelled */ });
   });
+  root.addEventListener("input", function (e) { if (e.target.matches(".lt-set input[type=search]")) renderSettings(); });
   root.addEventListener("change", function (e) {
     if (e.target.matches("[data-table]")) { curTable = e.target.value; sel = {}; renderTable(); }
     if (e.target.matches("[data-mode], [data-allow-burn]")) { pushState(); renderState(); }
@@ -584,7 +659,22 @@
     $("[data-view-url]").textContent = location.origin + "/live/" + SID + "?k=" + sess.view_key;
     var sh = $("[data-share-view]"); if (sh) sh.hidden = !navigator.share;
   }
-  function renderAll() { renderTablePicker(); renderTable(); renderState(); drawLive(); }
+  function renderSettings() {
+    var box = $(".lt-set ul"), q = ($(".lt-set input[type=search]") || {}).value || "";
+    if (!box || !layout) return;
+    var words = q.trim().toLowerCase().split(/\s+/).filter(Boolean), ed = layout.editable || {};
+    var names = Object.keys(ed).filter(function (n) { return ed[n] === "setting" && tables[n]; });
+    var rows = names.map(function (n) { return [n, layout.constants[n].label || n]; })
+      .filter(function (r) { var s = (r[1] + " " + r[0]).toLowerCase(); return words.every(function (w) { return s.indexOf(w) >= 0; }); })
+      .sort(function (a, b) { return a[1].localeCompare(b[1]); }).slice(0, 60);
+    box.innerHTML = rows.map(function (r) {
+      var c = layout.constants[r[0]], v = tables[r[0]][0];
+      return '<li data-set="' + esc(r[0]) + '"><span><b>' + esc(r[1]) + '</b> <small class="dim">' + esc(r[0]) + (c.units ? " · " + esc(c.units) : "") +
+        (c.lo != null ? " · " + c.lo + " to " + c.hi : "") + '</small></span><b class="mono">' + fmt(v, c.digits == null ? 2 : c.digits) + "</b>" +
+        '<input type="text" inputmode="decimal" aria-label="New value"><button class="btn sm" type="button" data-setgo>Set</button></li>';
+    }).join("") || '<li class="dim">' + (names.length ? "No setting matches." : "Waiting for the tune from the ECU…") + "</li>";
+  }
+  function renderAll() { renderTablePicker(); renderTable(); renderState(); drawLive(); renderSettings(); }
 
   /* ---------------------------------------------------------------- start */
   if (ROLE === "car" && !("serial" in navigator)) root.classList.add("no-serial");

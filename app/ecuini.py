@@ -127,15 +127,18 @@ def parse(text: str, defined: set[str] | None = None) -> dict:
     outputs: dict = {}
     datalog: dict = {}
     tables: dict = {}
+    curves: dict = {}
+    labels: dict = {}
+    power_cycle: set = set()
     page = 1
-    cur_table = None
+    cur_table = cur_curve = None
     for raw in lines:
         line = _strip(raw)
         if not line:
             continue
         m = re.match(r"^\[(\w+)\]$", line)
         if m:
-            section, cur_table = m.group(1), None
+            section, cur_table, cur_curve = m.group(1), None, None
             continue
         if "=" not in line:
             continue
@@ -207,6 +210,23 @@ def parse(text: str, defined: set[str] | None = None) -> dict:
                 f = _fields(rhs)
                 if len(f) >= 2:
                     datalog.setdefault(f[0], _unq(f[1]))  # the first label is the one logs use
+        elif section == "ConstantsExtensions":
+            if key == "requiresPowerCycle":
+                power_cycle.add(rhs.strip())
+        elif section == "CurveEditor":
+            f = _fields(rhs)
+            if key == "curve" and len(f) >= 2:
+                cur_curve = f[0]
+                curves[cur_curve] = {"id": f[0], "title": _unq(f[1]), "x": None, "xch": None, "y": None}
+            elif cur_curve and key == "xBins":
+                curves[cur_curve]["x"] = f[0]
+                curves[cur_curve]["xch"] = f[1] if len(f) > 1 else None
+            elif cur_curve and key == "yBins" and curves[cur_curve]["y"] is None:
+                curves[cur_curve]["y"] = f[0]
+        elif key == "field":  # dialog fields: the names people know settings by
+            f = _fields(rhs)
+            if len(f) >= 2 and f[1] and re.match(r"^\w+$", f[1]):
+                labels.setdefault(f[1], _unq(f[0]).strip())
         elif section == "TableEditor":
             f = _fields(rhs)
             if key == "table" and len(f) >= 3:
@@ -227,17 +247,57 @@ def parse(text: str, defined: set[str] | None = None) -> dict:
             good[tid] = t
     if not comms.get("pageSizes"):
         raise IniError("This doesn't look like a TunerStudio ECU definition (no pageSize).")
-    return {"comms": comms, "constants": constants, "outputs": outputs, "datalog": datalog, "tables": good}
+    good_curves = {cid: c for cid, c in curves.items()
+                   if c["x"] in constants and c["y"] in constants and constants[c["x"]]["kind"] == "array"
+                   and constants[c["y"]]["kind"] == "array"}
+    return {"comms": comms, "constants": constants, "outputs": outputs, "datalog": datalog, "tables": good,
+            "curves": good_curves, "labels": labels, "powerCycle": sorted(power_cycle)}
+
+
+# Settings a remote tuner may not change, whatever the driver allows: what only takes effect after a power cycle
+# (the ECU's own list), and what decides how the engine is wired, timed, measured or protected, where one wrong
+# number can hurt the engine at once. Those are changed at the car, in TunerStudio.
+NOT_REMOTE = re.compile(
+    r"pin|port|freq|trigger|cylinder|firing|displacement|engineType|injectionMode|ignitionMode|twoStroke|"
+    r"injector(Flow|.*Lag|.*Dead)|stoich|sensor|calib|tps.*(Min|Max)$|Voltage$|offset|angle|"
+    r"limit|cut|protect|overboost|maxBoost|rpmHard|revLimit|knock|baud|can[A-Z]|serial|lua|script|"
+    r"Name$|enable|use[A-Z]|is[A-Z]|injector_?flow|tempC|resistance|bias|bench|dwell|maf|vr\d|vrThreshold|"
+    r"mapSampl|mapAverag|dead|lag", re.I)
+
+
+def remote_kind(name: str, c: dict, power_cycle: set) -> str | None:
+    """How a remote tuner may change a constant: "table"/"curve" values, a "setting", or None (not at all)."""
+    if name in power_cycle or NOT_REMOTE.search(name):
+        return None
+    if c["kind"] == "scalar" and c.get("lo") is not None and c.get("hi") is not None:
+        return "setting"
+    return None
 
 
 def layout_for_live(ini: dict) -> dict:
     """What the live page needs: comms, the tables (with their axes and z constants), and the output channels
     that the log knows by name, labelled like a datalog so the usual channel roles apply."""
     c = ini["constants"]
-    keep = {}
+    power = set(ini.get("powerCycle") or [])
+    keep, editable = {}, {}
     for t in ini["tables"].values():
         for k in ("x", "y", "z"):
             keep[t[k]] = c[t[k]]
+        if t["z"] not in power and not NOT_REMOTE.search(t["z"]):
+            editable[t["z"]] = "table"
+    curves = []
+    for cv in (ini.get("curves") or {}).values():
+        keep[cv["x"]], keep[cv["y"]] = c[cv["x"]], c[cv["y"]]
+        if cv["y"] not in power and cv["y"] not in editable and not NOT_REMOTE.search(cv["y"]):
+            editable[cv["y"]] = "curve"
+        curves.append({"id": cv["id"], "title": cv["title"], "x": cv["x"], "xch": cv["xch"], "y": None, "ych": None,
+                       "z": cv["y"], "curve": True})
+    labels = ini.get("labels") or {}
+    for name, k in c.items():
+        kind = remote_kind(name, k, power)
+        if kind and name not in keep:
+            keep[name] = dict(k, label=labels.get(name, ""))
+            editable[name] = kind
     outs = {}
     for name, o in ini["outputs"].items():
         label = ini["datalog"].get(name)
@@ -248,4 +308,8 @@ def layout_for_live(ini: dict) -> dict:
         for ch in (t["xch"], t["ych"]):
             if ch and ch in ini["outputs"] and ch not in outs:
                 outs[ch] = dict(ini["outputs"][ch], label=ini["datalog"].get(ch) or ch)
-    return {"comms": ini["comms"], "constants": keep, "outputs": outs, "tables": list(ini["tables"].values())}
+    for t in curves:
+        if t["xch"] and t["xch"] in ini["outputs"] and t["xch"] not in outs:
+            outs[t["xch"]] = dict(ini["outputs"][t["xch"]], label=ini["datalog"].get(t["xch"]) or t["xch"])
+    return {"comms": ini["comms"], "constants": keep, "outputs": outs, "tables": list(ini["tables"].values()),
+            "curves": curves, "editable": editable, "powerCycle": sorted(power)}

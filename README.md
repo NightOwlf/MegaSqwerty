@@ -401,6 +401,15 @@ a phone or computer to watch it run and change the tables, sent to the ECU in mo
   untouched; the tuner's screen redraws every frame and shows updates per second and the round trip
   (*Live · 30/s · 85 ms*). **＋ Gauge** adds any of the ECU's live channels, and the car streams it. Keep
   the car page open; it keeps the laptop's screen awake while the ECU is connected.
+- **What the tuner can change**: every table and curve (target AFR, VE, ignition, boost, warm-up, cranking…)
+  and about 300 settings (searchable by their TunerStudio names; the driver approves every settings change).
+  Never remotely: what the ECU marks `requiresPowerCycle`, or what sets how the engine is wired, timed,
+  measured or protected (pins, trigger, cylinders, injector flow and dead time, sensors, dwell, rev and boost
+  limits, knock). The rules are `ECU.checkChange` in `ecu.js`, tested in `tests/js/ecu.test.js`.
+- **Target AFR guard rails**: 10.0 to 18.0, at most 1.0 AFR per step, never leaner than 15.0 above 100 kPa.
+- **On the road**: a phone hotspot works like any internet; dropouts reconnect every 2 s with the ECU kept
+  connected; if the USB link drops while cranking, the page opens the ECU again by itself and re-reads the
+  tune (telling the tuner if unburned changes were lost); a server restart is recovered by both pages.
 - **Safety, decided at the car**: remote changes *Off*, *Ask me before each change* (the default: the
   driver taps Allow or Reject, refused after 30 s) or *Allow*. The car page is the only thing that writes to
   the ECU, and checks every change first: only the tables' values, inside the ECU's range, at most 25% per

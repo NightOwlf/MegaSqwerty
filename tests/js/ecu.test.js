@@ -67,3 +67,39 @@ test("a garbled reply is caught, not used", async () => {
   const ecu = new ECU.Ecu(new ECU.Link(pipe, 500), layout);
   await assert.rejects(ecu.signature(), /garbled/);
 });
+
+test("what a remote tuner may change, and by how much", () => {
+  const L = {
+    constants: {
+      veTable: { kind: "array", type: "U16", rows: 2, cols: 2, units: "%", lo: 0, hi: 999, digits: 1 },
+      ignitionTable: { kind: "array", type: "S16", rows: 2, cols: 2, units: "deg", lo: -20, hi: 90, digits: 1 },
+      lambdaTable: { kind: "array", type: "U08", rows: 2, cols: 2, units: "afr", lo: 0, hi: 25, digits: 1 },
+      rpmBins: { kind: "array", rows: 1, cols: 2 }, loadBins: { kind: "array", rows: 1, cols: 2 },
+      boostTable: { kind: "array", rows: 2, cols: 2, units: "%", lo: 0, hi: 100 },
+      idleP: { kind: "scalar", units: "", lo: 0, hi: 10, digits: 2 },
+      rpmHardLimit: { kind: "scalar", units: "rpm", lo: 0, hi: 20000 }
+    },
+    tables: [{ z: "veTable", x: "rpmBins", y: "loadBins" }, { z: "ignitionTable", x: "rpmBins", y: "loadBins" },
+             { z: "lambdaTable", x: "rpmBins", y: "loadBins" }, { z: "boostTable", x: "rpmBins", y: "loadBins" }],
+    editable: { veTable: "table", ignitionTable: "table", lambdaTable: "table", boostTable: "table", idleP: "setting" }
+  };
+  const T = { veTable: [80, 80, 80, 80], ignitionTable: [20, 20, 20, 20], lambdaTable: [14.7, 14.7, 12.0, 12.0],
+              rpmBins: [1000, 2000], loadBins: [50, 150], boostTable: [40, 40, 0, 0], idleP: [1.0], rpmHardLimit: [7000] };
+  const ok = (t, c) => ECU.checkChange(L, T, t, c);
+  assert.strictEqual(ok("veTable", { 0: 95 }), null);                       // +18.75%: fine
+  assert.match(ok("veTable", { 0: 110 }), /25%/);                           // +37.5%: smaller steps
+  assert.strictEqual(ok("ignitionTable", { 1: 25 }), null);                  // +5°
+  assert.match(ok("ignitionTable", { 1: 26 }), /5°/);                        // +6°: no
+  assert.strictEqual(ok("ignitionTable", { 1: 5 }), null);                   // pulling timing is always allowed
+  assert.strictEqual(ok("lambdaTable", { 0: 13.8 }), null);                  // AFR: 0.9 step, low load
+  assert.match(ok("lambdaTable", { 0: 13.5 }), /1\.0 AFR/);                  // 1.2 step: no
+  assert.strictEqual(ok("lambdaTable", { 2: 12.9 }), null);                  // richer/leaner within 1.0, in boost, under 15
+  assert.match(ECU.checkChange(L, Object.assign({}, T, { lambdaTable: [14.7, 14.7, 14.5, 14.5] }), "lambdaTable", { 2: 15.3 }), /boost/);
+  assert.match(ok("lambdaTable", { 0: 9.5 }), /10\.0 and 18\.0|1\.0 AFR/);
+  assert.match(ok("rpmHardLimit", { 0: 9000 }), /can't be changed remotely/); // protections: never remote
+  assert.strictEqual(ok("idleP", { 0: 1.2 }), null);
+  assert.match(ok("idleP", { 0: 11 }), /between 0 and 10/);
+  assert.match(ok("boostTable", { 0: 60 }), /big jump/);                     // 40 -> 60 duty: smaller steps
+  assert.strictEqual(ok("boostTable", { 0: 48 }), null);
+  assert.match(ok("veTable", {}), /1 and 64/);
+});
