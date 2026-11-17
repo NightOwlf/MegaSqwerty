@@ -37,13 +37,19 @@
     lamMax: 1.25,
     maxDuty: 90,       // % injector duty above which the injectors can't follow the table
     skipIdle: false,
-    minRpm: 400
+    minRpm: 400,
+    // Windows to tune inside (null = no limit), like TunerStudio's filters: only this RPM / load / throttle.
+    rpmLo: null, rpmHi: null, loadLo: null, loadHi: null, tpsLo: null, tpsHi: null,
+    strength: 100,     // % of the worked-out correction to apply (less, for a cautious first pass)
+    locked: null       // cell indexes that must not change: their neighbours take up the difference
   };
-  var REASONS = ["used", "cold", "transient", "decel", "sensor", "idle", "duty", "outside", "nodata", "implausible"];
+  var REASONS = ["used", "cold", "transient", "decel", "sensor", "idle", "duty", "outside", "nodata", "implausible",
+                 "section", "filter"];
   var LABELS = {
     used: "Used", cold: "Engine cold", transient: "Throttle/MAP moving", decel: "Fuel cut or decel",
     sensor: "Wideband not reading", idle: "Idle (separate idle VE)", duty: "Injectors maxed",
-    outside: "Off the table", nodata: "Missing data", implausible: "Implausible reading"
+    outside: "Off the table", nodata: "Missing data", implausible: "Implausible reading",
+    section: "Outside the chosen sections", filter: "Your filters"
   };
 
   function finite(v) { return v === v && v !== Infinity && v !== -Infinity; }
@@ -116,6 +122,10 @@
     // when the tune attached isn't it. Changes are limited relative to this, not to a file that never ran.
     var bRan = new Float64Array(N), valRan = Float64Array.from(table.z);
     var mism = { n: 0, sum: 0, logged: 0 };
+    var errSum = new Float64Array(N), errW = new Float64Array(N);  // mixture error each cell saw, before the fix
+    var lockedSet = new Uint8Array(N);
+    (o.locked || []).forEach(function (k) { if (k >= 0 && k < N) lockedSet[k] = 1; });
+    var within = function (v, lo, hi) { return (lo == null || !(v < lo)) && (hi == null || !(v > hi)); };
     var prior = 0.01;  // a whisker of the tune's own value, so cells with no samples stay put
     var stats = { total: 0 }, logs = [];
     REASONS.forEach(function (r) { stats[r] = 0; });
@@ -127,7 +137,9 @@
     }
 
     /* Start on a log. d: {T, rpm, load, lam, tgt, ve, trim, trimMode, clt, tps, map, fuel, ae, dfco, lamOk,
-       idle, duty} as arrays (λ already divided to lambda), any but T/rpm/load/lam/tgt may be missing. */
+       idle, duty} as arrays (λ already divided to lambda), any but T/rpm/load/lam/tgt may be missing.
+       Optional masks: d.inSection (1 = inside the sections chosen to tune) and d.userOk (1 = passes the
+       user's own filters). */
     function begin(d) {
       var T = d.T, n = T.length, i;
       var lamLo = Infinity, lamHi = -Infinity;
@@ -177,12 +189,15 @@
         }
 
         var reason = 0;
-        if (!(rpm >= o.minRpm) || !finite(d.load[i]) || j[i] < 0) reason = 8;
+        if (d.inSection && !d.inSection[i]) reason = 10;
+        else if (!(rpm >= o.minRpm) || !finite(d.load[i]) || j[i] < 0) reason = 8;
         else if (d.clt && d.clt[i] < o.minClt) reason = 1;
         else if (cut || t - lastDecel < o.decelHold) reason = 3;
         else if (t - lastTrans < o.holdoff) reason = 2;
         else if (o.skipIdle && d.idle && d.idle[i] > 0) reason = 5;
         else if (d.duty && d.duty[i] > o.maxDuty) reason = 6;
+        else if ((d.userOk && !d.userOk[i]) || !within(rpm, o.rpmLo, o.rpmHi) || !within(d.load[i], o.loadLo, o.loadHi) ||
+                 (d.tps && !within(d.tps[i], o.tpsLo, o.tpsHi))) reason = 11;
         why[i] = reason;
       }
       log = { d: d, n: n, why: why, j: j, ok: okMask, lag: lag, measured: measured, rpmMed: rpmMed };
@@ -237,6 +252,7 @@
         if (w <= 0) continue;
         var cp = corner[p];
         hits[cp] += s * w;
+        errSum[cp] += s * w * (lam / tgt - 1); errW[cp] += s * w;
         val[cp] += s * w / (hits[cp] + prior) * err;
         valRan[cp] += s * w / (hits[cp] + prior) * errRan;
         b[cp] += s * w * want;
@@ -250,7 +266,7 @@
     /* The value a cell may show: a cell with less than minData seconds of data only moves part of the way
        (in proportion), almost none at all moves not at all, and nothing moves more than maxChange. */
     function limited(k, v, ran) {
-      if (hits[k] < o.minData * 0.1) return base[k];
+      if (lockedSet[k] || hits[k] < o.minData * 0.1) return base[k];
       var authority = Math.min(1, hits[k] / o.minData);
       var lim = Math.abs(ran) * o.maxChange / 100;
       v = base[k] + (v - base[k]) * authority;
@@ -259,8 +275,9 @@
     function current(k) { return limited(k, val[k], valRan[k]); }
 
     /* Least squares through the ECU's interpolation: A x = rhs, plus a whisker of the tune and the smoothing. */
-    function solve(rhsVec, start, smooth) {
+    function solve(rhsVec, start, smooth, hold) {
       var x = Float64Array.from(start), k, it, m;
+      if (hold) for (k = 0; k < N; k++) if (lockedSet[k]) x[k] = base[k];  // locked: held, so the rest fit around it
       var smoothW = new Float64Array(N * 4);  // right, left, up, down neighbour pull
       var nb = [[0, 1], [0, -1], [1, 0], [-1, 0]];
       for (k = 0; k < N; k++) {
@@ -274,6 +291,7 @@
       for (it = 0; it < 600; it++) {
         var moved = 0;
         for (k = 0; k < N; k++) {
+          if (hold && lockedSet[k]) continue;
           var diag = A[k * 9 + 4] + prior, rhs = rhsVec[k] + prior * base[k];
           var rk = Math.floor(k / C), ck = k % C;
           for (m = 0; m < 9; m++) {
@@ -299,12 +317,13 @@
     /* Solve the whole table from every sample. -> {values, changed: [{i, from, to, pct, hits}], ...} */
     function finish() {
       // what ran is rebuilt exactly (no smoothing): it's a record of the ECU's table, not a measurement
-      var x = solve(b, val, o.smooth), ran = solve(bRan, valRan, 0), k;
+      var x = solve(b, val, o.smooth, true), ran = solve(bRan, valRan, 0, false), k;
       var digits = Math.max(0, Math.min(4, table.d == null ? 1 : table.d)), unit = Math.pow(10, digits);
       var values = new Array(N), changed = [];
       for (k = 0; k < N; k++) {
         var rk = hits[k] >= o.minData * 0.1 ? ran[k] : base[k];
-        var v = Math.round(limited(k, x[k], rk) * unit) / unit;
+        var full = limited(k, x[k], rk), str = Math.max(0, Math.min(100, o.strength)) / 100;
+        var v = Math.round((base[k] + (full - base[k]) * str) * unit) / unit;
         values[k] = v;
         val[k] = v;
         valRan[k] = rk;
@@ -314,7 +333,7 @@
         }
       }
       return { values: values, changed: changed, stats: stats, hits: hits, logs: logs, ran: Array.from(valRan),
-               mismatch: mismatch() };
+               mismatch: mismatch(), error: Array.prototype.map.call(errW, function (w, q) { return w > 0 ? errSum[q] / w * 100 : NaN; }) };
     }
 
     /* How far the attached tune's VE is from what the ECU logged running: a different tune if it's large. */
@@ -326,7 +345,9 @@
       return out;
     }
 
-    return { begin: begin, step: step, finish: finish, current: current, hits: hits, base: base, stats: stats,
+    /* The average mixture error a cell saw, in % (+ lean, − rich), NaN where it saw nothing. */
+    function error(k) { return errW[k] > 0 ? errSum[k] / errW[k] * 100 : NaN; }
+    return { begin: begin, step: step, finish: finish, current: current, hits: hits, base: base, stats: stats, error: error,
              mismatch: mismatch, ran: function (k) { return valRan[k]; },
              summary: summary, opts: o, logs: logs, cells: N };
   }

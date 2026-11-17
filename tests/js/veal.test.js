@@ -146,3 +146,32 @@ function worst(res) {
   console.log("ok - a tune that didn't run is detected (" + res.mismatch.toFixed(0) + "% off) and the result is still right");
 }
 console.log("all VE Analyze tests passed");
+
+// 10. Only the chosen sections of the log are used, and only inside the user's filters.
+{
+  const log = makeLog();
+  const n = log.T.length, half = new Uint8Array(n);
+  for (let i = 0; i < n / 2; i++) half[i] = 1;
+  log.inSection = half;
+  const { res } = run(log, { lag: 0.15 });
+  assert(res.stats.section > n * 0.45 && res.stats.section < n * 0.55, "half the log is outside the section");
+  const log2 = makeLog();
+  const { e, res: r2 } = run(log2, { lag: 0.15, rpmLo: 1500, rpmHi: 3000 });
+  assert(r2.stats.filter > 0, "samples outside the RPM window are filtered");
+  r2.changed.forEach(c => assert(X[c.i % C] >= 1000 && X[c.i % C] <= 3500, "only cells near the RPM window change, not " + X[c.i % C]));
+  assert(Number.isFinite(e.error(3 * C + 3)), "a cell with data reports its mixture error");
+  console.log("ok - sections and filters limit what is tuned");
+}
+
+// 11. Locked cells never move; strength scales the correction.
+{
+  const locked = [2 * C + 2, 4 * C + 4, 5 * C + 3];
+  const { res } = run(makeLog(), { lag: 0.15, locked });
+  locked.forEach(k => assert.strictEqual(res.values[k], tune[k], "locked cell " + k + " stayed at the tune's value"));
+  assert(!res.changed.some(c => locked.includes(c.i)), "locked cells are not reported as changed");
+  const full = run(makeLog(), { lag: 0.15 }).res, halfway = run(makeLog(), { lag: 0.15, strength: 50 }).res;
+  const k = full.changed.reduce((a, c) => (Math.abs(c.pct) > Math.abs(a.pct) ? c : a)).i;
+  const want = tune[k] + (full.values[k] - tune[k]) / 2;
+  assert(Math.abs(halfway.values[k] - want) <= 0.11, "50% strength goes half way: " + halfway.values[k] + " vs " + want);
+  console.log("ok - locked cells hold and strength scales the change");
+}

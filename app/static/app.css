@@ -1312,3 +1312,33 @@ body.page-viewer .main { max-width: none; padding-block: 8px 12px; padding-inlin
   .lv-save { gap: 4px; }
   .lv-auto span { font-size: 11.5px; }
 }
+
+/* ---------- log viewer: sections, filters, locks ---------- */
+.lv-secbar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 6px; padding: 5px 8px; border: 1px solid rgba(255, 196, 0, .55); border-radius: 4px; background: linear-gradient(rgba(255, 196, 0, .08), rgba(255, 196, 0, .08)), var(--win); font-size: 12.5px; }
+.lv-secbar[hidden] { display: none; }
+.lv-secbar > b { margin-right: 2px; }
+.lv-chip { display: inline-flex; align-items: stretch; border: 1px solid rgba(255, 196, 0, .7); border-radius: 12px; overflow: hidden; font-size: 12px; }
+.lv-chip button { padding: 2px 8px; border: 0; background: rgba(255, 196, 0, .16); color: var(--text); font: inherit; cursor: pointer; }
+.lv-chip button + button { padding: 2px 7px; border-left: 1px solid rgba(255, 196, 0, .5); font-weight: 700; }
+.lv-btns .lv-secbtn.on { background: linear-gradient(#ffd54a, #e0a800); border-color: #c79200; color: #1b1400; }
+.lv.sel-mode .lv-pane canvas { cursor: col-resize; touch-action: pan-y pinch-zoom; }
+.lv.tab-ve .lv-secbar { order: -1; }
+.lv-tt td.vx-lock { background-image: repeating-linear-gradient(45deg, rgba(0, 0, 0, .28) 0 2px, transparent 2px 6px) !important; }
+.lv-opt-h { margin: 10px 0 0; color: var(--muted); font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.lv-opt2 { grid-template-columns: 1fr 64px 64px; }
+.lv-cf { display: grid; gap: 4px; margin: 6px 0; }
+.lv-cf-row { display: grid; grid-template-columns: auto minmax(0, 1fr) 48px 64px 26px; align-items: center; gap: 4px; }
+.lv-cf-row span { color: var(--muted); font-size: 12px; }
+.lv-cf-row .lv-pick { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.lv-cf-row select, .lv-cf-row input { min-height: 28px; padding: 0 4px; border: 1px solid var(--line-2); border-radius: 4px; background: var(--field); color: var(--text); font: 12.5px var(--mono); }
+.lv-cf-x { min-height: 28px; border: 1px solid var(--btn-line); border-radius: 4px; background: var(--btn-2); color: var(--text); font-weight: 700; cursor: pointer; }
+@media (max-width: 759px) {
+  .lv-secbar .btn.sm { min-height: 34px; }
+  .lv-btns .lv-secbtn { min-width: 0; }
+}
+.lv-ovrow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: -1px 0 5px; font-size: 12px; color: var(--muted); }
+.lv-ovsel { height: 26px; padding: 0 4px; border: 1px solid var(--btn-line); border-radius: 4px; background: var(--btn-2); color: var(--text); font: inherit; font-size: 12px; }
+.lv-ovnote { font-size: 11.5px; }
+@media (max-width: 759px) { .lv-ovsel { height: 32px; } }
+.lv-save { flex-wrap: wrap; }
+.lv-ve-side { min-width: 0; overflow-wrap: anywhere; }

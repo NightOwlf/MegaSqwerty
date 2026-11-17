@@ -52,6 +52,8 @@
   var store = {};            // channel index -> {v: Float32Array, pyr: [...]} once loaded, or a Promise while loading
   var panes = [], paneCount = 3, watch = [];
   var view = { t0: 0, t1: 1 }, cur = 0;
+  // Sections of the log chosen for VE Analyze (seconds), like a tuner cutting a log into pulls.
+  var sections = [], selMode = false, selDrag = null, secStart = null;
   var playing = false, speed = 1, playT = 0, lastFrame = 0;
   var tab = "graphs", dirty = false, scatterDirty = true;
   var sc = { x: -1, y: -1, z: -1 };
@@ -292,6 +294,64 @@
     for (var i = 0; i < steps.length; i++) if (span / steps[i] <= 10) return steps[i];
     return 7200;
   }
+  function drawSections(ctx, H, kx, t0) {
+    var list = sections.slice();
+    if (selDrag) list.push([Math.min(selDrag.a, selDrag.b), Math.max(selDrag.a, selDrag.b)]);
+    if (secStart != null) list.push([secStart, secStart]);
+    if (!list.length) return;
+    ctx.save();
+    list.forEach(function (r) {
+      var x0 = (r[0] - t0) * kx, x1 = (r[1] - t0) * kx;
+      ctx.fillStyle = "rgba(255, 196, 0, .13)"; ctx.fillRect(x0, 0, Math.max(1, x1 - x0), H);
+      ctx.strokeStyle = "rgba(255, 196, 0, .8)"; ctx.lineWidth = 1; ctx.beginPath();
+      ctx.moveTo(Math.round(x0) + 0.5, 0); ctx.lineTo(Math.round(x0) + 0.5, H);
+      ctx.moveTo(Math.round(x1) + 0.5, 0); ctx.lineTo(Math.round(x1) + 0.5, H); ctx.stroke();
+    });
+    ctx.restore();
+  }
+  function addSection(a, b) {
+    a = Math.max(tMin, Math.min(a, b)); b = Math.min(tMax, Math.max(a, b));
+    if (b - a < 0.2) return;
+    var all = sections.concat([[a, b]]).sort(function (p, q) { return p[0] - q[0]; }), out = [];
+    all.forEach(function (r) {  // overlapping sections merge
+      var last = out[out.length - 1];
+      if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]); else out.push([r[0], r[1]]);
+    });
+    sections = out;
+    sectionsChanged();
+  }
+  function sectionsChanged() { renderSections(); invalidate(); saveSoon(); refreshOverlays(); }
+  function secLen() { return sections.reduce(function (s, r) { return s + r[1] - r[0]; }, 0); }
+  function renderSections() {
+    var bar = $(".lv-secbar"), btn = $('[data-lv="sec"]');
+    if (btn) btn.classList.toggle("on", selMode);
+    root.classList.toggle("sel-mode", selMode);
+    if (!bar) return;
+    bar.hidden = !sections.length && !selMode && secStart == null;
+    var span = tMax - tMin > 600;
+    bar.innerHTML = '<b>Sections to tune</b>' +
+      (sections.length ? sections.map(function (r, i) {
+        return '<span class="lv-chip mono"><button type="button" data-sec-go="' + i + '" title="Show this section">' + fmtT(r[0], span ? 700 : 60) + "–" + fmtT(r[1], span ? 700 : 60) +
+          '</button><button type="button" data-sec-del="' + i + '" aria-label="Remove this section">×</button></span>';
+      }).join("") + '<span class="dim mono">' + secLen().toFixed(1) + " s of " + (tMax - tMin).toFixed(0) + " s</span>"
+        : '<span class="dim">' + (selMode ? "Drag across a graph to choose a section (or mark start and end at the cursor)." : "Whole log") + "</span>") +
+      '<span class="st-grow"></span>' +
+      '<button type="button" class="btn sm" data-sec="start" title="Mark where a section starts, at the cursor">⟦ Start</button>' +
+      '<button type="button" class="btn sm" data-sec="end" title="Mark where it ends, at the cursor">End ⟧</button>' +
+      '<button type="button" class="btn sm" data-sec="view" title="Add what\'s on screen as a section">+ On screen</button>' +
+      (sections.length ? '<button type="button" class="btn sm" data-sec="clear">Clear</button>' +
+        (tab !== "ve" ? '<button type="button" class="btn sm primary" data-sec="tune">Tune these ▶</button>' : "") : "");
+  }
+  function inSections(Tarr) {
+    if (!sections.length) return null;
+    var m = new Uint8Array(Tarr.length), r = 0;
+    for (var i = 0; i < Tarr.length; i++) {
+      var t = Tarr[i];
+      while (r < sections.length && t > sections[r][1]) r++;
+      m[i] = r < sections.length && t >= sections[r][0] ? 1 : 0;
+    }
+    return m;
+  }
   function drawMarkers(ctx, W, H, kx, t0, t1, label) {
     if (!idx.markers || !idx.markers.length) return;
     ctx.save();
@@ -320,6 +380,7 @@
     }
     for (var g = 1; g < 4; g++) { ctx.moveTo(0, Math.round(H * g / 4) + 0.5); ctx.lineTo(W, Math.round(H * g / 4) + 0.5); }
     ctx.stroke();
+    drawSections(ctx, H, kx, view.t0);
     drawMarkers(ctx, W, H, kx, view.t0, view.t1, last);
 
     var i0 = Math.max(0, lower(view.t0) - 1), i1 = Math.min(N - 1, lower(view.t1) + 1);
@@ -438,6 +499,7 @@
         trace(ctx, d, 0, N - 1, kx, function (v) { return H - 3 - (v - m.lo) / range * (H - 6); }, W, tMin);
       }
     }
+    drawSections(ctx, H, kx, tMin);
     drawMarkers(ctx, W, H, kx, tMin, tMax, false);
     var x0 = (view.t0 - tMin) * kx, x1 = (view.t1 - tMin) * kx;
     ctx.fillStyle = "rgba(53,116,240,.28)"; ctx.fillRect(x0, 0, Math.max(2, x1 - x0), H);
@@ -506,6 +568,10 @@
     return v.toFixed(a >= 100 ? 0 : Math.min(d, a >= 10 ? 1 : 2));
   }
   function binText(v) { return Math.abs(v) >= 100 || v === Math.round(v) ? String(Math.round(v)) : v.toFixed(1); }
+  // Cells locked against VE Analyze, by table name (kept in this browser across tunes).
+  var locks = (function () { try { return JSON.parse(localStorage.getItem("msq.lv.locks") || "{}") || {}; } catch (e) { return {}; } })();
+  function isLocked(t, k) { return !!(locks[t.name] && locks[t.name][k]); }
+  function saveLocks() { try { localStorage.setItem("msq.lv.locks", JSON.stringify(locks)); } catch (e) { /* ignore */ } }
   function valueAt(t, k) { var e = edits[t.name]; return e && k in e ? e[k] : t.z[k]; }
   function edited(t, k) { var e = edits[t.name]; return !!(e && k in e); }
   function range(t) {
@@ -712,7 +778,18 @@
       var td = self.cells[k];
       if (!td) return;
       var v = self.opts.live ? self.opts.live(k) : valueAt(t, k), bg, text = cellText(v, t.d);
-      if (self.mode === "change") {
+      if (self.mode === "ov" && self.opts.ov) {
+        var ov = self.opts.ov[k], kind = self.opts.ovKind;
+        if (!(ov === ov)) { bg = "#3a3d42"; text = ""; }
+        else if (kind === "time") {
+          var mxT = Math.max.apply(null, self.opts.ov.filter(function (q) { return q === q; })) || 1, f = Math.log(1 + ov) / Math.log(1 + mxT);
+          bg = "rgb(" + Math.round(215 - 175 * f) + "," + Math.round(230 - 120 * f) + "," + Math.round(255 - 40 * f) + ")";
+          text = ov >= 10 ? ov.toFixed(0) : ov >= 0.05 ? ov.toFixed(1) : "";
+        } else if (kind === "knock") {
+          if (ov > 0.05) { var kf = Math.min(1, ov / 4); bg = "rgb(255," + Math.round(200 - 160 * kf) + "," + Math.round(170 - 140 * kf) + ")"; text = ov.toFixed(1); }
+          else { bg = "#b9e6b4"; text = ""; }
+        } else { bg = diverge(ov, 10); text = (ov > 0 ? "+" : "") + ov.toFixed(Math.abs(ov) >= 10 ? 0 : 1); }
+      } else if (self.mode === "change") {
         var b0 = self.opts.base ? self.opts.base[k] : t.p ? t.p[k] : t.z[k];  // against the original tune
         var pct = b0 ? (v / b0 - 1) * 100 : 0;
         bg = diverge(pct, 15); text = Math.abs(pct) < 0.05 ? "" : (pct > 0 ? "+" : "") + pct.toFixed(Math.abs(pct) >= 10 ? 0 : 1);
@@ -720,6 +797,9 @@
         var h = info.hits(k);
         bg = h > 0 ? "rgb(" + [0, 1, 2].map(function () { return Math.round(235 - Math.min(1, h / 3) * 150); }).join(",") + ")" : "#3a3d42";
         text = h >= 0.01 ? h.toFixed(h >= 10 ? 0 : 1) : "";
+      } else if (self.mode === "err" && info) {
+        var er = info.err(k);  // + lean (wanted more fuel), − rich
+        bg = er === er ? diverge(er, 10) : "#3a3d42"; text = er === er ? (er > 0 ? "+" : "") + er.toFixed(Math.abs(er) >= 10 ? 0 : 1) : "";
       } else if (self.mode === "ran" && info) {
         v = info.ran(k); text = cellText(v, t.d);
         bg = heat(rg[1] > rg[0] ? (v - rg[0]) / (rg[1] - rg[0]) : 0.5);
@@ -729,6 +809,7 @@
       td.style.background = bg;
       td.textContent = text;
       td.classList.toggle("vx-ed", !self.opts.live && edited(t, k));
+      td.classList.toggle("vx-lock", isLocked(t, k));
       // an edited copy: mark the cells that differ from the tune it was edited from
       var was = t.p && !self.opts.live ? t.p[k] : null, diff = was != null && Math.abs(v - was) > 0.5 * Math.pow(10, -t.d);
       td.classList.toggle("vx-ch", diff);
@@ -845,6 +926,13 @@
     else if (what === "inc" || what === "dec") ks.forEach(function (k) { setValue(t, k, valueAt(t, k) + (what === "inc" ? step : -step)); });
     else if (what === "pct") ks.forEach(function (k) { setValue(t, k, valueAt(t, k) * (1 + arg / 100)); });
     else if (what === "revert") ks.forEach(function (k) { setValue(t, k, t.p ? t.p[k] : t.z[k]); });
+    else if (what === "lock") {
+      var on = !ks.every(function (k) { return isLocked(t, k); }), set = locks[t.name] || {};
+      ks.forEach(function (k) { if (on) set[k] = 1; else delete set[k]; });
+      locks[t.name] = set; saveLocks();
+      allGrids().forEach(function (g) { if (g.t === t) g.paint(); });
+      return;
+    }
     else if (what === "interp") {
       var C = t.cols, v00 = valueAt(t, s[0] * C + s[1]), v01 = valueAt(t, s[0] * C + s[3]);
       var v10 = valueAt(t, s[2] * C + s[1]), v11 = valueAt(t, s[2] * C + s[3]);
@@ -896,6 +984,7 @@
       '<button type="button" data-t="interp" title="Fill between the corners of the selection (I)">Interp</button>' +
       '<button type="button" data-t="smooth" title="Smooth the selection (S)">Smooth</button>' +
       '<button type="button" data-t="revert" title="Back to the original tune\'s values">Revert</button>' +
+      '<button type="button" data-t="lock" title="Lock or unlock the selected cells: VE Analyze leaves locked cells alone">🔒 Lock</button>' +
       '<button type="button" data-t="range" class="lv-touch" title="Tap two cells to select everything between">Range</button>' +
       "</div>";
   }
@@ -924,6 +1013,11 @@
     var t = slot.t;
     var opts = idx.tables.map(function (o, i) { return "<option value=" + i + (o === t ? " selected" : "") + ">" + esc(o.label) + "</option>"; }).join("");
     slot.el.innerHTML = '<div class="lv-th"><select aria-label="Table">' + opts + '</select><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button></div>' +
+      '<div class="lv-ovrow"><span>Cells show</span><select class="lv-ovsel" aria-label="What the cells show">' +
+        '<option value="">Values</option><option value="time">Time in each cell</option>' +
+        (idx.roles && idx.roles.knock != null ? '<option value="knock">Knock retard (most)</option>' : "") +
+        (idx.roles && idx.roles.lambda != null && idx.roles.lambda_target != null ? '<option value="afr">AFR error (average)</option>' : "") +
+      '</select><span class="lv-ovnote dim"></span></div>' +
       '<div class="lv-grid"></div>' + toolbar() +
       '<p class="lv-tn">' + esc((t.yl || "Load") + (t.yu ? " (" + t.yu + ")" : "") + " ↑ · " + (t.xl || "RPM") + (t.xu ? " (" + t.xu + ")" : "") + " →") +
       (t.xc == null || t.yc == null ? " · no matching channel in this log, so no cursor" : "") + " · select cells to edit</p>";
@@ -933,7 +1027,51 @@
       onSelect: function (g) { w.tools.hidden = !g.sel; }
     });
     load(t.xc); load(t.yc);
+    if (slot.ov) { $(".lv-ovsel", slot.el).value = slot.ov; showOverlay(slot); }
   }
+  /* What the log did in each cell of a table: seconds spent there, the most knock retard, or the average
+     mixture error (+ lean / − rich). Over the chosen sections if there are any, else the whole log. */
+  function overlay(t, kind) {
+    var R = idx.roles || {}, need = [t.xc, t.yc];
+    if (kind === "knock") need.push(R.knock);
+    if (kind === "afr") need.push(R.lambda, R.lambda_target);
+    if (need.some(function (c) { return c == null || c < 0; })) return Promise.resolve(null);
+    return Promise.all(need.map(load)).then(function (arr) {
+      if (arr.some(function (a) { return !a; })) return null;
+      var X = arr[0].v, Y = arr[1].v, A = arr[2] && arr[2].v, B = arr[3] && arr[3].v, n = t.z.length;
+      var sum = new Float64Array(n), wt = new Float64Array(n), top = new Float64Array(n), seen = new Uint8Array(n);
+      var sec = inSections(T), ld = (idx.lam && idx.lam.lambda) || 1, td = (idx.lam && idx.lam.lambda_target) || 1;
+      for (var i = 0; i < N; i++) {
+        if (sec && !sec[i]) continue;
+        var fx = where(t.x, X[i]), fy = where(t.y, Y[i] * t.ya + t.yb);
+        if (!(fx === fx) || !(fy === fy)) continue;
+        var k = Math.round(fy) * t.cols + Math.round(fx), dt = i + 1 < N ? Math.max(0, Math.min(0.2, T[i + 1] - T[i])) : 0;
+        if (kind === "time") { sum[k] += dt; seen[k] = 1; }
+        else if (kind === "knock") { var v = A[i]; if (v === v) { if (!seen[k] || v > top[k]) top[k] = v; seen[k] = 1; } }
+        else {
+          var l = A[i] / ld, g = B[i] / td;
+          if (l > 0.55 && l < 1.4 && g > 0.55 && g < 1.4) { sum[k] += dt * (l / g - 1) * 100; wt[k] += dt; seen[k] = 1; }
+        }
+      }
+      var out = [];
+      for (k = 0; k < n; k++) out.push(!seen[k] ? NaN : kind === "time" ? sum[k] : kind === "knock" ? top[k] : (wt[k] > 0 ? sum[k] / wt[k] : NaN));
+      return out;
+    });
+  }
+  function showOverlay(slot) {
+    var kind = slot.ov, note = $(".lv-ovnote", slot.el);
+    if (!kind) { slot.grid.mode = "value"; slot.grid.opts.ov = null; slot.grid.paint(); note.textContent = ""; return; }
+    note.textContent = "working…";
+    overlay(slot.t, kind).then(function (vals) {
+      if (slot.ov !== kind) return;
+      if (!vals) { note.textContent = "this log can't show that for this table"; return; }
+      slot.grid.mode = "ov"; slot.grid.opts.ov = vals; slot.grid.opts.ovKind = kind; slot.grid.paint();
+      var hit = vals.filter(function (v) { return v === v && (kind !== "knock" || v > 0.05); }).length;
+      note.textContent = (sections.length ? "in your sections · " : "whole log · ") +
+        (kind === "knock" ? plural(hit, "cell") + " with knock" : plural(vals.filter(function (v) { return v === v; }).length, "cell") + " visited");
+    });
+  }
+  function refreshOverlays() { tableSlots.forEach(function (sl) { if (sl.ov) showOverlay(sl); }); }
   function tablePos(t) {
     var dx = got(t.xc), dy = got(t.yc);
     if (!dx || !dy) return null;
@@ -1131,6 +1269,10 @@
       return;
     }
     var also = (root.dataset.also || "").split(",").filter(Boolean);
+    var range2 = function (name, label, step) {
+      return '<label class="lv-opt lv-opt2"><span>' + esc(label) + '</span><input type="number" inputmode="decimal" step="' + step + '" data-o="' + name + 'Lo" placeholder="from">' +
+        '<input type="number" inputmode="decimal" step="' + step + '" data-o="' + name + 'Hi" placeholder="to"></label>';
+    };
     var opt = function (name, label, value, step, hint) {
       return '<label class="lv-opt"><span>' + label + "</span><input type=\"number\" step=\"" + step + "\" data-o=\"" + name + "\" value=\"" + value + "\">" +
         (hint ? "<small>" + hint + "</small>" : "") + "</label>";
@@ -1141,7 +1283,7 @@
           '<button class="btn primary" type="button" data-ve="run">▶ Run VE Analyze</button>' +
           '<button class="btn" type="button" data-ve="stop" hidden>Stop</button>' +
           '<select data-ve-speed aria-label="How fast to play through the log"><option value="25">Watch it (25 s)</option><option value="10" selected>Quick (10 s)</option><option value="0">Instant</option></select>' +
-          '<select data-ve-mode aria-label="What the cells show"><option value="value">New VE</option><option value="change">Change %</option><option value="hits">Data (s)</option><option value="ran">VE that ran</option></select>' +
+          '<select data-ve-mode aria-label="What the cells show"><option value="value">New VE</option><option value="change">Change %</option><option value="hits">Data (s)</option><option value="err">AFR error %</option><option value="ran">VE that ran</option></select>' +
         "</div>" +
         '<p class="lv-ve-status mono" aria-live="polite">Plays through the log and works out each VE cell from the wideband. Nothing is changed until you save.</p>' +
         '<div class="lv-ve-bar"><i></i></div>' +
@@ -1158,6 +1300,11 @@
             opt("tpsRate", "Throttle moving faster than", 30, 1, "%/s") +
             opt("mapRate", "MAP moving faster than", 80, 1, "kPa/s") +
             opt("holdoff", "Wait after a transient", 0.35, 0.05, "s") +
+            '<p class="lv-opt-h">Only tune where</p>' +
+            range2("rpm", "RPM", 50) + range2("load", (t.yl || "Load") + (t.yu ? " (" + t.yu + ")" : ""), 1) + range2("tps", "Throttle (%)", 1) +
+            '<div class="lv-cf"></div><button type="button" class="btn sm" data-cf-add>+ Skip when a channel…</button>' +
+            '<p class="lv-opt-h">Result</p>' +
+            '<label class="lv-opt"><span>Strength</span><select data-o="strength"><option value="100" selected>100%</option><option value="75">75%</option><option value="50">50%</option><option value="25">25%</option></select><small>how much of the correction to apply</small></label>' +
             '<label class="lv-opt"><span>Wideband delay</span><input type="number" step="10" data-o="lagms" placeholder="Auto"><small>ms · empty = measure it</small></label>' +
             '<label class="lv-opt"><span>Smoothing</span><select data-o="smooth"><option value="0">None</option><option value="0.15" selected>Light</option><option value="0.35">Medium</option><option value="0.6">Strong</option></select></label>' +
             '<label class="check sm"><input type="checkbox" data-o="skipIdle"' + (idx.tune && idx.tune.idle_ve ? " checked" : "") + "><span>Skip idle" + (idx.tune && idx.tune.idle_ve ? " (this tune uses a separate idle VE table)" : "") + "</span></label>" +
@@ -1185,12 +1332,14 @@
       big: true, editable: true, input: w.input,
       act: function (what) { if (!ve.running) act(ve.grid, what); },
       onSelect: function (g) { w.tools.hidden = !g.sel || ve.running; },
-      info: { hits: function (k) { return ve.engine ? ve.engine.hits[k] : 0; }, ran: function (k) { return ve.engine ? ve.engine.ran(k) : t.z[k]; } }
+      info: { hits: function (k) { return ve.engine ? ve.engine.hits[k] : 0; }, ran: function (k) { return ve.engine ? ve.engine.ran(k) : t.z[k]; },
+              err: function (k) { return ve.engine ? ve.engine.error(k) : NaN; } }
     });
     $("[data-ve-mode]").addEventListener("change", function () {
       ve.grid.mode = this.value; ve.grid.paint();
     });
     renderSaveBars();
+    renderFilters();
     if (also.length) also.forEach(function (s, i) {
       fetch("/l/" + s + "/index.json" + query).then(function (r) { return r.json(); }).then(function (j) {
         var lab = $('[data-also="' + s + '"] + span');
@@ -1288,6 +1437,54 @@
       if (sel) { cmp.t = idx.tables[+sel.value]; renderCompare(); }
     });
   })();
+  var vef = (function () { try { return JSON.parse(localStorage.getItem("msq.lv.vef") || "[]") || []; } catch (e) { return []; } })();
+  function saveVef() { try { localStorage.setItem("msq.lv.vef", JSON.stringify(vef)); } catch (e) { /* ignore */ } }
+  function renderFilters() {
+    var box = $(".lv-cf");
+    if (!box) return;
+    box.innerHTML = vef.map(function (f, i) {
+      return '<div class="lv-cf-row" data-cf="' + i + '"><span>Skip when</span><button type="button" class="lv-pick" data-cf-ch>' + esc(f.n || "Choose…") + "</button>" +
+        '<select data-cf-op>' + ["<", ">", "=", "≠"].map(function (o) { return "<option" + (o === f.op ? " selected" : "") + ">" + o + "</option>"; }).join("") + "</select>" +
+        '<input type="number" inputmode="decimal" step="any" data-cf-v value="' + (f.v == null ? "" : f.v) + '">' +
+        '<button type="button" class="lv-cf-x" data-cf-del aria-label="Remove this filter">×</button></div>';
+    }).join("");
+  }
+  root.addEventListener("click", function (e) {
+    if (e.target.closest("[data-cf-add]")) { vef.push({ n: "", op: ">", v: null }); saveVef(); renderFilters(); var last = $$(".lv-cf-row [data-cf-ch]").pop(); if (last) last.click(); return; }
+    var row = e.target.closest("[data-cf]");
+    if (!row) return;
+    var f = vef[+row.dataset.cf];
+    if (e.target.closest("[data-cf-del]")) { vef.splice(+row.dataset.cf, 1); saveVef(); renderFilters(); return; }
+    var b = e.target.closest("[data-cf-ch]");
+    if (b) pick(b, byName(f.n), false, function (c) { f.n = idx.channels[c].n; saveVef(); renderFilters(); });
+  });
+  root.addEventListener("change", function (e) {
+    var row = e.target.closest && e.target.closest("[data-cf]");
+    if (!row) return;
+    var f = vef[+row.dataset.cf];
+    if (e.target.matches("[data-cf-op]")) f.op = e.target.value;
+    if (e.target.matches("[data-cf-v]")) f.v = e.target.value === "" ? null : +e.target.value;
+    saveVef();
+  });
+  /* The user's filters as a mask over one log (1 = keep). get(name) -> Promise of that channel's values or null. */
+  function filterMask(n, get) {
+    var rules = vef.filter(function (f) { return f.n && f.v != null && isFinite(f.v); });
+    if (!rules.length) return Promise.resolve(null);
+    return Promise.all(rules.map(function (f) { return get(f.n); })).then(function (arrs) {
+      var m = new Uint8Array(n);
+      for (var i = 0; i < n; i++) {
+        var keep = 1;
+        for (var r = 0; r < rules.length && keep; r++) {
+          var a = arrs[r];
+          if (!a) continue;
+          var v = a[i], f = rules[r];
+          if ((f.op === "<" && v < f.v) || (f.op === ">" && v > f.v) || (f.op === "=" && Math.abs(v - f.v) < 1e-6) || (f.op === "≠" && Math.abs(v - f.v) >= 1e-6)) keep = 0;
+        }
+        m[i] = keep;
+      }
+      return m;
+    });
+  }
   function fmtLen(s) { return s >= 60 ? Math.floor(s / 60) + " min " + Math.round(s % 60) + " s" : (s || 0).toFixed(1) + " s"; }
   function veOpts() {
     var o = {};
@@ -1339,6 +1536,8 @@
     $(".lv-ve-warn").hidden = true;
     ve.grid.clearSel();
     status.textContent = "Loading the channels VE Analyze reads…";
+    opts.locked = Object.keys(locks[t.name] || {}).map(Number);
+    if (sections.length) others = [];  // sections are times in this log: tune only those
     var engine = VEAL.create(t, opts);
     ve.engine = engine;
     ve.grid.opts.live = function (k) { return engine.current(k); };
@@ -1346,11 +1545,23 @@
     var jobs = others.map(function (s) {
       return fetch("/l/" + s + "/index.json" + query).then(function (r) { return r.json(); }).then(function (meta) {
         if (!meta.tables.some(function (x) { return x.id === "ve"; })) return null;
-        return veData(meta, function (c) { return fetchF32("/l/" + s + "/ch/" + c); }).then(function (d) { return { d: d, own: false }; });
+        var fetchC = function (c) { return fetchF32("/l/" + s + "/ch/" + c); };
+        return veData(meta, fetchC).then(function (d) {
+          return filterMask(d.T.length, function (name) {
+            var c = -1;
+            meta.channels.forEach(function (m, q) { if (m.n === name) c = q; });
+            return c >= 0 ? fetchC(c) : Promise.resolve(null);
+          }).then(function (m) { if (m) d.userOk = m; return { d: d, own: false }; });
+        });
       }).catch(function () { return null; });
     });
     jobs.push(veData(idx, function (c) { return c === "t" ? Promise.resolve(T) : load(c).then(function (x) { return x && x.v; }); })
-      .then(function (d) { return { d: d, own: true }; }));
+      .then(function (d) {
+        var sec = inSections(d.T);
+        if (sec) d.inSection = sec;
+        return filterMask(d.T.length, function (name) { var c = byName(name); return c >= 0 ? load(c).then(function (x) { return x && x.v; }) : Promise.resolve(null); })
+          .then(function (m) { if (m) d.userOk = m; return { d: d, own: true }; });
+      }));
     Promise.all(jobs).then(function (logs) {
       logs = logs.filter(Boolean);
       var li = 0, i = 0, cur0 = cur, data = null, lagInfo = null;
@@ -1359,7 +1570,10 @@
         data = logs[li].d;
         lagInfo = engine.begin(data);
         i = 0;
-        if (logs[li].own) setView(tMin, tMax);
+        if (logs[li].own) {
+          if (sections.length) { var a0 = sections[0][0], a1 = sections[sections.length - 1][1], pd = (a1 - a0) * 0.05; setView(a0 - pd, a1 + pd); }
+          else setView(tMin, tMax);
+        }
         frame();
       }
       function frame() {
@@ -1440,7 +1654,8 @@
       pcts.forEach(function (p, i) { if (Math.abs(p) > Math.abs(pcts[bi])) bi = i; });
       var avgP = pcts.reduce(function (s, p) { return s + Math.abs(p); }, 0) / pcts.length, big = res.changed[bi];
       var richer = pcts.filter(function (p) { return p > 0.05; }).length, leaner = pcts.filter(function (p) { return p < -0.05; }).length;
-      status.textContent = (stopped ? "Stopped early. " : "Done. ") + plural(res.changed.length, "cell") + " changed" +
+      status.textContent = (stopped ? "Stopped early. " : "Done. ") + (sections.length ? "From " + plural(sections.length, "section") + " (" + secLen().toFixed(0) + " s): " : "") +
+        plural(res.changed.length, "cell") + " changed" +
         (other ? " from this tune. Against the VE the ECU actually ran: " : ": ") + richer + " richer, " + leaner + " leaner, " +
         avgP.toFixed(1) + "% on average, biggest " + (pcts[bi] > 0 ? "+" : "") + pcts[bi].toFixed(1) + "% at " +
         binText(t.x[big.i % t.cols]) + " rpm / " + binText(t.y[Math.floor(big.i / t.cols)]) + (t.yu ? " " + t.yu : "") +
@@ -1609,7 +1824,8 @@
         var inside = t >= view.t0 && t <= view.t1;
         drag = { off: inside ? t - view.t0 : (view.t1 - view.t0) / 2 };
         setView(t - drag.off, t - drag.off + (view.t1 - view.t0));
-      } else { drag = {}; setCursor(nearest(t)); }
+      } else if (selMode) { drag = { sel: true }; selDrag = { a: t, b: t }; invalidate(); }
+      else { drag = {}; setCursor(nearest(t)); }
     });
     cv.addEventListener("pointermove", function (e) {
       if (!(e.pointerId in pts)) return;
@@ -1626,10 +1842,19 @@
       if (!drag) return;
       var t = tAt(e);
       if (overview) setView(t - drag.off, t - drag.off + (view.t1 - view.t0));
+      else if (drag.sel) { selDrag.b = t; invalidate(); }
       else setCursor(nearest(t));
     });
     ["pointerup", "pointercancel"].forEach(function (ev) {
-      cv.addEventListener(ev, function (e) { delete pts[e.pointerId]; pinch = null; if (!Object.keys(pts).length) drag = null; });
+      cv.addEventListener(ev, function (e) {
+        delete pts[e.pointerId]; pinch = null;
+        if (drag && drag.sel && selDrag) {
+          var a = selDrag.a, b = selDrag.b;
+          selDrag = null;
+          if (ev === "pointerup" && Math.abs(b - a) >= 0.2) addSection(a, b); else invalidate();
+        }
+        if (!Object.keys(pts).length) drag = null;
+      });
     });
     cv.addEventListener("wheel", function (e) {
       e.preventDefault();
@@ -1704,7 +1929,8 @@
   var saveTimer = 0;
   function hash() {
     return "#p=" + panes.map(function (p) { return p.ch.map(function (c) { return c < 0 ? "-" : c; }).join("."); }).join("/") +
-      "&n=" + paneCount + "&c=" + cur + "&v=" + view.t0.toFixed(2) + "-" + view.t1.toFixed(2) + (tab !== "graphs" ? "&tab=" + tab : "");
+      "&n=" + paneCount + "&c=" + cur + "&v=" + view.t0.toFixed(2) + "-" + view.t1.toFixed(2) + (tab !== "graphs" ? "&tab=" + tab : "") +
+      (sections.length ? "&s=" + sections.map(function (r) { return r[0].toFixed(2) + "-" + r[1].toFixed(2); }).join(",") : "");
   }
   var lastHash = "";
   function saveNow() { lastHash = hash(); try { history.replaceState(null, "", lastHash); } catch (e) { /* file: or sandboxed */ } }
@@ -1768,6 +1994,10 @@
     if (h.v) { var m = /^(-?[\d.]+)-(-?[\d.]+)$/.exec(h.v); if (m && +m[2] > +m[1]) { view.t0 = +m[1]; view.t1 = +m[2]; } }
     clampView();
     if (h.c && /^\d+$/.test(h.c)) cur = Math.min(N - 1, +h.c);
+    if (h.s) h.s.split(",").forEach(function (part) {
+      var m2 = /^(-?[\d.]+)-(-?[\d.]+)$/.exec(part);
+      if (m2 && +m2[2] > +m2[1]) sections.push([Math.max(tMin, +m2[1]), Math.min(tMax, +m2[2])]);
+    });
     sc.x = channelFor("rpm"); sc.y = channelFor("map"); sc.z = channelFor("afr");
     vePane = { ch: pad(["rpm", "map", "afr", "afr_target"].map(channelFor)), i: 0, ve: true };
   }
@@ -1776,6 +2006,7 @@
   function setTab(name) {
     if (ve.running && name !== "ve") return;
     tab = name;
+    if (idx) setTimeout(renderSections, 0);
     $$("[data-lv-tab]").forEach(function (x) { x.setAttribute("aria-selected", x.dataset.lvTab === tab ? "true" : "false"); });
     $$("[data-lv-panel]").forEach(function (x) { x.hidden = x.dataset.lvPanel !== tab; });
     root.classList.toggle("tab-ve", tab === "ve");
@@ -1805,6 +2036,19 @@
       else if (a === "zin") zoom(0.5);
       else if (a === "zout") zoom(2);
       else if (a === "fit") setView(tMin, tMax);
+      else if (a === "sec") { selMode = !selMode; secStart = null; renderSections(); invalidate(); }
+      return;
+    }
+    b = e.target.closest("[data-sec], [data-sec-del], [data-sec-go]");
+    if (b) {
+      if (b.dataset.secDel != null) { sections.splice(+b.dataset.secDel, 1); sectionsChanged(); return; }
+      if (b.dataset.secGo != null) { var r0 = sections[+b.dataset.secGo], pad = (r0[1] - r0[0]) * 0.1; setView(r0[0] - pad, r0[1] + pad); return; }
+      var w = b.dataset.sec;
+      if (w === "start") { secStart = T[cur]; renderSections(); invalidate(); }
+      else if (w === "end") { addSection(secStart != null ? secStart : tMin, T[cur]); secStart = null; renderSections(); }
+      else if (w === "view") addSection(view.t0, view.t1);
+      else if (w === "clear") { sections = []; secStart = null; sectionsChanged(); }
+      else if (w === "tune") { selMode = false; setTab("ve"); renderSections(); }
       return;
     }
     b = e.target.closest("[data-lv-tab]");
@@ -1941,6 +2185,12 @@
     saveOpts(); openOpts(); invalidate();
   });
   root.addEventListener("change", function (e) {
+    var ovs = e.target.closest(".lv-ovsel");
+    if (ovs) {
+      var sl = tableSlots[+ovs.closest(".lv-table").dataset.slot];
+      sl.ov = ovs.value; showOverlay(sl);
+      return;
+    }
     var sel = e.target.closest(".lv-th select");
     if (!sel) return;
     var slot = tableSlots[+sel.closest(".lv-table").dataset.slot];
@@ -1953,6 +2203,7 @@
     if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
     if (t && t.closest && t.closest(".lv-tw")) return;  // the table has the keyboard
     var k = e.key, big = e.shiftKey ? 10 : 1;
+    if (k === "Escape" && selMode) { selMode = false; renderSections(); invalidate(); }
     if (k === "Escape") { closePick(); $$(".lv-help, .lv-dlg", document).forEach(function (d) { d.hidden = true; }); return; }
     if (ve.running) return;
     if (k === "ArrowLeft") step(-big);
@@ -2043,6 +2294,7 @@
       else side.hidden = true;
     }
     renderSaveBars();
+    renderSections();
     loadNote.hidden = true;
     root.classList.add("ready");
     if (window.ResizeObserver) new ResizeObserver(function () { scatterDirty = true; invalidate(); }).observe($(".lv-main"));

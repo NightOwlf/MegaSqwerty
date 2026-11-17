@@ -409,6 +409,21 @@ result in the editor to adjust and save. It's in `app/static/veal.js`, with its 
   moments after, fuel cut and decel, a wideband at its rail or not ready, maxed injectors, idle when a separate
   idle VE table runs it, and readings too far off to be real. It shows how much of the log went each way.
 
+- **Tune a section, not the whole log**, the way tuners cut a log into pulls: **✂ Section** then drag across
+  any graph (or mark *Start* and *End* at the cursor, or add what's on screen). Sections are shaded on every
+  graph, kept in the link, and VE Analyze then uses only those stretches of this log.
+- **TunerStudio's controls and more**: RPM, load and throttle windows; any number of *skip when channel <, >,
+  =, ≠ value* filters on any channel; **🔒 Lock** cells so they never move (their neighbours absorb the
+  difference in the fit); **Strength** to apply 25–100% of the correction for a cautious pass; minimum coolant,
+  transient limits, hold-off, max change, data needed for full authority, wideband delay and smoothing. The
+  samples panel says how much of the log each rule left out.
+- **See why**: *AFR error %* shows the average mixture error each cell saw before the fix, *Data (s)* how much
+  data stood behind it, and *VE that ran* what the ECU actually used.
+
+Every table beside the graphs can also show what the log did in each cell instead of its values (**Cells
+show**): time spent there, the most knock retard (to find where to pull timing on boost), or the average AFR
+error, over the whole log or just the chosen sections.
+
 On the two FOME logs it was developed against, holding out alternate 30 s of each log and correcting from the
 rest took the error between the VE needed and the table from 13.8% to 2.5% on one and 3.7% to 2.7% on the
 other (the remainder is wideband noise).
