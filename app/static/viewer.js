@@ -2046,7 +2046,17 @@
     loadNote.hidden = true;
     root.classList.add("ready");
     if (window.ResizeObserver) new ResizeObserver(function () { scatterDirty = true; invalidate(); }).observe($(".lv-main"));
-    window.addEventListener("resize", function () { scatterDirty = true; invalidate(); });
+    // Held wide (a phone on its side, an iPhone Duo open), the viewer fits the screen: tell the CSS how much
+    // height is left under the header and the fixed status bar.
+    var fitHeight = function () {
+      var top = $(".lv-body").getBoundingClientRect().top + window.scrollY;
+      var sb = document.querySelector(".statusbar"), sbh = sb && getComputedStyle(sb).position === "fixed" ? sb.offsetHeight : 0;
+      var vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+      root.style.setProperty("--lvh", Math.max(240, Math.floor(vh - top - sbh - 6)) + "px");
+    };
+    fitHeight();
+    window.addEventListener("resize", function () { fitHeight(); scatterDirty = true; invalidate(); });
+    window.addEventListener("orientationchange", function () { setTimeout(function () { fitHeight(); scatterDirty = true; invalidate(); }, 250); });
     if (startHash.tab === "scatter" || startHash.tab === "ve") setTab(startHash.tab);
     invalidate();
   }).catch(function () { fail("This log couldn't be loaded. Reload the page to try again."); });

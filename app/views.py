@@ -97,7 +97,9 @@ def family_label(doc: TuneDoc) -> str:
 
 
 def tune_label(doc: TuneDoc) -> str:
-    return doc.tune_comment or f"{family_label(doc)} tune"
+    # TunerStudio restore points can carry HTML in the comment ("<html>Restore Point: … <br>")
+    text = re.sub(r"\s+", " ", re.sub(r"<[^>]*>", " ", doc.tune_comment or "")).strip(" -·")
+    return text or f"{family_label(doc)} tune"
 
 
 def display_value(c: Constant, tmap: dict | None = None) -> str:

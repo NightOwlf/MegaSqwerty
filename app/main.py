@@ -285,7 +285,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
     def og_for(doc: TuneDoc, summary, edited: bool = False) -> tuple[str, str]:
         title = ("Edited copy · " if edited else "") + f"{views.family_label(doc)} {doc.version}".strip() + " tune"
         if doc.tune_comment:
-            title += f" · {doc.tune_comment[:80]}"
+            title += f" · {views.tune_label(doc)[:80]}"
         bits = [f"{label} {val}{(' ' + units) if units else ''}" for label, val, units, _ in summary[:6]]
         desc = " · ".join(bits) or "TunerStudio .msq tune"
         return title, f"{desc}. Signature: {doc.signature or 'none'}"[:300]
@@ -984,7 +984,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         if doc is None:
             return HTMLResponse('<span class="bad">✗ No tune found for that link</span>')
         label = f"{doc.family} {doc.version}".strip()
-        extra = f" · {doc.tune_comment[:60]}" if doc.tune_comment else ""
+        extra = f" · {views.tune_label(doc)[:60]}" if doc.tune_comment else ""
         return HTMLResponse(f'<span class="good">✓ {_esc(label)}{_esc(extra)}</span>')
 
     @app.post("/compare")
