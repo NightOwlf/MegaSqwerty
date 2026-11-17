@@ -76,9 +76,12 @@ class Session:
         self.changes: list = []      # what's been applied, newest last
         self.touched = time.time()
         self.rate: dict = {}
+        self.logs: dict = {}             # the session's recording: part number -> {slug, rows, seconds}
+        self.log_lock = asyncio.Lock()
 
     def public_state(self) -> dict:
-        return dict(self.state, viewers=len(self.viewers), tune=self.tune, original=self.original)
+        return dict(self.state, viewers=len(self.viewers), tune=self.tune, original=self.original,
+                    logs=[dict(v, part=k) for k, v in sorted(self.logs.items())])
 
 
 def register(app, store, templates, deps) -> None:
@@ -201,7 +204,7 @@ def register(app, store, templates, deps) -> None:
         text = ini_raw.decode("latin-1")
         msq_text = msq_raw.decode("latin-1") if msq_raw else ""
         try:
-            ini = await run_in_threadpool(ecuini.parse, text, ecuini.msq_settings(msq_text))
+            ini = await run_in_threadpool(ecuini.parse, text, ecuini.msq_settings(msq_text), ecuini.msq_values(msq_text))
         except ecuini.IniError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         comms = ini["comms"]
@@ -249,6 +252,56 @@ def register(app, store, templates, deps) -> None:
             raise HTTPException(404)
         return Response(s.layout_gz, media_type="application/json",
                         headers={"Content-Encoding": "gzip", "Cache-Control": "private, no-cache"})
+
+    # ---------------------------------------------------------------- the session's log
+    LOG_PART_MAX = 24 * 1024 * 1024
+
+    @app.post("/live/{sid}/log")
+    async def live_log(request: Request, sid: str, k: str = "", part: int = 1, slug: str = "", secs: float = 0):
+        """The car page records the session (like TunerStudio's datalog) and sends what's new every couple of
+        minutes: rows of a .msl log, the first time with its header. They're added to the part's log, which is
+        stored like any uploaded log against the session's tune copy, so it opens in the log viewer with the
+        changes made live (and VE Analyze can use it). The link stays the same as it grows."""
+        s = get(sid)
+        if not secrets.compare_digest(k, s.car_key):
+            raise HTTPException(404)
+        body = await request.body()
+        if not body or len(body) > LOG_PART_MAX:
+            return JSONResponse({"error": "empty or too big"}, status_code=400)
+        part = max(1, min(int(part), 999))
+        ingest = deps["ingest_log"]
+        async with s.log_lock:
+            have = s.logs.get(part, {}).get("slug") or ""
+            if not have and slug and logsmod_slug_ok(slug):
+                row = store.get_log(slug)  # the server restarted mid-session: carry on with the same log
+                if row is not None and s.tune and row["tune_slug"] == s.tune:
+                    have = slug
+            raw = (store.read_log_raw(have) or b"") if have else b""
+            if have and len(raw) + len(body) > 4 * LOG_PART_MAX:
+                return JSONResponse({"error": "full", "next": part + 1}, status_code=409)
+            if raw and not raw.endswith(b"\n"):
+                raw += b"\n"
+            data = raw + body
+            doc = store.get_doc(s.tune) if s.tune else None
+            name = f"Live session {time.strftime('%d %b %Y %H:%M', time.gmtime(s.touched))} UTC" + (f" part {part}" if part > 1 else "") + ".msl"
+            if have:
+                await run_in_threadpool(store.delete_log, have)
+            try:
+                new, _key, rows = await run_in_threadpool(ingest, doc, s.tune if doc else "", data, name, have or None)
+            except Exception as e:  # noqa: BLE001 - a log that can't be read: keep the session going
+                log.warning("live log for %s not stored: %s", sid, e, exc_info=True)
+                if have and raw:  # put back what was there
+                    try:
+                        await run_in_threadpool(ingest, doc, s.tune if doc else "", raw, name, have)
+                    except Exception:  # noqa: BLE001
+                        log.exception("couldn't restore live log %s", have)
+                return JSONResponse({"error": "That log couldn't be read."}, status_code=400)
+            s.logs[part] = {"slug": new, "rows": rows, "seconds": round(max(0.0, min(secs, 86400.0)), 1), "at": int(time.time())}
+        await announce(s)
+        return JSONResponse({"slug": new, "rows": rows, "url": f"/l/{new}?tune={s.tune}" if s.tune else f"/l/{new}"})
+
+    def logsmod_slug_ok(slug: str) -> bool:
+        return bool(re.match(r"^[A-Za-z0-9]{10}$", slug or ""))
 
     # ---------------------------------------------------------------- the relay
     def apply_to_copy(s: Session, table: str, cells: dict, label: str | None = None) -> None:

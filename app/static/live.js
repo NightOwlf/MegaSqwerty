@@ -17,6 +17,10 @@
   var layout = null, tables = {}, och = {}, state = {}, ws = null, wsOpen = false;
   var ecu = null, pipe = null, running = false, undoStack = [], queue = [], reqN = 0, pending = {};
   var STOICH = 14.7;
+  function updateStoich() {  // the ECU's live stoich (flex fuel), else the tune's, else gasoline
+    var live = och.stoichiometricRatio, set = tables.stoichRatioPrimary && tables.stoichRatioPrimary[0];
+    STOICH = live > 5 && live < 30 ? live : set > 5 && set < 30 ? set : 14.7;
+  }
   // Temperatures shown in °F (the ECU works in °C: values are converted for display, and back when set)
   var TEMP_F = (function () { try { return (localStorage.getItem("msq.lv.temp") || "F") !== "C"; } catch (e) { return true; } })();
   function isC(u) { return /^\s*(°\s*c|deg\s*c|degc|c|celsius|degrees\s*c)\s*$/i.test(String(u || "")); }
@@ -71,12 +75,14 @@
   function onMessage(m) {
     if (m.t === "hello") {
       state = m.state || {}; tables = Object.keys(m.tables || {}).length ? m.tables : tables; if (m.och) och = m.och;
+      if (ROLE === "view") snapBase();
+      updateStoich();
       if (m.chs) chList = m.chs;
       if (m.want && ROLE === "car") { wanted = {}; m.want.forEach(function (n) { wanted[n] = 1; }); }
       if (ROLE === "view") sendWant();
       (m.changes || []).forEach(logChange);
       renderAll();
-    } else if (m.t === "state") { state = Object.assign(state, m.state); renderState(); }
+    } else if (m.t === "state") { state = Object.assign(state, m.state); renderState(); renderRec(); }
     else if (m.t === "chs") { chList = m.n || []; }
     else if (m.t === "o" && ROLE === "view") {
       var v = m.v || [];
@@ -85,7 +91,10 @@
     }
     else if (m.t === "want" && ROLE === "car") { wanted = {}; (m.n || []).forEach(function (n) { wanted[n] = 1; }); }
     else if (m.t === "pong") { rtt = Date.now() - (m.at || Date.now()); pill(); }
-    else if (m.t === "tables" && ROLE === "view") { Object.keys(m.tables).forEach(function (k) { tables[k] = m.tables[k]; }); renderTable(); }
+    else if (m.t === "tables" && ROLE === "view") {
+      Object.keys(m.tables).forEach(function (k) { tables[k] = m.tables[k]; base[k] = m.tables[k].slice(); });
+      updateStoich(); renderTable();
+    }
     else if (m.t === "applied") {
       if (ROLE === "view") {
         var vals = tables[m.table];
@@ -95,7 +104,7 @@
       logChange(m); flashCells(m.table, m.cells); renderTable(); if ((layout.editable || {})[m.table] === "setting") renderSettings();
       if (ROLE === "view" && m.by === "driver") toast("The driver changed " + Object.keys(m.cells).length + " cell(s) in " + title(m.table));
     } else if (m.t === "rejected") { clearPending(m.id); toast("Not changed: " + (m.why || "refused"), true); renderTable(); }
-    else if (m.t === "burned") { toast("Burned to the ECU: the changes are now permanent."); state.needBurn = false; renderState(); }
+    else if (m.t === "burned") { toast("Burned to the ECU: the changes are now permanent."); state.needBurn = false; snapBase(); renderTable(); renderState(); }
     else if (m.t === "notice") { toast(m.text || ""); $(".lt-mode-note") && ($(".lt-mode-note").textContent = m.text || ""); }
     else if (ROLE === "car" && (m.t === "set" || m.t === "undo" || m.t === "burn")) carRequest(m);
   }
@@ -127,11 +136,19 @@
     });
   }
   var carFiles = null;
-  function restartSession() { if (carFiles) startSession(carFiles).catch(function (e) { toast(e.message, true); }); }
+  function restartSession() {
+    if (!carFiles) return;
+    (carFiles.last ? useLast(carFiles.last) : startSession(carFiles)).catch(function (e) { toast(e.message, true); });
+  }
 
   function connectEcu(sim) {
     if (!layout) return;
-    var p = sim ? Promise.resolve(ECU.simPipe(layout, carFiles && carFiles.msqText ? ECU.pageFromMsq(layout, carFiles.msqText) : null))
+    // the simulated ECU starts from the project's tune (after a reload, the session's tune copy)
+    var tuneSlug = state.tune || (sess && sess.tune);
+    var msqText = carFiles && carFiles.msqText ? Promise.resolve(carFiles.msqText)
+      : carFiles && carFiles.last ? Promise.resolve(carFiles.last.msq || "")
+      : tuneSlug ? fetch("/t/" + tuneSlug + ".msq").then(function (r) { return r.ok ? r.text() : ""; }, function () { return ""; }) : Promise.resolve("");
+    var p = sim ? msqText.then(function (t) { return ECU.simPipe(layout, t ? ECU.pageFromMsq(layout, t) : null); })
                 : ECU.connectSerial();
     $(".lt-status").textContent = sim ? "Starting the simulated ECU…" : "Choose the ECU's USB port in the box Chrome shows…";
     p.then(function (pp) {
@@ -147,6 +164,7 @@
       return ecu.readPage(function (f) { $(".lt-status").textContent = "Reading the tune from the ECU… " + Math.round(f * 100) + "%"; });
     }).then(function (page) {
       tables = ECU.decodeConstants(layout, page, ecu.little);
+      snapBase(); updateStoich();
       send({ t: "tables", tables: tables });
       running = true; root.classList.add("ecu-on"); root.classList.toggle("is-sim", !!sim);
       $(".lt-status").textContent = (sim ? "Simulated ECU" : "ECU") + " connected: " + state.ecuSignature;
@@ -163,7 +181,79 @@
     navigator.wakeLock.request("screen").then(function (w) { wake = w; }, function () { /* not allowed here */ });
   }
   document.addEventListener("visibilitychange", function () { if (!document.hidden && running && !wake) keepAwake(); });
+  /* ---------------------------------------------------------------- the session log
+     Like TunerStudio's datalog, started by itself when the ECU connects: about 20 records a second of the
+     channels that matter for tuning (what the gauges, tables and log viewer use, then the rest of the ECU's
+     log channels up to 120), kept here and sent to the server every two minutes, where it becomes a normal
+     log against the session's tune copy: open it in the log viewer, run VE Analyze on it. A part holds up to
+     about 30 minutes; then the next part starts. */
+  var rec = { cols: null, rows: [], sent: 0, t0: 0, last: 0, part: 1, slug: "", busy: false, timer: 0, partT0: 0 };
+  try { var rs = JSON.parse(localStorage.getItem("msq.live.rec") || "null"); if (rs && rs.sid === SID) { rec.part = rs.part; rec.slug = rs.slug; } } catch (e) { /* ignore */ }
+  function recCols() {
+    var keep = [], seen = {}, add = function (n) { if (n && layout.outputs[n] && !seen[n]) { seen[n] = 1; keep.push(n); } };
+    Object.keys(layout.roles || {}).forEach(function (r) { add(layout.roles[r]); });
+    allDefs().forEach(function (t) { add(t.xch); add(t.ych); });
+    (layout.front || []).forEach(function (g) { add(((layout.gauges || {})[g] || {}).ch); });
+    Object.keys(layout.outputs).forEach(function (n) { if (keep.length < 120 && layout.outputs[n].kind !== "bits") add(n); });
+    return keep;
+  }
+  function record() {
+    var now = Date.now();
+    if (now - rec.last < 48) return;
+    rec.last = now;
+    if (!rec.cols) { rec.cols = recCols(); rec.t0 = now; rec.partT0 = now; }
+    var r = new Array(rec.cols.length + 1);
+    r[0] = ((now - rec.t0) / 1000).toFixed(3);
+    for (var i = 0; i < rec.cols.length; i++) { var v = och[rec.cols[i]]; r[i + 1] = v == null || v !== v ? "" : +(+v).toPrecision(6); }
+    rec.rows.push(r.join("\t"));
+    if (!rec.timer) rec.timer = setInterval(flushLog, 120000);
+    renderRec();
+  }
+  function flushLog() {
+    if (rec.busy || !SID || rec.rows.length <= rec.sent) return Promise.resolve();
+    rec.busy = true;
+    var upto = rec.rows.length, first = !rec.slug;
+    var head = first ? '"MSQ Viewer live session ' + new Date(rec.t0).toISOString() + '"\n' +
+      ["Time"].concat(rec.cols.map(function (n) { return layout.outputs[n].label || n; })).join("\t") + "\n" +
+      ["s"].concat(rec.cols.map(function (n) { return layout.outputs[n].units || ""; })).join("\t") + "\n" : "";
+    var body = head + rec.rows.slice(rec.sent, upto).join("\n") + "\n";
+    var secs = (rec.last - rec.partT0) / 1000;
+    var url = "/live/" + SID + "/log?k=" + encodeURIComponent(KEY) + "&part=" + rec.part + "&slug=" + encodeURIComponent(rec.slug) + "&secs=" + secs.toFixed(1);
+    return fetch(url, { method: "POST", body: body, headers: { "Content-Type": "text/plain" } }).then(function (r) {
+      return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; });
+    }).then(function (res) {
+      rec.busy = false;
+      if (res.ok) {
+        rec.slug = res.j.slug; rec.sent = upto;
+        // keep only what's still to send (the server has the rest), and start a new part after ~30 minutes
+        rec.rows = rec.rows.slice(upto); rec.sent = 0;
+        if (secs > 1800) { rec.part++; rec.slug = ""; rec.partT0 = rec.last; }
+        try { localStorage.setItem("msq.live.rec", JSON.stringify({ sid: SID, part: rec.part, slug: rec.slug })); } catch (e) { /* ignore */ }
+      } else if (res.status === 409) { rec.part++; rec.slug = ""; }
+      renderRec();
+    }, function () { rec.busy = false; });
+  }
+  // a new part also starts from the header again
+  function renderRec() {
+    var el = $(".ts-rec");
+    if (!el) return;
+    var logs = state.logs || [], lastLog = logs[logs.length - 1];
+    var rolling = ROLE === "car" && running && rec.cols;
+    el.hidden = !rolling && !lastLog;
+    if (el.hidden) return;
+    var secs = rolling ? Math.round((rec.last - rec.t0) / 1000) : 0;
+    var t = Math.floor(secs / 60) + ":" + ("0" + secs % 60).slice(-2);
+    var html = (rolling ? '<b class="ts-dotrec">●</b> REC ' + t + " " : "") +
+      (lastLog ? logs.map(function (l) {
+        return '<a href="/l/' + esc(l.slug) + (state.tune ? "?tune=" + esc(state.tune) : "") + '" target="_blank" rel="noopener" title="Open the session log in the log viewer (saved every 2 minutes)">' +
+          (logs.length > 1 ? "Log part " + l.part : "Open session log") + "</a>";
+      }).join(" ") : '<span class="dim">first save in 2 min</span>');
+    if (el.dataset.h !== html) { el.innerHTML = html; el.dataset.h = html; }
+  }
+  setInterval(renderRec, 1000);
+  window.addEventListener("pagehide", function () { if (ROLE === "car") flushLog(); });
   function disconnectEcu() {
+    flushLog();
     if (wake) { wake.release().catch(function () { /* ignore */ }); wake = null; }
     running = false; root.classList.remove("ecu-on");
     if (pipe) pipe.close(); pipe = null; ecu = null;
@@ -178,6 +268,9 @@
     Object.keys(layout.roles || {}).forEach(function (r) { keep[layout.roles[r]] = 1; });
     (layout.tables || []).forEach(function (t) { if (t.xch) keep[t.xch] = 1; if (t.ych) keep[t.ych] = 1; });
     Object.keys(wanted).forEach(function (n) { if (layout.outputs[n]) keep[n] = 1; });
+    (layout.front || []).forEach(function (g) { var c = (layout.gauges || {})[g]; if (c) keep[c.ch] = 1; });
+    (layout.indicators || []).forEach(function (i) { keep[i.ch] = 1; });
+    if (layout.outputs.stoichiometricRatio) keep.stoichiometricRatio = 1;
     return Object.keys(keep).sort();
   }
   function pollLoop() {
@@ -186,6 +279,8 @@
     var started = Date.now();
     ecu.och().then(function (block) {
       och = ECU.decodeOutputs(layout, block, ecu.little);
+      if (och.stoichiometricRatio) updateStoich();
+      record();
       fails = 0; reads++; pushHist(); drawLive();
       var now = Date.now();
       if (now - rateT >= 1000) { state.ecuHz = Math.round(reads * 1000 / (now - rateT)); reads = 0; rateT = now; pill(); }
@@ -231,6 +326,7 @@
             (fresh[k] || []).forEach(function (v, i) { if (tables[k] && Math.abs(tables[k][i] - v) > 1e-6) lost++; });
           });
           tables = fresh;
+          if (lost) snapBase();
           send({ t: "tables", tables: tables });
           if (lost) {
             state.needBurn = false; undoStack = [];
@@ -261,7 +357,14 @@
      only what the layout marks editable (tables, curves, settings; never what needs a power cycle, or that
      sets how the engine is wired, timed, measured or protected), inside the ECU's range, in moderate steps. */
   function check(table, cells) { return ECU.checkChange(layout, tables, table, cells, STOICH, title); }
+  var asks = [];
   function askDriver(m) {
+    asks.push(m);
+    if (asks.length === 1) showAsk();
+  }
+  function showAsk() {
+    var m = asks[0];
+    if (!m) return;
     var box = $(".lt-ask");
     var c = layout.constants[m.table], vals = tables[m.table], ks = Object.keys(m.cells), big = 0;
     ks.forEach(function (k) { var o = vals[+k]; if (o) big = Math.max(big, Math.abs(m.cells[k] / o - 1) * 100); });
@@ -271,11 +374,18 @@
         : "change " + ks.length + " cell" + (ks.length === 1 ? "" : "s") + " in " + esc(title(m.table))) + "</b>" +
       (big && !isSet ? " (up to " + big.toFixed(1) + "%)" : "") + ". It goes to the ECU's working memory now, not burned.</p>" +
       '<div class="lt-ask-b"><button class="btn" type="button" data-ask="no">Reject</button><button class="btn primary" type="button" data-ask="yes">Allow</button></div>' +
-      '<label class="check sm"><input type="checkbox" data-ask-always><span>Allow from now on (switches to “Allow”)</span></label>';
+      '<label class="check sm"><input type="checkbox" data-ask-always><span>Allow from now on (switches to “Allow”)</span></label>' +
+      (asks.length > 1 ? '<p class="dim">' + (asks.length - 1) + " more waiting</p>" : "");
     var t = setTimeout(function () { finish(false, "The driver didn't answer in time."); }, 30000);
     function finish(yes, why) {
       clearTimeout(t); box.hidden = true; box.onclick = null;
-      if (yes) queue.push({ kind: "set", m: m, by: "tuner" }); else send({ t: "rejected", id: m.id, why: why || "The driver said no." });
+      asks.shift();
+      if (yes) {
+        var again = check(m.table, m.cells);  // the table may have moved on while it waited
+        if (again) send({ t: "rejected", id: m.id, why: again }); else queue.push({ kind: "set", m: m, by: "tuner" });
+      } else send({ t: "rejected", id: m.id, why: why || "The driver said no." });
+      if (modeSel().value === "auto") { var rest = asks.splice(0); rest.forEach(function (r) { queue.push({ kind: "set", m: r, by: "tuner" }); }); }
+      else showAsk();
     }
     box.onclick = function (e) {
       var b = e.target.closest("[data-ask]");
@@ -288,7 +398,7 @@
     var job = queue.shift();
     if (!job || !ecu) return Promise.resolve();
     if (job.kind === "burn") {
-      return ecu.burn().then(function () { state.needBurn = false; send({ t: "burned" }); pushState(); toast("Burned: the changes are permanent."); renderState(); },
+      return ecu.burn().then(function () { state.needBurn = false; snapBase(); send({ t: "burned" }); pushState(); toast("Burned: the changes are permanent."); renderTable(); renderState(); },
         function (e) { send({ t: "rejected", id: job.m.id, why: "Burn failed: " + e.message }); });
     }
     if (job.kind === "undo") {
@@ -324,7 +434,8 @@
   }
 
   /* ---------------------------------------------------------------- shared: tables, gauges, graph */
-  var curTable = null, sel = {}, rangeMode = false, anchor = null;
+  var curTable = null, sel = {}, rangeMode = false, anchor = null, base = {}, trail = [];
+  function snapBase() { base = {}; Object.keys(tables).forEach(function (k) { if (tables[k] && tables[k].slice) base[k] = tables[k].slice(); }); }
   function allDefs() { return layout ? (layout.tables || []).concat(layout.curves || []) : []; }
   function title(z) {
     var t = allDefs().filter(function (x) { return x.z === z; })[0], c = layout && layout.constants[z];
@@ -353,6 +464,7 @@
     if (!t || !tables[t.z] || !tables[t.x]) { box.innerHTML = '<p class="dim">' + (layout ? "Waiting for the tune from the ECU…" : "") + "</p>"; return; }
     var c = layout.constants[t.z], z = tables[t.z], xs = tables[t.x], ys = t.y ? tables[t.y] : [""], C = xs.length, R = ys.length;
     $(".lt-ro").hidden = !!(layout.editable || {})[t.z];
+    var b0 = base[t.z] || [];
     var lo = Infinity, hi = -Infinity;
     z.forEach(function (v) { if (v < lo) lo = v; if (v > hi) hi = v; });
     var d = c.digits == null ? 1 : c.digits, h = [];
@@ -360,18 +472,21 @@
       h.push("<tr><th>" + (t.y ? bin(showT(ys[r], (layout.constants[t.y] || {}).units)) : esc(showU(c.units))) + "</th>");
       for (var cc = 0; cc < C; cc++) {
         var k = r * C + cc, v = z[k];
-        var cls = (sel[k] ? " sel" : "") + (pending[t.z + ":" + k] ? " pend" : "");
+        var was = b0[k], tol = Math.pow(10, -(c.digits == null ? 1 : c.digits)) / 2;
+        var cls = (sel[k] ? " sel" : "") + (pending[t.z + ":" + k] ? " pend" : "") + (was == null ? "" : v > was + tol ? " up" : v < was - tol ? " dn" : "");
         h.push('<td data-k="' + k + '" class="' + cls + '" style="background:' + heat(hi > lo ? (v - lo) / (hi - lo) : 0.5) + '">' + cell(v, d) + "</td>");
       }
       h.push("</tr>");
     }
     var xu = (layout.constants[t.x] || {}).units;
     h.push('<tr class="ax"><th></th>' + xs.map(function (x) { return "<th>" + bin(showT(x, xu)) + "</th>"; }).join("") + "</tr>");
-    box.innerHTML = '<table class="lt-tt"><tbody>' + h.join("") + "</tbody></table>";
+    box.innerHTML = '<table class="lt-tt"><tbody>' + h.join("") + "</tbody></table>" +
+      '<svg class="ts-trail" aria-hidden="true"><polyline points=""/></svg><span class="ts-dot" hidden></span>';
     fitText(box);
-    cursor();
-    $(".lt-tools").hidden = !Object.keys(sel).length;
-    $(".lt-selinfo").textContent = Object.keys(sel).length ? Object.keys(sel).length + " selected" : "";
+    lastCur = null; cursor();
+    var n = Object.keys(sel).length;
+    root.classList.toggle("has-sel", n > 0);
+    $(".lt-selinfo").textContent = n ? n + " selected" : "Tap cells to select";
   }
   function fitText(box) {
     var td = box.querySelector("td"), tb = box.querySelector("table");
@@ -382,9 +497,9 @@
   }
   function bin(v) { return Math.abs(v) >= 1000 ? +(v / 1000).toFixed(1) + "k" : Math.abs(v) >= 100 || v === Math.round(v) ? String(Math.round(v)) : v.toFixed(1); }
   function cell(v, d) { var a = Math.abs(v); return v.toFixed(a >= 100 ? 0 : Math.min(d, a >= 10 ? 1 : 2)); }
-  function heat(f) {
+  function heat(f) {  // TunerStudio's table colours: blue, green, yellow, red
     f = Math.max(0, Math.min(1, f));
-    var s = [[120, 150, 255], [120, 220, 240], [130, 230, 130], [240, 235, 110], [255, 170, 90], [255, 105, 95]];
+    var s = [[138, 140, 250], [124, 196, 232], [128, 224, 128], [196, 222, 112], [236, 196, 112], [238, 140, 118]];
     var x = f * (s.length - 1), k = Math.min(s.length - 2, Math.floor(x)), r = x - k;
     return "rgb(" + [0, 1, 2].map(function (j) { return Math.round(s[k][j] + (s[k + 1][j] - s[k][j]) * r); }).join(",") + ")";
   }
@@ -399,6 +514,7 @@
     var t = tableDef(), box = $(".lt-grid");
     if (!t || !box || !tables[t.x]) return;
     var fx = where(tables[t.x], och[t.xch]), fy = t.y ? where(tables[t.y], och[t.ych]) : 0;
+    moveDot(box, fx, fy);
     if (lastCur != null) { var o = box.querySelector('td[data-k="' + lastCur + '"]'); if (o) o.classList.remove("cur"); }
     lastCur = null;
     if (fx === fx && fy === fy) {
@@ -406,7 +522,22 @@
       if (el) { el.classList.add("cur"); lastCur = k; }
     }
     var z = tables[t.z], v = fx === fx && fy === fy ? interp(t, fx, fy) : NaN, c = layout.constants[t.z];
-    $(".lt-tv").textContent = v === v ? fmt(v, c.digits == null ? 1 : c.digits) + (c.units ? " " + c.units : "") : "";
+    $(".lt-tv").textContent = v === v ? "now " + fmt(v, c.digits == null ? 1 : c.digits) + (c.units ? " " + c.units : "") : "";
+  }
+  /* the operating point: a dot that slides between cells as the engine runs, with a short trail (TunerStudio's) */
+  function moveDot(box, fx, fy) {
+    var dot = box.querySelector(".ts-dot"), c0 = box.querySelector('td[data-k="0"]'), svg = box.querySelector(".ts-trail");
+    if (!dot || !c0) return;
+    if (!(fx === fx && fy === fy)) { dot.hidden = true; return; }
+    var now = Date.now();
+    if (!trail.length || trail[trail.length - 1][0] !== fx || trail[trail.length - 1][1] !== fy) trail.push([fx, fy, now]);
+    while (trail.length && (trail.length > 24 || now - trail[0][2] > 1500)) trail.shift();
+    var cw = c0.offsetWidth, ch = c0.offsetHeight, x0 = c0.offsetLeft + cw / 2, y0 = c0.offsetTop + ch / 2;
+    var px = function (p) { return (x0 + p[0] * cw).toFixed(1) + "," + (y0 - p[1] * ch).toFixed(1); };
+    dot.hidden = false;
+    dot.style.transform = "translate(" + px([fx, fy]).replace(",", "px,") + "px)";
+    svg.setAttribute("width", box.scrollWidth); svg.setAttribute("height", box.scrollHeight);
+    svg.firstChild.setAttribute("points", trail.map(px).join(" "));
   }
   function interp(t, fx, fy) {
     var z = tables[t.z], C = tables[t.x].length, R = t.y ? tables[t.y].length : 1, c0 = Math.floor(fx), r0 = Math.floor(fy);
@@ -487,20 +618,36 @@
     requestAnimationFrame(frame);
   }
   function frame() {  // keeps the graph scrolling smoothly between frames while data is flowing
-    drawGauges(); drawChart(); cursor();
+    drawGauges(); drawDials(); drawLamps(); drawChart(); cursor();
     if (Date.now() - lastData < 1500) requestAnimationFrame(frame); else drawPending = false;
   }
   function drawChart() {
     var cv = $(".lt-chart canvas");
-    if (!cv) return;
+    if (!cv || !cv.offsetParent) return;
     var dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
     if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
     var ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
     var now = Date.now() / 1000, kx = W / HIST_S;
-    var lines = [["rpm", "#ffe14d", 0, 8000], ["map", "#4fd8ff", 0, 250], ["afr", "#ff5b4d", 10, 18], ["lambda_target", "#ffffff", 10, 18]];
-    ctx.lineWidth = 1.4;
-    ctx.font = "bold 11px system-ui, sans-serif"; ctx.textBaseline = "top";
+    var rg = dialCfg("rpm"), mg = dialCfg("map");
+    var lines = [["rpm", "#00e5ff", 0, rg ? rg.hi : 8000, "rpm (RPM)", 0], ["map", "#ff2a1a", mg ? mg.lo : 0, mg ? mg.hi : 250, "map (kPa)", 0],
+                 ["lambda_target", "#ffe600", 10, 20, "target AFR", 2], ["afr", "#22dd22", 10, 20, "afr", 2]];
+    // TunerStudio's graph: white grid lines, each trace's scale top-left and bottom-left in its colour, names on the right
+    ctx.strokeStyle = "rgba(255,255,255,.45)"; ctx.lineWidth = 1;
+    for (var gy = 1; gy < 4; gy++) { var yy = Math.round(H * gy / 4) + 0.5; ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(W, yy); ctx.stroke(); }
+    ctx.font = "12px Arial, Helvetica, sans-serif"; ctx.textBaseline = "top";
+    var lx = 4, bx = 4;
+    lines.forEach(function (l, i) {
+      ctx.fillStyle = l[1];
+      var top = String(+(+l[3]).toFixed(l[5])), bot = String(+(+l[2]).toFixed(l[5]));
+      ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.fillText(top, lx, 3); lx += ctx.measureText(top).width + 6;
+      ctx.textBaseline = "bottom"; ctx.fillText(bot, bx, H - 2); bx += ctx.measureText(bot).width + 6;
+      ctx.textAlign = "right"; ctx.textBaseline = "top";
+      var ys0 = hist.rows[l[0]], last = ys0 && ys0.length ? ys0[ys0.length - 1] : null;
+      ctx.fillText(l[4] + (last == null ? "" : "  " + fmt(last, l[5])), W - 4, 3 + i * 14);
+    });
+    ctx.textAlign = "left";
+    ctx.lineWidth = 1.5;
     lines.forEach(function (l, i) {
       var ys = hist.rows[l[0]];
       if (!ys || !ys.length) return;
@@ -511,8 +658,152 @@
         if (pen) ctx.lineTo(x, y); else { ctx.moveTo(x, y); pen = true; }
       }
       ctx.stroke();
-      ctx.fillStyle = l[1];
-      ctx.fillText({ rpm: "RPM", map: "MAP", afr: "AFR", lambda_target: "Target" }[l[0]] + " " + fmt(ys[ys.length - 1], l[0] === "rpm" ? 0 : 1), 6 + i * 92, 4);
+    });
+  }
+
+  /* ---------------------------------------------------------------- dials: TunerStudio's round gauges */
+  // each dial's range, warning and danger zones come from the ECU's own .ini, like TunerStudio's
+  var DEF = { rpm: [0, 8000, "RPM", "Engine Speed", 0], map: [0, 250, "kPa", "Engine MAP", 0], afr: [10, 20, "AFR", "Air:Fuel Ratio", 2],
+              clt: [-40, 120, "C", "Coolant", 0], tps: [0, 100, "%", "Throttle", 0], advance: [-10, 50, "deg", "Timing", 1], batt: [8, 18, "V", "Battery", 1],
+              iat: [-40, 100, "C", "Intake Air", 0] };
+  function gaugeFor(ch) {
+    var gs = layout.gauges || {}, keys = Object.keys(gs), front = layout.front || [];
+    var hit = front.filter(function (g) { return gs[g].ch === ch; })[0] || keys.filter(function (g) { return gs[g].ch === ch; })[0];
+    return hit ? gs[hit] : null;
+  }
+  function dialCfg(role) {
+    var ch = layout && layout.roles && layout.roles[role];
+    if (!ch) return null;
+    var g = gaugeFor(ch), d = DEF[role] || [0, 100, "", role, 1];
+    var cfg = g ? Object.assign({}, g) : { ch: ch, title: d[3], units: (layout.outputs[ch] || {}).units || d[2], lo: d[0], hi: d[1], vd: d[4], ld: d[4] };
+    if (role === "afr") cfg.title = "Air:Fuel Ratio";
+    if (role === "rpm") cfg.title = "Engine Speed";
+    if (role === "map") cfg.title = "Engine MAP";
+    return showCfg(cfg);
+  }
+  // shown the way you read it: mixture as AFR, temperatures in °F
+  function showCfg(g) {
+    var o = (layout.outputs[g.ch] || {}), c = Object.assign({}, g), lam = /lambda/i.test(g.title + " " + g.ch) && g.hi < 3;
+    var f = lam ? function (v) { return v == null ? v : v * STOICH; } : TEMP_F && (isC(g.units) || isC(o.units)) ? function (v) { return v == null ? v : v * 1.8 + 32; } : null;
+    if (f) ["lo", "hi", "loD", "loW", "hiW", "hiD"].forEach(function (k) { if (c[k] != null && Math.abs(c[k]) < 900) c[k] = f(c[k]); });
+    if (lam) { c.title = "Air:Fuel Ratio"; c.units = "AFR"; c.vd = 2; c.ld = 0; }
+    else if (f) c.units = "°F";
+    c.f = f;
+    return c;
+  }
+  function frontDials() {
+    var gs = layout.gauges || {}, list = (layout.front || []).map(function (g) { return showCfg(gs[g]); });
+    if (list.length) return list;
+    return ["rpm", "clt", "tps", "map", "afr", "batt", "advance", "iat"].map(dialCfg).filter(Boolean);
+  }
+  var dialSets = {};
+  function buildDials(host, cfgs) {
+    host.innerHTML = cfgs.map(function (g, i) { return '<div class="ts-dial"><canvas data-dial="' + i + '" aria-label="' + esc(g.title) + '"></canvas></div>'; }).join("");
+    return { host: host, cfgs: cfgs, cvs: $$("canvas", host), faces: [] };
+  }
+  function drawDials() {
+    if (!layout) return;
+    ["tune", "cluster"].forEach(function (name) {
+      var host = $('[data-dials="' + name + '"]');
+      if (!host || !host.offsetParent) return;
+      var set = dialSets[name], key = STOICH + "|" + TEMP_F;
+      if (!set || set.key !== key) {
+        var cfgs = name === "tune" ? ["rpm", "map", "afr"].map(dialCfg).filter(Boolean) : frontDials();
+        set = dialSets[name] = buildDials(host, cfgs); set.key = key;
+      }
+      set.cvs.forEach(function (cv, i) {
+        var g = set.cfgs[i], raw = och[g.ch], v = raw == null ? null : g.f ? g.f(raw) : raw;
+        set.faces[i] = dial(cv, g, v, set.faces[i]);
+      });
+    });
+  }
+  function nice(span) {
+    var raw = span / 8, p = Math.pow(10, Math.floor(Math.log10(raw))), n = raw / p;
+    return (n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10) * p;
+  }
+  // a round gauge: metal bezel, white face, warning (yellow) and danger (red) arcs, labelled ticks, red needle
+  function dial(cv, g, v, face) {
+    var dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+    if (!W || !H) return face;
+    var Wp = Math.round(W * dpr), Hp = Math.round(H * dpr);
+    if (cv.width !== Wp || cv.height !== Hp) { cv.width = Wp; cv.height = Hp; face = null; }
+    var S = Math.min(W, H), cx = W / 2, cy = H / 2, R = S / 2 - 1, A0 = Math.PI * 0.75, SW = Math.PI * 1.5;
+    var lo = g.lo, hi = g.hi, ang = function (x) { return A0 + Math.max(0, Math.min(1, (x - lo) / (hi - lo))) * SW; };
+    if (!face) {
+      face = document.createElement("canvas"); face.width = Wp; face.height = Hp;
+      var f = face.getContext("2d"); f.setTransform(dpr, 0, 0, dpr, 0, 0);
+      var gr = f.createLinearGradient(cx - R, cy - R, cx + R, cy + R);
+      gr.addColorStop(0, "#fdfdfd"); gr.addColorStop(0.5, "#a9a9a9"); gr.addColorStop(1, "#5e5e5e");
+      f.fillStyle = gr; f.beginPath(); f.arc(cx, cy, R, 0, 7); f.fill();
+      gr = f.createLinearGradient(cx - R, cy - R, cx + R, cy + R);
+      gr.addColorStop(0, "#6a6a6a"); gr.addColorStop(1, "#f0f0f0");
+      f.fillStyle = gr; f.beginPath(); f.arc(cx, cy, R * 0.93, 0, 7); f.fill();
+      gr = f.createRadialGradient(cx, cy - R * 0.25, R * 0.1, cx, cy, R * 0.89);
+      gr.addColorStop(0, "#ffffff"); gr.addColorStop(0.75, "#f4f4f4"); gr.addColorStop(1, "#d2d2d2");
+      f.fillStyle = gr; f.beginPath(); f.arc(cx, cy, R * 0.89, 0, 7); f.fill();
+      var band = function (a, b, col) {
+        if (a == null || b == null) return;
+        a = Math.max(lo, Math.min(hi, a)); b = Math.max(lo, Math.min(hi, b));
+        if (b - a <= (hi - lo) * 0.002) return;
+        f.strokeStyle = col; f.lineWidth = R * 0.1; f.beginPath(); f.arc(cx, cy, R * 0.76, ang(a), ang(b)); f.stroke();
+      };
+      band(lo, g.loD, "#ff1a00"); band(g.loD, g.loW, "#ffe600"); band(g.hiW, g.hiD, "#ffe600"); band(g.hiD, hi, "#ff1a00");
+      var div = hi - lo >= 2000 && /rpm/i.test(g.units + g.title) ? 1000 : 1, step = nice(hi - lo), first = Math.ceil(lo / step - 1e-9) * step;
+      f.strokeStyle = "#111"; f.fillStyle = "#111"; f.textAlign = "center"; f.textBaseline = "middle";
+      f.font = "bold " + Math.max(8, R * 0.13).toFixed(1) + "px Arial, Helvetica, sans-serif";
+      for (var x = first; x <= hi + step * 1e-6; x += step / 2) {
+        var major = Math.abs(Math.round((x - first) / step) * step - (x - first)) < step * 1e-6, a = ang(x);
+        f.lineWidth = major ? Math.max(1.5, R * 0.025) : 1;
+        f.beginPath(); f.moveTo(cx + Math.cos(a) * R * 0.86, cy + Math.sin(a) * R * 0.86);
+        f.lineTo(cx + Math.cos(a) * R * (major ? 0.72 : 0.79), cy + Math.sin(a) * R * (major ? 0.72 : 0.79)); f.stroke();
+        if (major) {
+          var lab = x / div, txt = String(+lab.toFixed(Math.abs(step / div) < 1 ? (Math.abs(step / div) < 0.1 ? 2 : 1) : 0));
+          f.fillText(txt, cx + Math.cos(a) * R * 0.62, cy + Math.sin(a) * R * 0.62);
+        }
+      }
+      f.font = "bold " + Math.max(8, R * 0.12).toFixed(1) + "px Arial, Helvetica, sans-serif";
+      var title = g.title.replace(/\s+-\s.*$/, "");
+      if (title.length > 16) title = title.replace(/^[^:]+:\s*/, "");
+      f.fillText(title, cx, cy - R * 0.2, R * 0.95);
+      if (div > 1) { f.font = Math.max(7, R * 0.09).toFixed(1) + "px Arial, Helvetica, sans-serif"; f.fillText("x1000", cx, cy - R * 0.36); }
+      f.font = Math.max(8, R * 0.12).toFixed(1) + "px Arial, Helvetica, sans-serif";
+      f.fillText(g.units || "", cx, cy + R * 0.52);
+    }
+    var ctx = cv.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, Wp, Hp); ctx.drawImage(face, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#111"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.font = "bold " + Math.max(10, R * 0.17).toFixed(1) + "px Arial, Helvetica, sans-serif";
+    ctx.fillText(v == null ? "–" : fmt(v, g.vd || 0), cx, cy + R * 0.34);
+    if (v != null) {
+      var an = ang(v), ca = Math.cos(an), sa = Math.sin(an), w = R * 0.045;
+      ctx.fillStyle = "#e01010"; ctx.beginPath();
+      ctx.moveTo(cx + ca * R * 0.84, cy + sa * R * 0.84);
+      ctx.lineTo(cx - sa * w - ca * R * 0.16, cy + ca * w - sa * R * 0.16);
+      ctx.lineTo(cx + sa * w - ca * R * 0.16, cy - ca * w - sa * R * 0.16);
+      ctx.closePath(); ctx.fill();
+    }
+    var hub = ctx.createRadialGradient(cx - R * 0.03, cy - R * 0.04, R * 0.01, cx, cy, R * 0.12);
+    hub.addColorStop(0, "#666"); hub.addColorStop(1, "#000");
+    ctx.fillStyle = hub; ctx.beginPath(); ctx.arc(cx, cy, R * 0.11, 0, 7); ctx.fill();
+    return face;
+  }
+  /* indicator lamps, from the project's front page */
+  var lampsBuilt = false;
+  function drawLamps() {
+    var box = $(".ts-ind"), view = box && box.closest(".ts-view");
+    if (!box || !layout || !view || view.hidden) return;
+    var list = layout.indicators || [];
+    if (!lampsBuilt) { box.innerHTML = list.map(function (x, i) { return '<span data-lamp="' + i + '"></span>'; }).join(""); lampsBuilt = true; }
+    list.forEach(function (x, i) {
+      var el = box.children[i], v = och[x.ch];
+      if (!el) return;
+      var on = v == null ? false : x.op === "!=" ? v != x.v : x.op === "==" ? v == x.v : x.op === ">" ? v > x.v : x.op === "<" ? v < x.v :
+        x.op === ">=" ? v >= x.v : x.op === "<=" ? v <= x.v : !!v;
+      var txt = on ? x.on : x.off || x.on;
+      if (el.textContent !== txt) el.textContent = txt;
+      el.style.background = on ? x.onBg : x.offBg; el.style.color = on ? x.onFg : x.offFg;
+      el.classList.toggle("dim", v == null);
     });
   }
 
@@ -584,13 +875,8 @@
       li.querySelector("input").value = "";
       return;
     }
-    var tabb = e.target.closest("[data-pane]");
-    if (tabb) {
-      $$("[data-pane]").forEach(function (x) { x.classList.toggle("on", x === tabb); });
-      $(".lt-tablebox").hidden = tabb.dataset.pane !== "tables"; $(".lt-set").hidden = tabb.dataset.pane !== "settings";
-      if (tabb.dataset.pane === "settings") renderSettings();
-      return;
-    }
+    var tabb = e.target.closest("[data-view]");
+    if (tabb) { showView(tabb.dataset.view); return; }
     var gb = e.target.closest("[data-gadd]");
     if (gb) { pickGauge(); return; }
     gb = e.target.closest("[data-gdel]");
@@ -611,10 +897,43 @@
     if (e.target.matches("[data-project]")) pickProject(e.target.files);
     if (e.target.matches("[data-files]")) pickProject(e.target.files);
   });
+  function showView(v) {
+    $$("[data-view]").forEach(function (x) { x.classList.toggle("on", x.dataset.view === v); x.setAttribute("aria-selected", x.dataset.view === v ? "true" : "false"); });
+    $$("[data-v]").forEach(function (x) { x.hidden = x.dataset.v !== v; });
+    try { localStorage.setItem("msq.live.view", v); } catch (e) { /* ignore */ }
+    if (v === "settings") renderSettings();
+    if (v === "tune") renderTable();
+    drawLive();
+  }
   function copy(text) {
     (navigator.clipboard && window.isSecureContext ? navigator.clipboard.writeText(text) : Promise.reject()).then(function () { toast("Link copied: send it to your tuner."); },
       function () { window.prompt("Copy this link", text); });
   }
+
+  /* The project is remembered in this browser (the .ini and tune, in IndexedDB), so next time it's one click. */
+  function idb(fn) {
+    return new Promise(function (ok, no) {
+      if (!window.indexedDB) return no(new Error("no IndexedDB"));
+      var r = indexedDB.open("msq-live", 1);
+      r.onupgradeneeded = function () { r.result.createObjectStore("p"); };
+      r.onsuccess = function () { var tx = r.result.transaction("p", "readwrite"); fn(tx.objectStore("p"), ok, no); };
+      r.onerror = function () { no(r.error); };
+    });
+  }
+  function saveProject(p) { idb(function (st, ok) { st.put(p, "last").onsuccess = ok; }).catch(function () { /* private window */ }); }
+  function lastProject() { return idb(function (st, ok) { var g = st.get("last"); g.onsuccess = function () { ok(g.result || null); }; g.onerror = function () { ok(null); }; }).catch(function () { return null; }); }
+  function useLast(p) {
+    var ini = new File([p.ini], "mainController.ini"), msq = p.msq ? new File([p.msq], p.msqName || "CurrentTune.msq") : null;
+    return startSession({ ini: ini, msq: msq, msqText: p.msq || "" });
+  }
+  if (ROLE === "car") lastProject().then(function (p) {
+    var li = $(".lt-last");
+    if (!p || !li) return;
+    li.hidden = false;
+    $("[data-last]", li).textContent = "Use " + (p.name || "my project") + " (from " + new Date(p.at).toLocaleDateString() + ")";
+    li.querySelector("[data-last]").onclick = function () { useLast(p).catch(function (e) { toast(e.message, true); }); };
+    if (SID && !carFiles) carFiles = { last: p };  // a reload: the session can restart by itself
+  });
 
   /* the project folder: projectCfg/mainController.ini and the tune (CurrentTune.msq) */
   function pickProject(files) {
@@ -626,7 +945,11 @@
     if (!ini) { toast("That folder has no projectCfg/mainController.ini. Choose the TunerStudio project folder.", true); return; }
     var read = msq ? msq.text() : Promise.resolve("");
     read.then(function (msqText) {
-      return startSession({ ini: ini, msq: msq, msqText: msqText });
+      return ini.text().then(function (iniText) {
+        var path = (ini.webkitRelativePath || "").split("/"), name = path.length > 2 ? path[0] : (msq ? msq.name.replace(/\.msq$/i, "") : "my project");
+        saveProject({ ini: iniText, msq: msqText, msqName: msq ? msq.name : "", name: name, at: Date.now() });
+        return startSession({ ini: ini, msq: msq, msqText: msqText });
+      });
     }).catch(function (e) { $(".lt-status").textContent = e.message; toast(e.message, true); });
   }
 
@@ -698,6 +1021,7 @@
       $(".lt-status").textContent = ROLE === "car" ? "This session isn't running any more. Choose the project folder to start a new one." : "This live session has ended. Ask for a new link.";
     });
   }
-  window.addEventListener("resize", function () { renderTable(); });
+  (function () { var v = null; try { v = localStorage.getItem("msq.live.view"); } catch (e) { /* ignore */ } if (v && v !== "tune" && $('[data-view="' + v + '"]')) showView(v); })();
+  window.addEventListener("resize", function () { renderTable(); dialSets = {}; drawLive(); });
   window.addEventListener("beforeunload", function (e) { if (ROLE === "car" && running) { e.preventDefault(); e.returnValue = ""; } });
 })();

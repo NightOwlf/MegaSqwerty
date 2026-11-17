@@ -114,13 +114,51 @@ def _preprocess(lines: list[str], defined: set[str]) -> list[str]:
     return out
 
 
+def msq_values(msq_text: str) -> dict:
+    """Plain numeric constants in a tune (<constant name="rpmHardLimit">7000.0</constant>), for gauge ranges
+    written as expressions like {rpmHardLimit + 2000}."""
+    out = {}
+    for name, val in re.findall(r'<constant[^>]*\sname="(\w+)"[^>]*>\s*([-\d.eE+]+)\s*</constant>', msq_text or ""):
+        try:
+            out[name] = float(val)
+        except ValueError:
+            pass
+    return out
+
+
+_EXPR = re.compile(r"^\{\s*(\w+)\s*(?:([-+*/])\s*([\d.]+))?\s*\}$")
+
+
+def _gauge_num(s: str, values: dict):
+    """A gauge limit: a number, or {constant}, {constant + 2000} and the like, read from the tune."""
+    s = s.strip()
+    n = _num(s)
+    if n is not None:
+        return n
+    m = _EXPR.match(s)
+    if not m or m.group(1) not in values:
+        return None
+    v, op, k = values[m.group(1)], m.group(2), float(m.group(3) or 0)
+    return v + k if op == "+" else v - k if op == "-" else v * k if op == "*" else v / k if op == "/" and k else v
+
+
+_COLORS = {"white": "#ffffff", "black": "#000000", "red": "#ff2a1a", "yellow": "#ffe600", "green": "#22dd22",
+           "blue": "#3366ff", "orange": "#ff9900", "gray": "#a0a0a0", "grey": "#a0a0a0", "cyan": "#00e5ff",
+           "magenta": "#ff40ff", "lightgray": "#d6d6d6", "darkgray": "#606060"}
+_IND = re.compile(r"^\{\s*(\w+)\s*(?:(!=|==|>|<|>=|<=)\s*(-?[\d.]+))?\s*\}$")
+
+
 def msq_settings(msq_text: str) -> set[str]:
     """The setting options a tune was saved with (<setting name="AFR" value="AFR"/>)."""
     return set(re.findall(r'<setting\s+name="[^"]*"\s+value="([^"]+)"', msq_text or ""))
 
 
-def parse(text: str, defined: set[str] | None = None) -> dict:
+def parse(text: str, defined: set[str] | None = None, values: dict | None = None) -> dict:
     lines = _preprocess(text.replace("\r\n", "\n").split("\n"), defined or set())
+    values = values or {}
+    gauges: dict = {}
+    front: list = []
+    indicators: list = []
     section = ""
     comms: dict = {"pageSizes": [], "pageIdentifiers": []}
     constants: dict = {}
@@ -223,6 +261,31 @@ def parse(text: str, defined: set[str] | None = None) -> dict:
                 curves[cur_curve]["xch"] = f[1] if len(f) > 1 else None
             elif cur_curve and key == "yBins" and curves[cur_curve]["y"] is None:
                 curves[cur_curve]["y"] = f[0]
+        elif section == "GaugeConfigurations":
+            # name = channel, "Title", "units", lo, hi, loDanger, loWarn, hiWarn, hiDanger, valueDigits, labelDigits
+            f = _fields(rhs)
+            if key != "gaugeCategory" and len(f) >= 9 and re.match(r"^\w+$", f[0]):
+                g = {"ch": f[0], "title": _unq(f[1]), "units": _unq(f[2])}
+                for i, k in enumerate(("lo", "hi", "loD", "loW", "hiW", "hiD")):
+                    g[k] = _gauge_num(f[3 + i], values)
+                g["vd"] = int(_num(f[9], 0) or 0) if len(f) > 9 else 0
+                g["ld"] = int(_num(f[10], 0) or 0) if len(f) > 10 else 0
+                if g["lo"] is not None and g["hi"] is not None and g["hi"] > g["lo"]:
+                    gauges[key] = g
+        elif section == "FrontPage":
+            f = _fields(rhs)
+            if re.match(r"^gauge\d+$", key) and f:
+                front.append((int(key[5:]), f[0]))
+            elif key == "indicator" and len(f) >= 3:
+                # { channel } or { channel != 0 }…, "off label", "on label", off-bg, off-fg, on-bg, on-fg
+                m = _IND.match(f[0])
+                if m and len(indicators) < 60:
+                    col = lambda i, d: _COLORS.get(f[i].strip().lower(), d) if len(f) > i else d  # noqa: E731
+                    on = _unq(f[2]) if f[2].startswith('"') else m.group(1)
+                    indicators.append({"ch": m.group(1), "op": m.group(2) or "", "v": float(m.group(3) or 0),
+                                       "off": _unq(f[1]) if f[1].startswith('"') else "", "on": on,
+                                       "offBg": col(3, "#ffffff"), "offFg": col(4, "#000000"),
+                                       "onBg": col(5, "#22dd22"), "onFg": col(6, "#000000")})
         elif key == "field":  # dialog fields: the names people know settings by
             f = _fields(rhs)
             if len(f) >= 2 and f[1] and re.match(r"^\w+$", f[1]):
@@ -251,7 +314,8 @@ def parse(text: str, defined: set[str] | None = None) -> dict:
                    if c["x"] in constants and c["y"] in constants and constants[c["x"]]["kind"] == "array"
                    and constants[c["y"]]["kind"] == "array"}
     return {"comms": comms, "constants": constants, "outputs": outputs, "datalog": datalog, "tables": good,
-            "curves": good_curves, "labels": labels, "powerCycle": sorted(power_cycle)}
+            "curves": good_curves, "labels": labels, "powerCycle": sorted(power_cycle), "gauges": gauges,
+            "front": [g for _, g in sorted(front)], "indicators": indicators}
 
 
 # Settings a remote tuner may not change, whatever the driver allows: what only takes effect after a power cycle
@@ -293,6 +357,9 @@ def layout_for_live(ini: dict) -> dict:
         curves.append({"id": cv["id"], "title": cv["title"], "x": cv["x"], "xch": cv["xch"], "y": None, "ych": None,
                        "z": cv["y"], "curve": True})
     labels = ini.get("labels") or {}
+    for name in ("stoichRatioPrimary",):  # read only: to show mixture as AFR with the tune's own stoich
+        if name in c and c[name]["kind"] == "scalar":
+            keep[name] = c[name]
     for name, k in c.items():
         kind = remote_kind(name, k, power)
         if kind and name not in keep:
@@ -311,5 +378,14 @@ def layout_for_live(ini: dict) -> dict:
     for t in curves:
         if t["xch"] and t["xch"] in ini["outputs"] and t["xch"] not in outs:
             outs[t["xch"]] = dict(ini["outputs"][t["xch"]], label=ini["datalog"].get(t["xch"]) or t["xch"])
+    # the dials and indicator lamps, the way the project's front page has them (only what the ECU sends directly)
+    gauges = {k: g for k, g in (ini.get("gauges") or {}).items() if g["ch"] in ini["outputs"]}
+    front = [g for g in (ini.get("front") or []) if g in gauges][:8]
+    indicators = [i for i in (ini.get("indicators") or []) if i["ch"] in ini["outputs"]]
+    extra = ["stoichiometricRatio"] if "stoichiometricRatio" in ini["outputs"] else []
+    for ch in [gauges[g]["ch"] for g in gauges] + [i["ch"] for i in indicators] + extra:
+        if ch not in outs:
+            outs[ch] = dict(ini["outputs"][ch], label=ini["datalog"].get(ch) or ch)
     return {"comms": ini["comms"], "constants": keep, "outputs": outs, "tables": list(ini["tables"].values()),
-            "curves": curves, "editable": editable, "powerCycle": sorted(power)}
+            "curves": curves, "editable": editable, "powerCycle": sorted(power), "gauges": gauges, "front": front,
+            "indicators": indicators}

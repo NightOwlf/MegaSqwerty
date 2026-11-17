@@ -14,6 +14,8 @@
   <section class="lt-setup">
     <ol class="lt-steps">
       <li><b>Close TunerStudio</b> (only one program can use the ECU's USB port at a time).</li>
+      <li class="lt-last" hidden><button class="btn primary big" type="button" data-last></button>
+        <small class="dim">Same project as last time. Or choose it again below if you changed the tune in TunerStudio since.</small></li>
       <li><label class="btn primary big lt-file">{{ icon('folder') }}<span>Choose the TunerStudio project folder</span><input type="file" data-project webkitdirectory directory multiple hidden></label>
         <small class="dim">The folder with <code>projectCfg/mainController.ini</code> and <code>CurrentTune.msq</code>. Or <label class="lt-link">choose the files<input type="file" data-files accept=".ini,.msq" multiple hidden></label>.</small></li>
       <li class="lt-need-session"><button class="btn primary big" type="button" data-connect>Connect the ECU (USB)</button>
@@ -30,7 +32,7 @@
       <label class="lt-opt"><span>Remote changes</span>
         <select data-mode><option value="off">Off: the tuner can only watch</option><option value="ask" selected>Ask me before each change</option><option value="auto">Allow</option></select></label>
       <label class="check sm"><input type="checkbox" data-allow-burn><span>Let the tuner burn (make changes permanent)</span></label>
-      <p class="fine">Changes go to the ECU's working memory and are only kept if someone burns them: switching the car off undoes anything not burned. Each change is limited to 25% on VE and +5° of timing, and every value stays inside the range the ECU allows. <b>The driver drives; tune from the passenger seat or parked.</b></p>
+      <p class="fine">Changes go to the ECU's working memory and are only kept if someone burns them: switching the car off undoes anything not burned. Each change is limited to 25% on VE, 1.0 AFR on the target AFR and +5° of timing, and every value stays inside the range the ECU allows. <b>The driver drives; tune from the passenger seat or parked.</b></p>
     </div>
     <div class="lt-ask" hidden></div>
   </section>
@@ -38,34 +40,47 @@
   <p class="lt-mode-note dim"></p>
   {% endif %}
 
-  <section class="lt-live">
-    <div class="lt-gauges"></div>
-    <div class="lt-chart"><canvas></canvas></div>
-    <div class="lt-panes"><button type="button" class="on" data-pane="tables">Tables &amp; curves</button><button type="button" data-pane="settings">Settings</button></div>
-    <div class="lt-set" hidden>
+  <section class="lt-live ts">
+    <div class="ts-tabs" role="tablist">
+      <button type="button" role="tab" data-view="tune" class="on">Tuning</button>
+      <button type="button" role="tab" data-view="cluster">Gauge Cluster</button>
+      <button type="button" role="tab" data-view="settings">Settings</button>
+      <span class="st-grow"></span><span class="ts-rec" hidden></span>
+    </div>
+    <div class="ts-view ts-tune" data-v="tune">
+      <div class="ts-dials" data-dials="tune"></div>
+      <div class="ts-panel lt-tablebox">
+        <div class="ts-title"><select data-table aria-label="Table"></select><span class="lt-tv mono" title="The value the engine is using now"></span></div>
+        <div class="ts-bar">
+          <input type="text" inputmode="decimal" class="lt-val" placeholder="Value" aria-label="Value for the selected cells">
+          <button class="ts-b" type="button" data-act="set" title="Set the selected cells to this value">=</button>
+          <button class="ts-b" type="button" data-act="inc" title="Up one step">▲</button>
+          <button class="ts-b" type="button" data-act="dec" title="Down one step">▼</button>
+          <button class="ts-b" type="button" data-act="up1" title="Add 1%">+1%</button>
+          <button class="ts-b" type="button" data-act="dn1" title="Take away 1%">−1%</button>
+          <button class="ts-b" type="button" data-act="range" title="Tap two corner cells to select everything between">⬚</button>
+          <button class="ts-b" type="button" data-act="clear" title="Clear the selection">✕</button>
+          <span class="lt-selinfo"></span>
+          <span class="st-grow"></span>
+          <button class="ts-b" type="button" data-act="undo" title="Undo the last change">↶ Undo</button>
+          <button class="ts-b ts-burn" type="button" data-act="burn" title="Make the changes permanent">Burn</button>
+        </div>
+        <p class="lt-ro" hidden>View only: this one can't be changed remotely (it needs a power cycle, or it sets how the engine is wired or protected).</p>
+        <div class="lt-grid"></div>
+        <div class="ts-foot"><span class="ts-key"><i class="up"></i>higher than the ECU had <i class="dn"></i>lower</span>
+          <a class="ts-link" data-tune-link href="#" hidden>Tune, history &amp; download</a></div>
+      </div>
+      <div class="ts-graph lt-chart"><canvas></canvas></div>
+    </div>
+    <div class="ts-view ts-clusterview" data-v="cluster" hidden>
+      <div class="ts-dials ts-cluster" data-dials="cluster"></div>
+      <div class="ts-ind"></div>
+      <div class="lt-gauges"></div>
+    </div>
+    <div class="ts-view lt-set" data-v="settings" hidden>
       <input type="search" placeholder="Search settings (idle, launch, accel, cranking…)" aria-label="Search settings" autocomplete="off" autocapitalize="off" spellcheck="false">
       <ul></ul>
       <p class="fine">The driver approves every settings change. Settings that need a power cycle, or that set how the engine is wired, timed, measured or protected (pins, trigger, injectors, sensors, rev and boost limits, knock), aren't here: change those at the car in TunerStudio.</p>
-    </div>
-    <div class="lt-tablebox">
-      <div class="lt-th"><select data-table aria-label="Table"></select><span class="lt-tv mono"></span></div>
-      <p class="lt-ro dim" hidden>View only: this one can't be changed remotely (it needs a power cycle, or it sets how the engine is wired or protected).</p>
-      <div class="lt-grid"></div>
-      <div class="lt-tools" hidden>
-        <input type="text" inputmode="decimal" class="lt-val" placeholder="Value" aria-label="Value for the selected cells">
-        <button class="btn sm" type="button" data-act="set">Set</button>
-        <button class="btn sm" type="button" data-act="dec">−</button><button class="btn sm" type="button" data-act="inc">+</button>
-        <button class="btn sm" type="button" data-act="dn1">−1%</button><button class="btn sm" type="button" data-act="up1">+1%</button>
-        <button class="btn sm" type="button" data-act="clear">Clear</button>
-        <span class="lt-selinfo dim"></span>
-      </div>
-      <div class="lt-row lt-acts">
-        <button class="btn sm" type="button" data-act="range" title="Tap two cells to select everything between">Range</button>
-        <button class="btn sm" type="button" data-act="undo">↶ Undo last change</button>
-        <button class="btn sm" type="button" data-act="burn">Burn to ECU</button>
-        <a class="btn sm" data-tune-link href="#" hidden>Tune, history &amp; download</a>
-      </div>
-      <p class="fine">Tap cells to select them (Range: tap two corners), then change them. The cell the engine is in now is outlined; it moves as the car runs.</p>
     </div>
     <div class="lt-log"><b>Changes</b><ul></ul></div>
   </section>

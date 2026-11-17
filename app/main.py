@@ -80,7 +80,7 @@ LOG_MAX_MB = LOG_MAX_BYTES // (1024 * 1024)
 LOG_MAX_FILES = 6
 LOG_BODY_LIMIT = int(os.environ.get("LOG_BODY_MB", "420")) * 1024 * 1024  # several logs in one upload
 LOG_TOO_LARGE = f"That upload is too large. Each log can be up to {LOG_MAX_MB} MB."
-LOG_UPLOAD_RE = re.compile(r"^(/logs|/t/[A-Za-z0-9]{10}/log|/admin/restore/log)/?$")
+LOG_UPLOAD_RE = re.compile(r"^(/logs|/t/[A-Za-z0-9]{10}/log|/admin/restore/log|/live/[A-Za-z0-9]{12}/log)/?$")
 TUNE_JSON_RE = re.compile(r"^/upload/?$")
 
 CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; "
@@ -1252,7 +1252,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             "og_url": page_url(request),
         })
 
-    livemod.register(app, store, templates, {"client_ip": client_ip})
+    livemod.register(app, store, templates, {"client_ip": client_ip, "ingest_log": ingest_log})
 
     return app
 

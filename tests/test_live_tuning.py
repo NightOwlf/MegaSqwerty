@@ -69,6 +69,17 @@ computed = { RPMValue * 2 }
    entry = AFRValue, "Air/Fuel Ratio", float, "%.2f"
    entry = afrTarget, "Fuel: target AFR", float, "%.2f"
    entry = MAPValue, "MAP", float, "%.1f"
+[GaugeConfigurations]
+gaugeCategory = "Main"
+   RPMGauge = RPMValue, "RPM - engine speed", "RPM", 0, {rpmHardLimit + 2000}, 200, 400, {rpmHardLimit - 500}, {rpmHardLimit}, 0, 0
+   CLTGauge = coolant, "Coolant temp", "C", -40, 140, -15, 1, 95, 110, 1, 1
+   ghostGauge = computed, "Not sent by the ECU", "", 0, 10, 0, 0, 10, 10, 0, 0
+[FrontPage]
+   gauge2 = CLTGauge
+   gauge1 = RPMGauge
+   gauge3 = ghostGauge
+   indicator = { coolant > 100 }, "CLT ok", "HOT", white, black, red, black
+   indicator = { computed }, "a", "b", white, black, red, black
 [TableEditor]
    table = veTableTbl, veTableMap, "VE Table", 1
       xBins = veRpmBins, RPMValue
@@ -114,6 +125,39 @@ REAL = Path("/Users/michaelnixon/Desktop/Wagovan")
 
 
 @pytest.mark.skipif(not (REAL / "projectCfg/mainController.ini").exists(), reason="the FOME project isn't on this machine")
+def test_dials_and_lamps_come_from_the_front_page():
+    """The dials use the ECU's own ranges and warning zones (limits written as expressions read from the tune),
+    in front-page order, and only channels the ECU sends."""
+    msq = '<msq><page><constant name="rpmHardLimit" units="rpm">7000.0</constant></page></msq>'
+    ini = ecuini.parse(INI, ecuini.msq_settings(msq), ecuini.msq_values(msq))
+    live = ecuini.layout_for_live(ini)
+    assert live["front"] == ["RPMGauge", "CLTGauge"]
+    rpm = live["gauges"]["RPMGauge"]
+    assert (rpm["lo"], rpm["hi"], rpm["hiW"], rpm["hiD"]) == (0, 9000, 6500, 7000)
+    assert [i["ch"] for i in live["indicators"]] == ["coolant"]
+    assert live["indicators"][0]["op"] == ">" and live["indicators"][0]["onBg"] == "#ff2a1a"
+
+
+def test_the_session_is_recorded_as_a_log(client, fx):
+    """The car page sends the session's datalog in pieces; they grow one log, on the session's tune copy."""
+    s = start(client, fx)
+    sid, car = s["id"], s["car_key"]
+    head = '"MSQ Viewer live session"\nTime\tRPM\tMAP\tAFR\ns\tRPM\tkPa\tAFR\n'
+    rows = lambda t0: "".join(f"{t0 + i * 0.05:.3f}\t{900 + i}\t{40 + i % 5}\t14.{i % 9}\n" for i in range(40))  # noqa: E731
+    assert client.post(f"/live/{sid}/log?k=wrong", content=head + rows(0)).status_code == 404
+    r = client.post(f"/live/{sid}/log?k={car}&part=1&secs=2", content=head + rows(0)).json()
+    slug = r["slug"]
+    assert r["rows"] == 40 and r["url"] == f"/l/{slug}?tune={s['tune']}"
+    r2 = client.post(f"/live/{sid}/log?k={car}&part=1&slug={slug}&secs=4", content=rows(2)).json()
+    assert r2["slug"] == slug and r2["rows"] == 80
+    assert client.get(f"/l/{slug}?tune={s['tune']}").status_code == 200
+    idx = client.get(f"/l/{slug}/index.json").json()
+    assert idx["rows"] == 80 and "rpm" in idx["roles"]
+    # a piece that can't be read leaves the log as it was
+    assert client.post(f"/live/{sid}/log?k={car}&part=1&slug={slug}", content=b"\x00\x01garbage\tx\ty\n1\t2").status_code in (200, 400)
+    assert client.get(f"/l/{slug}/index.json").json()["rows"] >= 80
+
+
 def test_a_real_fome_definition_matches_its_tune():
     """Every value the tune has for a live table fits the ECU page where the .ini says it lives."""
     msq = (REAL / "CurrentTune.msq").read_text("latin-1")

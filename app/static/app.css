@@ -1565,3 +1565,82 @@ body.page-live .main { max-width: 1200px; }
 .lv-pane-tag.rec { background: rgba(255, 255, 255, .14); color: #e8eaed; }
 .lv-pane-tag.sim { background: rgba(255, 196, 0, .25); color: #ffd54a; }
 @media (max-width: 759px) { .lv-sim-graph { height: 340px; } }
+
+/* ---------- live tuning: TunerStudio's look (gray Swing panels, round gauges, heat-coloured tables) ---------- */
+.lt-live.ts { display: block; font: 12px Tahoma, "Segoe UI", Arial, Helvetica, sans-serif; color: #000; }
+.ts-tabs { display: flex; align-items: flex-end; gap: 2px; padding: 0 4px; border-bottom: 1px solid #8e8e8e; }
+.ts-tabs [data-view] { min-height: 30px; padding: 0 14px; border: 1px solid #8e8e8e; border-bottom: 0; border-radius: 4px 4px 0 0; background: linear-gradient(#f6f6f6, #d4d4d4); color: #222; font: 12px Tahoma, Arial, sans-serif; cursor: pointer; }
+.ts-tabs [data-view].on { position: relative; top: 1px; background: #eeeeee; font-weight: 700; }
+.ts-rec { align-self: center; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 2px 4px; font-size: 12px; color: var(--text); }
+.ts-rec[hidden] { display: none; }
+.ts-rec a { color: var(--link); font-weight: 700; }
+.ts-dotrec { color: #e01010; animation: ts-blink 1.2s steps(2, start) infinite; }
+@keyframes ts-blink { to { visibility: hidden; } }
+.ts-view { padding: 6px; border: 1px solid #8e8e8e; border-top: 0; background: #eeeeee; }
+.ts-view[hidden] { display: none; }
+.ts-tune { display: grid; grid-template-columns: 210px minmax(0, 1fr); grid-template-areas: "dials panel" "dials graph"; gap: 6px; }
+.ts-tune .ts-dials { grid-area: dials; display: grid; grid-auto-rows: min-content; gap: 6px; align-content: start; padding: 6px; border: 2px inset #9a9a9a; background: #000; }
+.ts-dial { aspect-ratio: 1; }
+.ts-dial canvas { display: block; width: 100%; height: 100%; }
+.ts-panel { grid-area: panel; display: grid; gap: 4px; padding: 4px 6px 6px; border: 1px solid #a0a0a0; border-radius: 3px; background: #eeeeee; }
+.ts-title { display: flex; align-items: center; gap: 8px; }
+.ts-title select { flex: 1; min-width: 0; height: 26px; border: 1px solid #8e8e8e; border-radius: 2px; background: linear-gradient(#ffffff, #e2e2e2); color: #000; font: 700 12px Tahoma, Arial, sans-serif; }
+.ts-title .lt-tv { color: #0018a8; font: 700 12px Tahoma, Arial, sans-serif; }
+.ts-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; padding: 3px; border: 1px solid #b8b8b8; background: linear-gradient(#fafafa, #e4e4e4); }
+.ts-b { min-width: 30px; height: 28px; padding: 0 7px; border: 1px solid #8e8e8e; border-radius: 2px; background: linear-gradient(#ffffff, #dcdcdc); color: #000; font: 12px Tahoma, Arial, sans-serif; cursor: pointer; }
+.ts-b:hover { background: linear-gradient(#ffffff, #cfe0f6); }
+.ts-b:active, .ts-b.on { background: linear-gradient(#c2d6f2, #e8f0fb); border-color: #4a6fa8; }
+.ts-b:disabled { color: #9a9a9a; cursor: default; }
+.ts-burn.primary { background: linear-gradient(#ff6b5c, #d81e0b); border-color: #8a1205; color: #fff; font-weight: 700; }
+.ts-bar .lt-val { width: 72px; height: 28px; padding: 0 5px; border: 1px solid #8e8e8e; border-radius: 0; background: #fff; color: #000; font: 13px Tahoma, Arial, sans-serif; }
+.lt:not(.has-sel) .ts-bar :is([data-act=set], [data-act=inc], [data-act=dec], [data-act=up1], [data-act=dn1], [data-act=clear]) { color: #9a9a9a; pointer-events: none; }
+.ts-bar .lt-selinfo { color: #555; font-size: 11.5px; }
+.ts-panel .lt-ro { color: #7a4b00; }
+.ts .lt-grid { position: relative; padding: 1px; background: #ffffff; border: 1px solid #7a7a7a; }
+.ts .lt-tt { border-collapse: collapse; font: 12px Arial, Helvetica, sans-serif; font-variant-numeric: tabular-nums; }
+.ts .lt-tt td, .ts .lt-tt th { height: 21px; border: 1px solid #9b9b9b; }
+.ts .lt-tt td { color: #000; }
+.ts .lt-tt td.up { color: #d00000; font-weight: 700; }
+.ts .lt-tt td.dn { color: #0000c8; font-weight: 700; }
+.ts .lt-tt th { background: linear-gradient(#e0e0e0, #bdbdbd); color: #000; font-weight: 400; border-color: #8a8a8a; box-shadow: inset 1px 1px 0 #f4f4f4; }
+.ts .lt-tt td.sel { background: #3a5fae !important; color: #fff !important; box-shadow: none; filter: none; }
+.ts .lt-tt td.cur { outline: 2px solid #000; outline-offset: -2px; font-weight: 700; }
+.ts-dot { position: absolute; left: -5px; top: -5px; width: 10px; height: 10px; border-radius: 50%; background: #0010c8; box-shadow: 0 0 0 1.5px #fff; pointer-events: none; z-index: 2; }
+.ts-dot[hidden] { display: none; }
+.ts-trail { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 1; overflow: visible; }
+.ts-trail polyline { fill: none; stroke: #0010c8; stroke-width: 2; stroke-opacity: .7; stroke-linejoin: round; }
+.ts-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 11.5px; color: #333; }
+.ts-key i { display: inline-block; width: 9px; height: 9px; margin: 0 3px 0 6px; vertical-align: -1px; }
+.ts-key i.up { background: #d00000; } .ts-key i.dn { background: #0000c8; }
+.ts-link { margin-left: auto; color: #0018a8; }
+.ts-link[hidden] { display: none; }
+.ts-graph.lt-chart { grid-area: graph; height: 230px; border: 2px inset #9a9a9a; border-radius: 0; background: #000; }
+.ts-clusterview { display: grid; gap: 6px; background: linear-gradient(#3c3c3c, #8c8c8c 60%, #5a5a5a); }
+.ts-cluster { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 6px; }
+.ts-ind { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 2px; }
+.ts-ind:empty { display: none; }
+.ts-ind span { padding: 3px 4px; border: 1px solid #555; background: #fff; text-align: center; font: 12px Tahoma, Arial, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ts-ind span.dim { opacity: .55; }
+.ts-clusterview .lt-gauges { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
+.ts-clusterview .lt-g { border-color: #555; border-radius: 2px; background: #1c1c1c; color: #fff; }
+.ts-clusterview .lt-g small, .ts-clusterview .lt-g i { color: #bdbdbd; }
+.ts-clusterview .lt-g b { color: #ffe14d; }
+.ts-clusterview .lt-gadd { background: rgba(255, 255, 255, .12); color: #fff; }
+.ts .lt-set { display: grid; gap: 6px; }
+.ts .lt-set[hidden] { display: none; }
+.ts .lt-set li { border-color: #c8c8c8; }
+.ts .lt-log { margin-top: 8px; }
+@media (max-width: 759px) {
+  .ts-tune { grid-template-columns: minmax(0, 1fr); grid-template-areas: "dials" "panel" "graph"; }
+  .ts-tune .ts-dials { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; }
+  .ts-cluster { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .ts-graph.lt-chart { height: 190px; }
+  .ts-tabs [data-view] { padding: 0 10px; }
+  .ts-b { min-width: 34px; height: 34px; }
+  .ts .lt-tt td, .ts .lt-tt th { height: 26px; }
+}
+@media (min-width: 760px) and (max-width: 1000px) { .ts-tune { grid-template-columns: 160px minmax(0, 1fr); } }
+.ts-panel { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+.ts .lt-grid { overflow: hidden; }
+.ts .lt-tt { width: 100%; table-layout: fixed; }
+.ts-burn.primary:disabled { opacity: .55; }

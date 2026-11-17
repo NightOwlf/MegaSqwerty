@@ -198,7 +198,7 @@ def _timebase(log: LogDoc, ch: dict) -> tuple[list[float], str]:
 
 
 def _at(values, i):
-    v = values[i] if 0 <= i < len(values) else None
+    v = values[i] if values is not None and 0 <= i < len(values) else None
     return v if isinstance(v, (int, float)) else None
 
 
