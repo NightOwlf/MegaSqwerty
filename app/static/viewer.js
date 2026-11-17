@@ -567,7 +567,7 @@
   function cellText(v, d, narrow) {  // as many decimals as fit the cell (a table fitted to a phone: fewer)
     var a = Math.abs(v);
     // Narrow cells drop the second decimal only: an AFR target of 13.5 must read 13.5, never 14.
-    if (narrow) return v.toFixed(a >= 100 ? 0 : Math.min(d, 1));
+    if (narrow) return v.toFixed(a >= 10 ? 0 : Math.min(d, 1));  // a cell under ~21 px: pinch to see the decimal
     return v.toFixed(a >= 100 ? 0 : Math.min(d, a >= 10 ? 1 : 2));
   }
   function binText(v) { return Math.abs(v) >= 100 || v === Math.round(v) ? String(Math.round(v)) : v.toFixed(1); }
@@ -821,7 +821,9 @@
   Grid.prototype.paint = function (only) {
     var t = this.t, rg = this.opts.range || range(t), self = this, ks = only || this.cells.map(function (_, k) { return k; });
     var tbl = this.wrap && this.wrap.querySelector("table"), info = this.opts.info, tw = tbl ? tbl.offsetWidth : 0;
-    var narrow = this.narrow = tw > 0 && tw / (t.cols + 1) < 34;  // too narrow for decimals on big numbers
+    var narrow = this.narrow = tw > 0 && tw / (t.cols + 1) < 34;  // RPM labels as 1k, 1.5k
+    var cw = this.cells[0] ? this.cells[0].offsetWidth : 0;
+    var tiny = cw > 0 && cw < 15 && !(this.zoomLv > 1.02);  // decimals stay; only a cell under 15 px drops them
     if (narrow !== this.axisNarrow) {  // RPM as 1k, 1.5k… when the columns are narrow
       this.axisNarrow = narrow;
       $$("tr.lv-tx th", this.el).slice(1).forEach(function (th, c) {
@@ -832,7 +834,7 @@
     ks.forEach(function (k) {
       var td = self.cells[k];
       if (!td) return;
-      var v = self.opts.live ? self.opts.live(k) : valueAt(t, k), bg, text = cellText(v, t.d, narrow);
+      var v = self.opts.live ? self.opts.live(k) : valueAt(t, k), bg, text = cellText(v, t.d, tiny);
       if (self.mode === "ov" && self.opts.ov) {
         var ov = self.opts.ov[k], kind = self.opts.ovKind;
         if (!(ov === ov)) { bg = "#3a3d42"; text = ""; }
@@ -870,8 +872,20 @@
       td.classList.toggle("vx-ch", diff);
       if (diff) td.title = "Was " + cellText(was, t.d) + " in the original"; else if (td.title) td.removeAttribute("title");
     });
+    this.fitText(cw);
     this.markSel();
     if (this.s3) this.s3.draw();
+  };
+  /* The biggest text that fits the cells as they are on this screen, so numbers never overlap or get cut off,
+     whatever the phone, the orientation or the number of columns. (Pinch-zoomed tables size themselves.) */
+  Grid.prototype.fitText = function (cw) {
+    var tbl = this.wrap && this.wrap.querySelector("table");
+    if (!tbl || !cw || this.zoomLv > 1.02) return;
+    var longest = 3;
+    for (var k = 0; k < this.cells.length; k++) { var n = this.cells[k] ? this.cells[k].textContent.length : 0; if (n > longest) longest = n; }
+    var fs = Math.max(6.8, Math.min(13.5, (cw - 2) / (longest * 0.58)));
+    var want = fs >= 13.4 ? "" : fs.toFixed(1) + "px";
+    if (tbl.style.fontSize !== want) tbl.style.fontSize = want;
   };
   Grid.prototype.flash = function (k) {
     var td = this.cells[k];
@@ -1427,7 +1441,7 @@
           '<select data-ve-speed aria-label="How fast to play through the log"><option value="25">Watch it (25 s)</option><option value="10" selected>Quick (10 s)</option><option value="0">Instant</option></select>' +
           '<select data-ve-mode aria-label="What the cells show"><option value="value">New VE</option><option value="change">Change %</option><option value="hits">Data (s)</option><option value="err">AFR error %</option><option value="ran">VE that ran</option></select>' +
         "</div>" +
-        '<p class="lv-ve-status mono" aria-live="polite">Plays through the log and works out each VE cell from the wideband. Nothing is changed until you save.</p>' +
+        '<p class="lv-ve-status mono" aria-live="polite">Plays through the log and works out each VE cell from the wideband. Nothing changes until you apply it, and the tune is backed up first.</p>' +
         '<div class="lv-ve-bar"><i></i></div>' +
       "</div>" +
       '<div class="lv-ve-apply" hidden></div>' +

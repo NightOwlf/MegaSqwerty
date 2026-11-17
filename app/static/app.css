@@ -1437,3 +1437,5 @@ body.page-viewer .main { max-width: none; padding-block: 8px 12px; padding-inlin
 .lv-hrow > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .lv-hrow.now { border-color: var(--sel); }
 .lv-hrow .btn.sm { flex: none; min-height: 30px; }
+.lv-tt td { padding: 0; }
+.lv-tt { font-variant-numeric: tabular-nums; }
