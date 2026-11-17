@@ -570,9 +570,13 @@ def test_edits_shared_from_the_viewer_reach_whoever_opens_the_link(client):
     assert t["p"] == ve["z"] and t["z"][3] == pytest.approx(ve["z"][3] + 5) and t["z"][7] == pytest.approx(ve["z"][7] - 4)
     assert not any("p" in x for x in index["tables"] if x["id"] != "ve")
 
-    # someone else (no key, or a wrong one) gets their own copy; the original upload is never overwritten
-    theirs = client.post(f"/t/{copy}/save", json={"changes": {"veTable": {"0": 50}}, "key": "wrong"}).json()
-    assert theirs["slug"] not in (copy, slug) and theirs["updated"] is False
+    # anyone with the link edits the shared copy (no key needed); "fork" makes a separate one on purpose;
+    # the original upload is never overwritten
+    theirs = client.post(f"/t/{copy}/save", json={"changes": {"veTable": {"0": 50}}}).json()
+    assert theirs["slug"] == copy and theirs["updated"] is True
+    sep = client.post(f"/t/{copy}/save", json={"changes": {"veTable": {"1": 52}}, "fork": True}).json()
+    assert sep["slug"] not in (copy, slug) and sep["updated"] is False
+    assert parse_msq(client.get(f"/t/{copy}.msq").content).get("veTable").values[1] != 52  # the fork didn't touch it
     orig_key = client.post(f"/t/{slug}/save", json={"changes": {"veTable": {"0": 51}}, "key": key}).json()
     assert orig_key["slug"] != slug
     assert client.get(f"{url}/index.json?tune={slug}").json()["tune"]["parent"] is None
@@ -620,14 +624,14 @@ def test_friends_can_edit_one_tune_together(client):
     z = parse_msq(client.get(f"/t/{copy}.msq").content).get("veTable").values
     assert z[3] == pytest.approx(77.7) and z[4] == pytest.approx(66.6)
 
-    # notes: shared, need a key, carried into copies, and change the revision
-    assert client.post(f"/t/{copy}/notes", json={"notes": "pulled 2% at 100 kPa"}).status_code == 403
-    assert client.post(f"/t/{copy}/notes", json={"notes": "pulled 2% at 100 kPa", "key": ek}).json()["ok"]
+    # notes: anyone on the shared copy's link, never on an original without its key; carried into copies
+    assert client.post(f"/t/{slug}/notes", json={"notes": "nope"}).status_code == 403
+    assert client.post(f"/t/{copy}/notes", json={"notes": "pulled 2% at 100 kPa"}).json()["ok"]
     assert client.get(f"/t/{copy}/rev").json()["rev"] != client.get(f"/t/{slug}/rev").json()["rev"]
     url = client.post("/logs", files={"file": ("d.msl", msl(drive()), "text/plain")}).headers["location"]
     assert client.get(f"{url}/index.json?tune={copy}").json()["tune"]["notes"] == "pulled 2% at 100 kPa"
-    other = client.post(f"/t/{copy}/save", json={"changes": {"veTable": {"5": 55.5}}}).json()
-    assert other["slug"] != copy                                       # no key: their own copy, as before
+    other = client.post(f"/t/{copy}/save", json={"fork": True}).json()
+    assert other["slug"] != copy                                       # "make my own copy"
     assert client.get(f"{url}/index.json?tune={other['slug']}").json()["tune"]["notes"] == "pulled 2% at 100 kPa"
 
     # only the owner can hand out a (new) edit key; the original upload never becomes editable in place

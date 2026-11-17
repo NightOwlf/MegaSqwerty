@@ -368,17 +368,19 @@ It works the way a desktop log viewer does (`app/static/viewer.js`, plain canvas
 
 ### Editing together, live
 
-**Share → Edit together** gives a link that lets a friend edit *the same tune* with you (it makes your own
-edited copy first if the tune is someone's original). Every page open on that tune checks for changes every
-3 seconds and pulls them in without a refresh: changed cells flash and a notice says what moved. Edits are
-saved cell by cell, so two people changing different cells never undo each other. The link carries an
-*edit key* (not the delete key) in its `#k=`, which the page stores and then drops from the address bar so
-*Copy link* never hands it on. A tune also has **Notes** (what was changed, what to log next) that everyone on
-the link sees update live, and copies carry them. Auto-save is on whenever a page opens; edits not yet saved
-when a page closes are kept in the browser and saved on the next visit.
+A link to an edited tune is a shared workspace: **everyone who has it edits the same tune**. Every page open on
+it checks for changes every 3 seconds and pulls them in without a refresh (changed cells flash, a notice says
+what moved), and edits are saved cell by cell so two people changing different cells never undo each other.
+An uploaded original is never changed: the first edit (or *Share*) makes the shared copy, and the link moves
+to it once. **Share → Make my own copy** makes a separate version with its own link, to try something without
+touching the shared one. Each tune has **Notes** everyone on the link can write and sees update live; copies
+carry them. Auto-save is on whenever a page opens, and edits not yet saved when a page closes are kept in the
+browser and saved on the next visit. Tunes, logs and notes live on the Railway volume at `/data`, so links
+keep working through every update.
 
-Routes: `GET /t/{slug}/rev` (what pages poll), `POST /t/{slug}/notes`, `POST /t/{slug}/editkey` (owner only),
-and `POST /t/{slug}/save` with `{"fork": true}` for a copy with no changes yet.
+Routes: `GET /t/{slug}/rev` (what pages poll), `POST /t/{slug}/notes`, `POST /t/{slug}/save` (in place on an
+edited copy; `{"fork": true}` for a separate copy), and the token-only `/admin/restore/{tune,log}` that put
+links back under their old slugs when storage moved to the volume.
 
 ### What changed: before and after
 

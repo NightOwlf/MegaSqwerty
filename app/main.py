@@ -418,16 +418,17 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         if raw is None:
             raise HTTPException(404)
         changes = payload.get("changes") if isinstance(payload, dict) else None
-        fork = isinstance(payload, dict) and payload.get("fork") is True and not changes
+        fork = isinstance(payload, dict) and payload.get("fork") is True  # a separate copy, with or without changes
         try:
-            new_raw, changed = (raw, 0) if fork else await run_in_threadpool(editmod.apply_changes, raw, changes)
+            new_raw, changed = (raw, 0) if fork and not changes else await run_in_threadpool(editmod.apply_changes, raw, changes)
         except editmod.EditError as e:
             return fail(str(e))
-        # Saving again to an edited copy you made (you hold its key): update it in place, so the link you
-        # already sent shows the latest. Uploaded originals are never overwritten, and nobody else's copy is.
+        # An edited copy is the shared tune of everyone who has its link: saving to it updates it in place, so
+        # every page open on that link shows the change. An uploaded original is never overwritten: the first
+        # edit makes the shared copy. {"fork": true} makes a separate copy on purpose.
         own = str(payload.get("key") or "").strip() if isinstance(payload, dict) else ""
         meta = store.get_meta(slug)
-        if own and not fork and meta is not None and meta["parent"] and store.can_edit(slug, own):
+        if not fork and meta is not None and meta["parent"]:
             try:
                 doc = await run_in_threadpool(parse_msq, new_raw)
             except MsqError as e:
@@ -523,8 +524,9 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         key = str(payload.get("key") or "").strip() if isinstance(payload, dict) else ""
         if len(text) > 8000:
             return JSONResponse({"error": "Notes can be up to 8,000 characters."}, status_code=400)
-        if not store.can_edit(slug, key):
-            return JSONResponse({"error": "Only someone editing this tune can change its notes."}, status_code=403)
+        meta = store.get_meta(slug)
+        if not (meta is not None and meta["parent"]) and not store.can_edit(slug, key):
+            return JSONResponse({"error": "Edit a cell first: that makes the shared copy notes go on."}, status_code=403)
         store.set_notes(slug, text.replace("\r\n", "\n"))
         return JSONResponse({"ok": True, "rev": store.rev(slug)})
 

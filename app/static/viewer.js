@@ -1286,8 +1286,8 @@
     $d("[data-saved-link]").value = url;
     $d("[data-together-link]").hidden = true;
     $d("[data-saved-what]").textContent = copy
-      ? "Whoever opens this link sees this log with your edited tune: " + plural(changedCells(), "cell") +
-        " changed from the original, marked in orange. It keeps up as you edit and save. If they change it, they get their own copy to send back, so yours isn't overwritten."
+      ? "Everyone with this link sees this log with this tune and edits the same tune with you: changes show up on every phone within a few seconds, no refresh. " +
+        plural(changedCells(), "cell") + " differ from the original (marked in orange); the original upload is never changed."
       : "Whoever opens this link sees this log, this tune and this exact moment.";
     var dl = $d("[data-saved-download]"), file = (idx.tune && idx.tune.file) || TUNE + ".msq";
     dl.href = "/t/" + TUNE + ".msq"; dl.setAttribute("download", file);
@@ -1344,7 +1344,32 @@
         show(j.edit_key);
       }, function () { fail(); });
   }
+  /* A separate copy of this tune (with any unsaved edits), with its own link: to try something without
+     changing the shared one. */
+  function ownCopy(btn) {
+    var label = btn.querySelector("span") || btn, old = label.textContent, sent = JSON.parse(JSON.stringify(edits));
+    label.textContent = "Making your copy…"; btn.disabled = true;
+    fetch("/t/" + TUNE + "/save", { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify(editCount() ? { changes: edits, fork: true } : { fork: true }) })
+      .then(function (r) { return r.json(); }).then(function (j) {
+        btn.disabled = false; label.textContent = old;
+        if (!j.slug) { alert(j.error || "That didn't work. Try again."); return; }
+        applySaved(sent, j); saveNow();
+        $d("[data-saved-link]").value = location.href;
+        toast("This is now your own copy: its link is in the box. The shared tune is unchanged.");
+      }, function () { btn.disabled = false; label.textContent = old; alert("That didn't work. Check your connection."); });
+  }
   function saveAndShare(btn) {
+    if (!editCount() && !idx.tune.parent) {  // an original: make the shared copy first
+      btn.disabled = true;
+      fetch("/t/" + TUNE + "/save", { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ fork: true }) })
+        .then(function (r) { return r.json(); }).then(function (j) {
+          btn.disabled = false;
+          if (!j.slug) { alert(j.error || "That didn't work. Try again."); return; }
+          applySaved({}, j); openShare();
+        }, function () { btn.disabled = false; alert("That didn't work. Check your connection."); });
+      return;
+    }
     if (!editCount()) { openShare(); return; }
     btn.disabled = true;
     pushEdits().then(function () { btn.disabled = false; openShare(); }, function () { btn.disabled = false; });
@@ -2284,7 +2309,7 @@
     b = e.target.closest(".lv-g[data-w]");
     if (b) { watch = watch.filter(function (c) { return c !== +b.dataset.c; }); invalidate(); saveLayout(); return; }
     b = e.target.closest("[data-lv-share]");
-    if (b && editCount() && TUNE) { saveAndShare(b); return; }
+    if (b && TUNE && (editCount() || !idx.tune.parent)) { saveAndShare(b); return; }
     if (b) {
       saveNow();
       var label = b.querySelector("span"), old = label.textContent, url = location.href;
@@ -2389,10 +2414,10 @@
     var box = $(".lv-notesbox");
     if (!box || !idx || !idx.tune) { if (box) box.hidden = true; return; }
     box.hidden = false;
-    var ta = $("textarea", box), mine = !!owned()[TUNE];
+    var ta = $("textarea", box), mine = !!(idx.tune.parent || owned()[TUNE]);
     if (!fromServer || document.activeElement !== ta) ta.value = idx.tune.notes || "";
     ta.placeholder = mine ? "What you changed and why, what to log next… everyone on this link sees it."
-      : "Notes for this tune. Typing here makes your own copy (like editing a cell), which you can send back.";
+      : "Notes for this tune. Typing here makes the shared copy (like editing a cell).";
     $(".lv-notes-n", box).textContent = idx.tune.notes ? "" : "none yet";
     if (idx.tune.notes && !box.open && fromServer) box.open = true;
   }
@@ -2410,7 +2435,7 @@
             else st.textContent = j.error || "not saved";
           }, function () { st.textContent = "not saved: check your connection"; });
       };
-      if (owned()[TUNE] && idx.tune.parent) return go();
+      if (idx.tune.parent) return go();
       // someone else's tune: make our own copy first, then write the notes on it
       fetch("/t/" + TUNE + "/save", { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ fork: true }) })
         .then(function (r) { return r.json(); }).then(function (j) { if (j.slug) { applySaved({}, j); go(); } else st.textContent = j.error || "not saved"; },
@@ -2426,7 +2451,7 @@
       if (e.target.closest("[data-saved-copy]")) copyText(url, e.target.closest("[data-saved-copy]").querySelector("span") || e.target);
       else if (e.target.closest("[data-saved-share]")) navigator.share({ title: root.dataset.name + " · edited tune", url: url }).catch(function () { /* cancelled */ });
       else if (e.target.closest("[data-saved-file]") && shareFile) navigator.share({ files: [shareFile], title: shareFile.name }).catch(function () { /* cancelled */ });
-      else if (e.target.closest("[data-together]")) editTogether(e.target.closest("[data-together]"));
+      else if (e.target.closest("[data-ownfork]")) ownCopy(e.target.closest("[data-ownfork]"));
     });
     $d("[data-saved-link]").addEventListener("focus", function () { this.select(); });
   })();
