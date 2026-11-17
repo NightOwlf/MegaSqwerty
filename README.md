@@ -366,6 +366,15 @@ It works the way a desktop log viewer does (`app/static/viewer.js`, plain canvas
 - **Edit the tables**: drag (or tap, then *Range*) across cells, then type a value and Enter, or use −/+,
   ±1%, *Interp* (fill between the selection's corners), *Smooth* and *Revert* (back to the original tune).
 
+### What changed: before and after
+
+Whenever a table differs from the tune it came from (after VE Analyze, after editing, or when you open
+someone's edited link), **Compare** in the save bar (or the *What changed* section of the VE Analyze tab)
+shows it side by side: **Before**, **After** and **Change %** (red for more fuel, blue for less), as tables or as
+three 3D surfaces on one height scale that turn together, with the changed cells dotted. Under them, every
+changed cell, biggest first, with its RPM, load, before, after, change and (after a run) how many seconds of
+the log it was built from; tap one to find it in all three. On a phone it shows one at a time.
+
 ### Remote tuning: edits travel with the link
 
 Nobody has to download or upload a file to send changes back and forth. With **Auto-save** on (the default),

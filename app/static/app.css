@@ -1227,3 +1227,45 @@ body.page-viewer .main { max-width: none; padding-block: 8px 12px; padding-inlin
   .lv-actions .btn.sm span:not(.led) { font-size: 12px; }
   .lv-sel.lv-preset select { max-width: 120px; }
 }
+
+/* ---------- log viewer: what changed, before / after ---------- */
+.lv-cmp { margin-top: 10px; padding: 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--win); }
+.lv-cmp[hidden] { display: none; }
+.lv-cmp-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.lv-cmp-head h3 { margin: 0; font-size: 14px; }
+.lv-cmp-head select { height: 30px; max-width: 100%; padding: 0 6px; border: 1px solid var(--btn-line); border-radius: 4px; background: var(--btn-2); color: var(--text); font: inherit; font-size: 13px; }
+.lv-seg { display: inline-flex; border: 1px solid var(--btn-line); border-radius: 5px; overflow: hidden; }
+.lv-seg button { min-height: 30px; padding: 0 12px; border: 0; border-left: 1px solid var(--btn-line); background: linear-gradient(var(--btn-1), var(--btn-2)); color: var(--text); font: 600 12.5px var(--ui); cursor: pointer; }
+.lv-seg button:first-child { border-left: 0; }
+.lv-seg button.on { background: var(--sel); color: #fff; }
+.lv-cmp-pick { display: none; }
+.lv-cmp-sum { margin: 6px 0; font-size: 12.5px; }
+.lv-cmp-grids { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.lv-cmp-col { min-width: 0; }
+.lv-cmp-col h4 { margin: 0 0 4px; font-size: 12.5px; }
+.lv-cmp-col h4 small { color: var(--faint); font-weight: 400; }
+.lv-cmp-col .lv-tt { font-size: 9.5px; letter-spacing: -.3px; }
+.lv-cmp-col .lv-tt td, .lv-cmp-col .lv-tt th { height: 15px; }
+.lv-cmp-col .lv-3d { height: clamp(200px, 26vw, 340px); }
+.lv-cmp-list { margin-top: 8px; font-size: 12.5px; }
+.lv-cmp-list summary { font-weight: 700; cursor: pointer; }
+.lv-cmp-tw { max-height: 320px; margin-top: 4px; overflow: auto; border: 1px solid var(--line); border-radius: 3px; }
+.lv-cmp-tw table { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
+.lv-cmp-tw th { position: sticky; top: 0; padding: 4px 6px; background: var(--ax); color: var(--ax-ink); text-align: right; }
+.lv-cmp-tw td { padding: 3px 6px; border-top: 1px solid var(--line); text-align: right; }
+.lv-cmp-tw th[hidden] { display: none; }
+.lv-cmp-tw tr[data-k] { cursor: pointer; }
+.lv-cmp-tw tr[data-k]:hover, .lv-cmp-tw tr.on { background: var(--sel-soft); }
+.lv-cmp-tw td.up { color: #e5533d; font-weight: 700; }
+.lv-cmp-tw td.down { color: #3d7be5; font-weight: 700; }
+.lv-save [data-save-compare][hidden] { display: none; }
+@media (max-width: 1099px) and (orientation: portrait), (max-width: 759px) {
+  /* one at a time on a narrow screen, switched by Before / After / Change */
+  .lv-cmp-pick { display: inline-flex; }
+  .lv-cmp-grids { grid-template-columns: minmax(0, 1fr); }
+  .lv-cmp-grids .lv-cmp-col { display: none; }
+  .lv-cmp-grids[data-show="b"] [data-col="b"], .lv-cmp-grids[data-show="a"] [data-col="a"], .lv-cmp-grids[data-show="d"] [data-col="d"] { display: block; }
+  .lv-cmp-col .lv-tt { font-size: 10.5px; letter-spacing: -.2px; }
+  .lv-cmp-col .lv-tt td, .lv-cmp-col .lv-tt th { height: 20px; }
+  .lv-cmp-col .lv-3d { height: clamp(240px, 70vw, 400px); }
+}

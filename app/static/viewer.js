@@ -565,12 +565,13 @@
 
   /* The table as a 3D surface: drag to turn it, pinch or wheel to zoom, tap a point to select that cell. */
   function Surface(grid) {
-    this.g = grid; this.yaw = -0.62; this.pitch = 0.62; this.zoom = 1; this.pts = [];
+    this.g = grid; this.cam = grid.opts.cam || { yaw: -0.62, pitch: 0.62, zoom: 1 }; this.pts = [];
     this.cv = document.createElement("canvas"); this.cv.className = "lv-3d";
     grid.el.appendChild(this.cv);
     this.bind();
   }
-  Surface.prototype.draw = function () {
+  Surface.prototype.draw = function (alone) {
+    if (!alone && this.g.opts.peers) this.g.opts.peers().forEach(function (g) { if (g.s3 && g.s3 !== this) g.s3.draw(true); }, this);
     if (this.pending) return;
     var self = this; this.pending = true;
     requestAnimationFrame(function () { self.pending = false; self.paint(); });
@@ -582,12 +583,14 @@
     ctx.fillStyle = "#0b0c0e"; ctx.fillRect(0, 0, W, H);
     var vals = [], lo = Infinity, hi = -Infinity;
     for (k = 0; k < C * R; k++) {
-      var v = g.opts.live ? g.opts.live(k) : valueAt(t, k);
+      var v = g.opts.surf ? g.opts.surf(k) : g.opts.live ? g.opts.live(k) : valueAt(t, k);
       vals[k] = v; if (v < lo) lo = v; if (v > hi) hi = v;
     }
+    if (g.opts.zr) { lo = g.opts.zr[0]; hi = g.opts.zr[1]; }  // side-by-side surfaces share one height scale
     if (!(hi > lo)) hi = lo + 1;
-    var cy = Math.cos(this.yaw), sy = Math.sin(this.yaw), cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
-    var S = Math.min(W * 0.64, H * 0.9) * this.zoom, ox = W / 2, oy = H * 0.54;
+    var paintOf = g.opts.color || function (v) { return heat((v - lo) / (hi - lo)); };
+    var cy = Math.cos(this.cam.yaw), sy = Math.sin(this.cam.yaw), cp = Math.cos(this.cam.pitch), sp = Math.sin(this.cam.pitch);
+    var S = Math.min(W * 0.64, H * 0.9) * this.cam.zoom, ox = W / 2, oy = H * 0.54;
     var proj = function (c, r, v) {  // c, r may be fractional; returns [x, y, depth]
       var x = c / (C - 1) - 0.5, y = r / (R - 1) - 0.5, z = (v - lo) / (hi - lo) * 0.5 - 0.25;
       var X = x * cy - y * sy, Y = x * sy + y * cy;
@@ -606,7 +609,7 @@
     quads.forEach(function (q) {
       ctx.beginPath(); ctx.moveTo(P[q[0]][0], P[q[0]][1]);
       for (var j = 1; j < 4; j++) ctx.lineTo(P[q[j]][0], P[q[j]][1]);
-      ctx.closePath(); ctx.fillStyle = heat((q[5] - lo) / (hi - lo)); ctx.fill(); ctx.stroke();
+      ctx.closePath(); ctx.fillStyle = paintOf(q[5]); ctx.fill(); ctx.stroke();
     });
     // axis labels along two edges, and the value range
     ctx.font = "10.5px ui-monospace, Menlo, Consolas, monospace"; ctx.fillStyle = "#9aa1a9";
@@ -615,12 +618,13 @@
     for (c = 0; c < C; c += everyC) { var q1 = proj(c, -0.9, lo); ctx.fillText(binText(t.x[c]), q1[0], q1[1]); }
     for (r = 0; r < R; r += everyR) { var q2 = proj(C - 1 + 0.9, r, lo); ctx.fillText(binText(t.y[r]), q2[0], q2[1]); }
     ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.fillStyle = "#d6d9de";
-    ctx.fillText((t.xl || "RPM") + " × " + (t.yl || "Load") + " · " + cellText(lo, t.d) + "–" + cellText(hi, t.d) + (t.units ? " " + t.units : ""), 6, 5);
+    ctx.fillText(g.opts.title || ((t.xl || "RPM") + " × " + (t.yl || "Load") + " · " + cellText(lo, t.d) + "–" + cellText(hi, t.d) + (t.units ? " " + t.units : "")), 6, 5);
     // changed cells, selection, and where the log is now
     var mark = function (ks, color, rad) {
       ctx.fillStyle = color;
       ks.forEach(function (j) { ctx.beginPath(); ctx.arc(P[j][0], P[j][1], rad, 0, 6.3); ctx.fill(); });
     };
+    if (g.opts.marks) mark(g.opts.marks(), "#ff9f0a", 2.2);
     if (t.p && !g.opts.live) mark(vals.map(function (v, j) { return Math.abs(v - t.p[j]) > 0.5 * Math.pow(10, -t.d) ? j : -1; }).filter(function (j) { return j >= 0; }), "#ff9f0a", 2.2);
     mark(g.selected(), "#ffffff", 3.5);
     if (g.pos) {
@@ -641,8 +645,8 @@
       var ids = Object.keys(pts);
       if (ids.length === 2) {
         var a = pts[ids[0]], b = pts[ids[1]];
-        pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z: self.zoom }; start = null;
-      } else start = { x: e.clientX, y: e.clientY, yaw: self.yaw, pitch: self.pitch, moved: false };
+        pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z: self.cam.zoom }; start = null;
+      } else start = { x: e.clientX, y: e.clientY, yaw: self.cam.yaw, pitch: self.cam.pitch, moved: false };
     });
     cv.addEventListener("pointermove", function (e) {
       if (!(e.pointerId in pts)) return;
@@ -650,15 +654,15 @@
       var ids = Object.keys(pts);
       if (pinch && ids.length === 2) {
         var a = pts[ids[0]], b = pts[ids[1]];
-        self.zoom = Math.max(0.5, Math.min(3, pinch.z * (Math.hypot(a[0] - b[0], a[1] - b[1]) || 1) / pinch.d));
+        self.cam.zoom = Math.max(0.5, Math.min(3, pinch.z * (Math.hypot(a[0] - b[0], a[1] - b[1]) || 1) / pinch.d));
         self.draw(); return;
       }
       if (!start) return;
       var dx = e.clientX - start.x, dy = e.clientY - start.y;
       if (Math.abs(dx) + Math.abs(dy) > 4) start.moved = true;
       if (!start.moved) return;
-      self.yaw = start.yaw + dx * 0.01;
-      self.pitch = Math.max(0.08, Math.min(1.5, start.pitch + dy * 0.008));
+      self.cam.yaw = start.yaw + dx * 0.01;
+      self.cam.pitch = Math.max(0.08, Math.min(1.5, start.pitch + dy * 0.008));
       self.draw();
     });
     var up = function (e) {
@@ -680,9 +684,9 @@
     cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
     cv.addEventListener("wheel", function (e) {
       e.preventDefault();
-      self.zoom = Math.max(0.5, Math.min(3, self.zoom * Math.exp(-e.deltaY * 0.0015))); self.draw();
+      self.cam.zoom = Math.max(0.5, Math.min(3, self.cam.zoom * Math.exp(-e.deltaY * 0.0015))); self.draw();
     }, { passive: false });
-    cv.addEventListener("dblclick", function () { self.yaw = -0.62; self.pitch = 0.62; self.zoom = 1; self.draw(); });
+    cv.addEventListener("dblclick", function () { self.cam.yaw = -0.62; self.cam.pitch = 0.62; self.cam.zoom = 1; self.draw(); });
   };
   Grid.prototype.render = function () {
     var t = this.t, html = [];
@@ -702,14 +706,15 @@
     this.bind();
   };
   Grid.prototype.paint = function (only) {
-    var t = this.t, rg = range(t), self = this, ks = only || this.cells.map(function (_, k) { return k; });
+    var t = this.t, rg = this.opts.range || range(t), self = this, ks = only || this.cells.map(function (_, k) { return k; });
     var info = this.opts.info;
     ks.forEach(function (k) {
       var td = self.cells[k];
       if (!td) return;
       var v = self.opts.live ? self.opts.live(k) : valueAt(t, k), bg, text = cellText(v, t.d);
       if (self.mode === "change") {
-        var pct = t.z[k] ? (v / t.z[k] - 1) * 100 : 0;
+        var b0 = self.opts.base ? self.opts.base[k] : t.p ? t.p[k] : t.z[k];  // against the original tune
+        var pct = b0 ? (v / b0 - 1) * 100 : 0;
         bg = diverge(pct, 15); text = Math.abs(pct) < 0.05 ? "" : (pct > 0 ? "+" : "") + pct.toFixed(Math.abs(pct) >= 10 ? 0 : 1);
       } else if (self.mode === "hits" && info) {
         var h = info.hits(k);
@@ -871,6 +876,7 @@
     allGrids().forEach(function (g) { if (!t || g.t === t) g.paint(); });
     renderSaveBars();
     scheduleAuto();
+    compareSoon();
   }
   function allGrids() {
     var out = tableSlots.map(function (s) { return s.grid; });
@@ -975,6 +981,7 @@
       bar.hidden = !TUNE || (!n && !copy && !lastSaved && !saveErr);
       var label = $(".lv-save-n", bar), btn = $("[data-save-tune]", bar);
       $("[data-save-discard]", bar).hidden = !n || !!saving;
+      $("[data-save-compare]", bar).hidden = !n && !changedCells();
       $("[data-autosave]", bar).checked = autoSave;
       label.classList.toggle("err", !!saveErr);
       if (saveErr) label.textContent = "Not saved: " + saveErr;
@@ -989,6 +996,7 @@
     return '<div class="lv-save" hidden><span class="lv-save-n"></span><span class="st-grow"></span>' +
       '<label class="check sm lv-auto" title="Save every change to your edited copy as you go, so your link always has the latest"><input type="checkbox" data-autosave><span>Auto-save</span></label>' +
       '<button class="btn sm" type="button" data-save-discard>Discard</button>' +
+      '<button class="btn sm" type="button" data-save-compare title="Before and after, side by side">Compare</button>' +
       '<button class="btn sm primary" type="button" data-save-tune>Save &amp; share</button></div>';
   }
   function scheduleAuto(ms) {
@@ -1043,6 +1051,7 @@
     }
     if (j.file) idx.tune.file = j.file;
     lastSaved = j;
+    compareSoon();
     saveEdits();
     allGrids().forEach(function (g) { g.paint(); });
     renderSaveBars();
@@ -1157,7 +1166,20 @@
             also.map(function (s, i) { return '<label class="check sm"><input type="checkbox" data-also="' + s + '" checked><span>Uploaded with it #' + (i + 1) + "</span></label>"; }).join("") + "</div>" : "") +
           saveBar() +
         "</div>" +
-      "</div>";
+      "</div>" +
+      '<section class="lv-cmp" hidden>' +
+        '<div class="lv-cmp-head"><h3>What changed</h3><select data-cmp-table aria-label="Table to compare"></select>' +
+          '<div class="lv-seg" role="group" aria-label="Show as"><button type="button" data-cmp-view="2d" class="on">Tables</button><button type="button" data-cmp-view="3d">3D</button></div>' +
+          '<div class="lv-seg lv-cmp-pick" role="group" aria-label="Which to show"><button type="button" data-cmp-show="b">Before</button><button type="button" data-cmp-show="a" class="on">After</button><button type="button" data-cmp-show="d">Change</button></div>' +
+        "</div>" +
+        '<p class="lv-cmp-sum mono"></p>' +
+        '<div class="lv-cmp-grids" data-show="a">' +
+          '<div class="lv-cmp-col" data-col="b"><h4>Before <small>the original tune</small></h4><div class="lv-grid"></div></div>' +
+          '<div class="lv-cmp-col" data-col="a"><h4>After <small>with the changes</small></h4><div class="lv-grid"></div></div>' +
+          '<div class="lv-cmp-col" data-col="d"><h4>Change <small>% more (red) or less (blue) fuel</small></h4><div class="lv-grid"></div></div>' +
+        "</div>" +
+        '<details class="lv-cmp-list" open><summary>Every changed cell</summary><div class="lv-cmp-tw"><table><thead><tr><th>RPM</th><th>Load</th><th>Before</th><th>After</th><th>Change</th><th class="lv-cmp-hits">Data</th></tr></thead><tbody></tbody></table></div></details>' +
+      "</section>";
     var w = wireTools(body, function () { return ve.running ? null : ve.grid; });
     ve.grid = new Grid($(".lv-grid", body), t, {
       big: true, editable: true, input: w.input,
@@ -1176,6 +1198,96 @@
       }).catch(function () { /* still usable */ });
     });
   }
+  /* ---------- what changed: before / after / change, side by side ---------- */
+  var cmp = { t: null, grids: [], is3d: false, cam: { yaw: -0.62, pitch: 0.62, zoom: 1 }, timer: 0 };
+  function baseOf(t) { return t.p || t.z; }
+  function changedKs(t) {
+    var b = baseOf(t), out = [], eps = 0.5 * Math.pow(10, -t.d);
+    for (var k = 0; k < t.z.length; k++) if (Math.abs(valueAt(t, k) - b[k]) > eps) out.push(k);
+    return out;
+  }
+  function compareSoon() { clearTimeout(cmp.timer); cmp.timer = setTimeout(renderCompare, 120); }
+  function renderCompare() {
+    var box = $(".lv-cmp");
+    if (!box || ve.running) return;
+    var list = idx.tables.filter(function (t) { return changedKs(t).length; });
+    box.hidden = !list.length;
+    if (!list.length) { cmp.grids = []; return; }
+    if (!cmp.t || list.indexOf(cmp.t) < 0) cmp.t = list.indexOf(ve.table) >= 0 ? ve.table : list[0];
+    var t = cmp.t, base = baseOf(t).slice(), ks = changedKs(t), C = t.cols;
+    $("[data-cmp-table]", box).innerHTML = list.map(function (x) {
+      return "<option value=" + idx.tables.indexOf(x) + (x === t ? " selected" : "") + ">" + esc(x.label) + " · " + plural(changedKs(x).length, "cell") + "</option>";
+    }).join("");
+    var after = function (k) { return valueAt(t, k); }, pct = function (k) { return base[k] ? (valueAt(t, k) / base[k] - 1) * 100 : 0; };
+    var lo = Infinity, hi = -Infinity, big = 0;
+    for (var k = 0; k < t.z.length; k++) {
+      lo = Math.min(lo, base[k], after(k)); hi = Math.max(hi, base[k], after(k)); big = Math.max(big, Math.abs(pct(k)));
+    }
+    big = Math.max(5, Math.ceil(big));
+    var marks = function () { return ks; }, peers = function () { return cmp.grids; };
+    var common = { range: [lo, hi], zr: [lo, hi], cam: cmp.cam, peers: peers, marks: marks };
+    var mk = function (col, extra) {
+      var o = {}, x;
+      for (x in common) o[x] = common[x];
+      for (x in extra) o[x] = extra[x];
+      return new Grid($('[data-col="' + col + '"] .lv-grid', box), t, o);
+    };
+    var keep3d = cmp.is3d;
+    cmp.grids = [];  // a fresh set (peers() reads this list)
+    cmp.grids.push(mk("b", { live: function (k) { return base[k]; }, title: "Before" }));
+    cmp.grids.push(mk("a", { live: after, title: "After" }));
+    var dg = mk("d", { live: after, base: base, surf: pct, zr: [-big, big], title: "Change %", color: function (v) { return diverge(v, big); } });
+    dg.mode = "change"; dg.paint();
+    cmp.grids.push(dg);
+    cmp.grids.forEach(function (g) { g.set3d(keep3d); });
+    // the totals, and every changed cell, biggest first
+    var richer = 0, leaner = 0, sum = 0;
+    ks.forEach(function (k) { var c = pct(k); if (c > 0) richer++; else leaner++; sum += Math.abs(c); });
+    var why = t.p ? "against the tune it was edited from" : "against this tune";
+    $(".lv-cmp-sum", box).textContent = plural(ks.length, "cell") + " changed " + why + ": " + richer + " up, " + leaner + " down, " +
+      (ks.length ? (sum / ks.length).toFixed(1) : "0") + "% on average.";
+    var hits = t === ve.table && ve.engine ? ve.engine.hits : null;
+    $(".lv-cmp-hits", box).hidden = !hits;
+    var rows = ks.slice().sort(function (a, b) { return Math.abs(pct(b)) - Math.abs(pct(a)); }).slice(0, 400);
+    $(".lv-cmp-list tbody", box).innerHTML = rows.map(function (k) {
+      var c = pct(k);
+      return '<tr data-k="' + k + '"><td>' + binText(t.x[k % C]) + "</td><td>" + binText(t.y[Math.floor(k / C)]) + "</td><td>" + cellText(base[k], t.d) +
+        "</td><td><b>" + cellText(after(k), t.d) + '</b></td><td class="' + (c > 0 ? "up" : "down") + '">' + (c > 0 ? "+" : "") + c.toFixed(1) + "%</td>" +
+        (hits ? "<td>" + (hits[k] || 0).toFixed(1) + " s</td>" : "") + "</tr>";
+    }).join("");
+  }
+  (function () {
+    document.addEventListener("click", function (e) {
+      var box = e.target.closest && e.target.closest(".lv-cmp");
+      if (!box) return;
+      var b = e.target.closest("[data-cmp-view]");
+      if (b) {
+        cmp.is3d = b.dataset.cmpView === "3d";
+        $$("[data-cmp-view]", box).forEach(function (x) { x.classList.toggle("on", x === b); });
+        cmp.grids.forEach(function (g) { g.set3d(cmp.is3d); });
+        return;
+      }
+      b = e.target.closest("[data-cmp-show]");
+      if (b) {
+        $(".lv-cmp-grids", box).dataset.show = b.dataset.cmpShow;
+        $$("[data-cmp-show]", box).forEach(function (x) { x.classList.toggle("on", x === b); });
+        cmp.grids.forEach(function (g) { if (g.s3) g.s3.draw(true); });
+        return;
+      }
+      var tr = e.target.closest("tr[data-k]");
+      if (tr) {  // show that cell in all three
+        var k = +tr.dataset.k, C = cmp.t.cols, r = Math.floor(k / C), c = k % C;
+        cmp.grids.forEach(function (g) { g.sel = [r, c, r, c]; g.markSel(); });
+        $$("tr.on", box).forEach(function (x) { x.classList.remove("on"); });
+        tr.classList.add("on");
+        $(".lv-cmp-grids", box).scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    });
+    document.addEventListener("change", function (e) {
+      var sel = e.target.closest && e.target.closest("[data-cmp-table]");
+      if (sel) { cmp.t = idx.tables[+sel.value]; renderCompare(); }
+    });
+  })();
   function fmtLen(s) { return s >= 60 ? Math.floor(s / 60) + " min " + Math.round(s % 60) + " s" : (s || 0).toFixed(1) + " s"; }
   function veOpts() {
     var o = {};
@@ -1334,6 +1446,7 @@
         binText(t.x[big.i % t.cols]) + " rpm / " + binText(t.y[Math.floor(big.i / t.cols)]) + (t.yu ? " " + t.yu : "") +
         (autoSave ? ". It's saved to your link: adjust any cell, or Share it." : ". Adjust cells if you like, then Save & share.");
     }
+    renderCompare();
     var warn = $(".lv-ve-warn");
     if (res.mismatch != null && res.mismatch > 4) {
       warn.hidden = false;
@@ -1700,6 +1813,14 @@
     if (b) { if (b.dataset.ve === "run") runVE(); else ve.running = false; return; }
     b = e.target.closest("[data-save-tune]");
     if (b) { saveAndShare(b); return; }
+    b = e.target.closest("[data-save-compare]");
+    if (b) {
+      setTab("ve");
+      renderCompare();
+      var cbox = $(".lv-cmp");
+      if (cbox && !cbox.hidden) setTimeout(function () { cbox.scrollIntoView({ behavior: "smooth", block: "start" }); }, 60);
+      return;
+    }
     b = e.target.closest("[data-3d]");
     if (b) {
       var box = b.closest(".lv-table, .lv-ve-gridbox"), gr = null;
