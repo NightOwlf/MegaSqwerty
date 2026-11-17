@@ -1545,3 +1545,5 @@ body.page-live .main { max-width: 1200px; }
 .lv-3d.shaping { cursor: ns-resize; }
 .lv-btns .lv-together-btn { min-width: 0; padding: 0 9px; font-size: 12px; white-space: nowrap; }
 .lv-btns .lv-together-btn.on { background: linear-gradient(#2eb36a, #1f8f4e); border-color: #1f8f4e; color: #fff; }
+.lv-undobtn[hidden] { display: none; }
+.lv-undobtn { color: var(--link); }

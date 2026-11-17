@@ -853,6 +853,7 @@
     var up = function (e) {
       if (start && start.shape && start.moved && self.preview) {  // the drag is the edit: write it to the table
         var t = self.g.t, pv = self.preview;
+        rememberUndo(t, Object.keys(pv).map(Number));
         Object.keys(pv).forEach(function (k) { setValue(t, +k, pv[k]); });
         self.preview = null; self.delta = 0;
         editsChanged(t);
@@ -1104,9 +1105,36 @@
   };
 
   /* What an edit button does to the selected cells of a grid. */
+  /* Undo: before any change to a table (buttons, typing a value, a 3D drag), what those cells were; stepped
+     back one change at a time, as long as the page is open. Older states are in History. */
+  var undoStack = [];
+  function rememberUndo(t, ks) {
+    var cells = {};
+    ks.forEach(function (k) { cells[k] = valueAt(t, k); });
+    undoStack.push({ t: t, cells: cells });
+    if (undoStack.length > 200) undoStack.shift();
+    renderUndo();
+  }
+  function undoEdit() {
+    var u = undoStack.pop();
+    if (!u) { toast("Nothing to undo."); return; }
+    Object.keys(u.cells).forEach(function (k) { setValue(u.t, +k, u.cells[k]); });
+    editsChanged(u.t);
+    allGrids().forEach(function (g) { if (g.t === u.t) Object.keys(u.cells).forEach(function (k) { g.flash(+k); }); });
+    toast("Undone: " + Object.keys(u.cells).length + " cell" + (Object.keys(u.cells).length === 1 ? "" : "s") + " in " + (u.t.label || u.t.name) + " back as they were." +
+      (undoStack.length ? " (" + undoStack.length + " more to undo)" : ""));
+    renderUndo();
+  }
+  function renderUndo() {
+    $$("[data-undo-edit]").forEach(function (b) {
+      b.hidden = !undoStack.length;
+      b.title = undoStack.length ? "Undo the last change to " + (undoStack[undoStack.length - 1].t.label || "the table") + " (Ctrl/Cmd+Z)" : "";
+    });
+  }
   function act(grid, what, arg) {
     var t = grid.t, ks = grid.selected();
     if (!ks.length) return;
+    if (what !== "lock") rememberUndo(t, ks);
     var step = Math.pow(10, -t.d), s = grid.sel;
     if (what === "set") ks.forEach(function (k) { setValue(t, k, arg); });
     else if (what === "inc" || what === "dec") ks.forEach(function (k) { setValue(t, k, valueAt(t, k) + (what === "inc" ? step : -step)); });
@@ -1199,7 +1227,7 @@
   function buildSlot(slot) {
     var t = slot.t;
     var opts = idx.tables.map(function (o, i) { return "<option value=" + i + (o === t ? " selected" : "") + ">" + esc(o.label) + "</option>"; }).join("");
-    slot.el.innerHTML = '<div class="lv-th"><select aria-label="Table">' + opts + '</select><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div>' +
+    slot.el.innerHTML = '<div class="lv-th"><select aria-label="Table">' + opts + '</select><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn lv-undobtn" data-undo-edit hidden title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div>' +
       '<div class="lv-ovrow"><span>Cells show</span><select class="lv-ovsel" aria-label="What the cells show">' +
         '<option value="">Values</option><option value="time">Time in each cell</option>' +
         (idx.roles && idx.roles.knock != null ? '<option value="knock">Knock retard (most)</option>' : "") +
@@ -1214,6 +1242,7 @@
       onSelect: function (g) { w.tools.hidden = !g.sel; }
     });
     load(t.xc); load(t.yc);
+    renderUndo();
     if (slot.ov) { $(".lv-ovsel", slot.el).value = slot.ov; showOverlay(slot); }
   }
   /* What the log did in each cell of a table: seconds spent there, the most knock retard, or the average
@@ -1276,7 +1305,8 @@
       if (!pos) { slot.grid.cursor(NaN, NaN); out.textContent = ""; return; }
       slot.grid.cursor(pos[0], pos[1]);
       var v = interpTable(t, function (k) { return t.z[k]; }, pos[0], pos[1]);
-      out.textContent = v.toFixed(Math.max(1, t.d)) + (t.units ? " " + t.units : "");
+      out.textContent = "now " + v.toFixed(Math.max(1, t.d)) + (t.units ? " " + t.units : "");
+      out.title = "What the engine was using at the cursor: the table read at that moment's RPM and load (the dot), blended between the four cells around it, like the ECU does.";
     });
   }
 
@@ -1325,6 +1355,8 @@
       var label = $(".lv-save-n", bar), btn = $("[data-save-tune]", bar);
       $("[data-save-discard]", bar).hidden = !n || !!saving;
       $("[data-save-close]", bar).hidden = !idle;
+      $("[data-save-discard]", bar).hidden = true;  // auto-save keeps nothing unsaved for long: Undo does this job
+      $("[data-undo-edit]", bar).hidden = !undoStack.length;
       $("[data-save-compare]", bar).hidden = !n && !changedCells();
       $("[data-autosave]", bar).checked = autoSave;
       label.classList.toggle("err", !!saveErr);
@@ -1341,6 +1373,7 @@
     return '<div class="lv-save" hidden><span class="lv-save-n"></span><span class="st-grow"></span>' +
       '<label class="check sm lv-auto" title="Save every change to your edited copy as you go, so your link always has the latest"><input type="checkbox" data-autosave><span>Auto-save</span></label>' +
       '<button class="btn sm" type="button" data-save-discard>Discard</button>' +
+      '<button class="btn sm" type="button" data-undo-edit hidden>↶ Undo</button>' +
       '<button class="btn sm" type="button" data-save-compare title="Before and after, side by side">Compare</button>' +
       '<button class="btn sm primary" type="button" data-save-tune>Save &amp; share</button>' +
       '<button class="lv-save-x" type="button" data-save-close title="Hide this until you change something" aria-label="Hide">×</button></div>';
@@ -1563,7 +1596,7 @@
       "</div>" +
       '<div class="lv-ve-apply" hidden></div>' +
       '<div class="lv-ve-warn" hidden></div>' +
-      '<div class="lv-ve-main"><div class="lv-ve-gridbox"><div class="lv-th"><b>' + esc(t.label) + '</b><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div><div class="lv-grid"></div>' + toolbar() +
+      '<div class="lv-ve-main"><div class="lv-ve-gridbox"><div class="lv-th"><b>' + esc(t.label) + '</b><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn lv-undobtn" data-undo-edit hidden title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div><div class="lv-grid"></div>' + toolbar() +
         '<p class="lv-tn">' + esc((t.yl || "Load") + (t.yu ? " (" + t.yu + ")" : "") + " ↑ · " + (t.xl || "RPM") + " →") + " · after a run, select cells to adjust them</p></div>" +
         '<div class="lv-ve-side">' +
           '<div class="lv-ve-why"></div>' +
@@ -1613,6 +1646,7 @@
       ve.grid.mode = this.value; ve.grid.paint();
     });
     renderSaveBars();
+    renderUndo();
     renderFilters();
     renderVeApply();
     if (root.classList.contains("cells-big")) $$("[data-cells]").forEach(function (x) { x.textContent = "Fit"; x.classList.add("on"); });
@@ -2505,6 +2539,8 @@
     if (b) { undoVE(b); return; }
     b = e.target.closest("[data-lv-history]");
     if (b) { openHistory(); return; }
+    b = e.target.closest("[data-undo-edit]");
+    if (b) { undoEdit(); return; }
     b = e.target.closest("[data-save-close]");
     if (b) { saveBarClosed = true; renderSaveBars(); return; }
     b = e.target.closest("[data-save-compare]");
@@ -2681,7 +2717,8 @@
   function toast(msg) {
     if (!toastBox) { toastBox = document.createElement("div"); toastBox.className = "lv-toast"; toastBox.setAttribute("role", "status"); document.body.appendChild(toastBox); }
     toastBox.textContent = msg; toastBox.classList.add("on");
-    clearTimeout(toastT); toastT = setTimeout(function () { toastBox.classList.remove("on"); }, 3200);
+    var ms = Math.max(4500, Math.min(10000, String(msg).length * 70));  // longer messages stay up longer
+    clearTimeout(toastT); toastT = setTimeout(function () { toastBox.classList.remove("on"); }, ms);
   }
 
   /* Notes on the tune, shared with everyone on its link (and carried into copies). */
@@ -2764,6 +2801,10 @@
     buildSlot(slot); invalidate();
   });
   document.addEventListener("keydown", function (e) {
+    if (idx && (e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
+      var tg = e.target && e.target.tagName;
+      if (tg !== "INPUT" && tg !== "TEXTAREA") { e.preventDefault(); undoEdit(); return; }
+    }
     if (!idx || e.metaKey || e.ctrlKey || e.altKey) return;
     var t = e.target, tag = t && t.tagName;
     if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
