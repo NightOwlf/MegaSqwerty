@@ -1342,3 +1342,59 @@ body.page-viewer .main { max-width: none; padding-block: 8px 12px; padding-inlin
 @media (max-width: 759px) { .lv-ovsel { height: 32px; } }
 .lv-save { flex-wrap: wrap; }
 .lv-ve-side { min-width: 0; overflow-wrap: anywhere; }
+
+/* ---------- touch, hints and keeping things clear of each other ---------- */
+.lv-pane { touch-action: pan-y; }
+.lv-graphs { position: relative; }
+/* the save / share bar sits under the tables, never over a table's header */
+.lv-side > .lv-save { order: 99; top: auto; bottom: max(4px, env(safe-area-inset-bottom)); }
+.lv-names button:not(.empty)::after { content: " ▾"; font-size: .85em; opacity: .7; }
+.lv-hint { position: absolute; left: 50%; bottom: 10px; z-index: 6; display: flex; align-items: center; gap: 10px; width: min(92%, 520px); padding: 8px 10px; transform: translateX(-50%); border: 1px solid var(--line-2); border-radius: 8px; background: rgba(20, 22, 26, .92); color: #e8eaed; box-shadow: var(--shadow); font-size: 12.5px; transition: opacity .8s; }
+.lv-hint p { margin: 0; flex: 1; }
+.lv-hint.fade { opacity: 0; }
+
+/* ---------- tables that fit a phone, or big cells to edit ---------- */
+.lv-sizebtn { display: none; }
+@media (max-width: 1099px) {
+  .lv-sizebtn { display: inline-block; }
+  /* Fit (default): the whole table across the screen, every column and row, so it can be watched while
+     scrubbing. Big numbers drop their decimal when a cell is too narrow (viewer.js). */
+  .lv:not(.cells-big) .lv-tt, .lv:not(.cells-big) .lv-tt.big { min-width: 0; font-size: 10.5px; letter-spacing: -.3px; }
+  .lv:not(.cells-big) .lv-tt td, .lv:not(.cells-big) .lv-tt th { height: 18px; padding: 0; }
+  /* Bigger: cells big enough for a thumb, the table scrolls sideways in its box with the load column pinned */
+  .lv.cells-big .lv-tt, .lv.cells-big .lv-tt.big { min-width: 820px; font-size: 13.5px; letter-spacing: 0; }
+  .lv.cells-big .lv-tt td, .lv.cells-big .lv-tt th { height: 34px; }
+  .lv.cells-big .lv-tt th:first-child { position: sticky; left: 0; z-index: 1; min-width: 40px; }
+}
+@media (max-width: 759px) and (orientation: portrait) {
+  /* the graph pinned on top stays compact, so a whole table fits under it */
+  .lv.has-side:not(.no-tune):not(.tab-ve) .lv-graphs, .lv.has-side:not(.no-tune):not(.tab-ve) .lv-scatter { height: max(150px, 28dvh); }
+  .lv.has-side:not(.no-tune):not(.tab-ve) .lv-gauges { display: none; }
+  .lv.has-side:not(.no-tune):not(.tab-ve) .lv-over { height: 26px; }
+  .lv.has-side:not(.no-tune):not(.tab-ve) .lv-transport { gap: 4px 8px; }
+  .lv.has-side:not(.no-tune):not(.tab-ve) .lv-btns button { min-width: 34px; height: 34px; padding: 0 7px; }
+  .lv-side { grid-template-columns: minmax(0, 1fr) !important; }
+  .lv-table { padding: 5px 4px; }
+  .lv:not(.cells-big) .lv-tt td, .lv:not(.cells-big) .lv-tt th { height: 19px; }
+  .lv-ovrow > span:first-child { display: none; }
+}
+@media (min-width: 560px) and (max-width: 759px) and (orientation: portrait) {
+  .lv:not(.cells-big) .lv-tt, .lv:not(.cells-big) .lv-tt.big { font-size: 12px; }
+  .lv:not(.cells-big) .lv-tt td, .lv:not(.cells-big) .lv-tt th { height: 22px; }
+}
+
+/* ---------- the save bar once everything's saved: a slim line with a close button ---------- */
+.lv-save.idle { position: static !important; padding: 3px 4px 3px 8px; border-color: var(--line); background: var(--win); box-shadow: none; font-weight: 500; font-size: 12px; }
+.lv-save.idle .lv-save-n { color: var(--ok-ink, var(--muted)); }
+.lv-save.idle .btn.sm { min-height: 26px; }
+.lv-save-x { min-width: 28px; min-height: 26px; border: 0; border-radius: 4px; background: none; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; }
+.lv-save-x:hover { background: var(--win-3); color: var(--text); }
+.lv-save-x[hidden] { display: none; }
+@media (max-width: 759px) {
+  .lv-save:not(.idle) { padding: 4px 6px; gap: 4px; font-size: 12px; }
+  .lv-save:not(.idle) .btn.sm { min-height: 32px; }
+  .lv-save.idle .lv-auto { display: none; }
+}
+.lv-tv { white-space: nowrap; }
+.lv-th select { min-width: 0; flex: 1 1 auto; }
+@media (max-width: 899px) and (orientation: landscape), (max-width: 400px) { .lv-secword { display: none; } }

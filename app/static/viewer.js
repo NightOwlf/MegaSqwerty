@@ -463,7 +463,8 @@
     if (cx >= -1 && cx <= W + 1) {
       ctx.strokeStyle = "#39e6ff"; ctx.lineWidth = 1; ctx.beginPath();
       ctx.moveTo(Math.round(cx) + 0.5, 0); ctx.lineTo(Math.round(cx) + 0.5, H); ctx.stroke();
-      var right = cx < W - 96;
+      var namesW = p.names && p.names.offsetWidth ? p.names.offsetWidth + 8 : 0;
+      var right = cx < W - Math.max(96, namesW + 64);
       ctx.textAlign = right ? "left" : "right";
       var y0 = Math.min(H - bot - shown.length * lh - 2, Math.max(3 + shown.length * lh + 4, H / 2 - shown.length * lh / 2));
       var clear = cx + 5;
@@ -563,8 +564,9 @@
     for (var k = 0; k < n - 1; k++) if (v < bins[k + 1]) return k + (v - bins[k]) / ((bins[k + 1] - bins[k]) || 1);
     return n - 1;
   }
-  function cellText(v, d) {  // as many decimals as fit a narrow cell
+  function cellText(v, d, narrow) {  // as many decimals as fit the cell (a table fitted to a phone: fewer)
     var a = Math.abs(v);
+    if (narrow) return v.toFixed(a >= 10 ? 0 : Math.min(d, 1));
     return v.toFixed(a >= 100 ? 0 : Math.min(d, a >= 10 ? 1 : 2));
   }
   function binText(v) { return Math.abs(v) >= 100 || v === Math.round(v) ? String(Math.round(v)) : v.toFixed(1); }
@@ -618,6 +620,13 @@
     this.pos = null;
     this.render();
     if (want3d()) this.set3d(true);
+  }
+  function setCellSize(big) {
+    root.classList.toggle("cells-big", big);
+    $$("[data-cells]").forEach(function (x) { x.textContent = big ? "Fit" : "Bigger"; x.classList.toggle("on", big); });
+    try { localStorage.setItem("msq.lv.cells", big ? "big" : "fit"); } catch (e) { /* ignore */ }
+    allGrids().forEach(function (g) { g.paint(); });
+    invalidate();
   }
   function want3d() { try { return localStorage.getItem("msq.lv.3d") === "1"; } catch (e) { return false; } }
   Grid.prototype.set3d = function (on) {
@@ -773,11 +782,19 @@
   };
   Grid.prototype.paint = function (only) {
     var t = this.t, rg = this.opts.range || range(t), self = this, ks = only || this.cells.map(function (_, k) { return k; });
-    var info = this.opts.info;
+    var tbl = this.wrap && this.wrap.querySelector("table"), info = this.opts.info, tw = tbl ? tbl.offsetWidth : 0;
+    var narrow = this.narrow = tw > 0 && tw / (t.cols + 1) < 34;  // too narrow for decimals on big numbers
+    if (narrow !== this.axisNarrow) {  // RPM as 1k, 1.5k… when the columns are narrow
+      this.axisNarrow = narrow;
+      $$("tr.lv-tx th", this.el).slice(1).forEach(function (th, c) {
+        var xv = t.x[c];
+        th.textContent = narrow && Math.abs(xv) >= 1000 ? +(xv / 1000).toFixed(1) + "k" : binText(xv);
+      });
+    }
     ks.forEach(function (k) {
       var td = self.cells[k];
       if (!td) return;
-      var v = self.opts.live ? self.opts.live(k) : valueAt(t, k), bg, text = cellText(v, t.d);
+      var v = self.opts.live ? self.opts.live(k) : valueAt(t, k), bg, text = cellText(v, t.d, narrow);
       if (self.mode === "ov" && self.opts.ov) {
         var ov = self.opts.ov[k], kind = self.opts.ovKind;
         if (!(ov === ov)) { bg = "#3a3d42"; text = ""; }
@@ -960,6 +977,7 @@
   }
   function editsChanged(t) {
     saveErr = "";
+    saveBarClosed = false;
     saveEdits();
     allGrids().forEach(function (g) { if (!t || g.t === t) g.paint(); });
     renderSaveBars();
@@ -1012,7 +1030,7 @@
   function buildSlot(slot) {
     var t = slot.t;
     var opts = idx.tables.map(function (o, i) { return "<option value=" + i + (o === t ? " selected" : "") + ">" + esc(o.label) + "</option>"; }).join("");
-    slot.el.innerHTML = '<div class="lv-th"><select aria-label="Table">' + opts + '</select><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button></div>' +
+    slot.el.innerHTML = '<div class="lv-th"><select aria-label="Table">' + opts + '</select><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button></div>' +
       '<div class="lv-ovrow"><span>Cells show</span><select class="lv-ovsel" aria-label="What the cells show">' +
         '<option value="">Values</option><option value="time">Time in each cell</option>' +
         (idx.roles && idx.roles.knock != null ? '<option value="knock">Knock retard (most)</option>' : "") +
@@ -1097,6 +1115,7 @@
      Edits save to the server as an edited copy of the tune, and the page's link switches to it, so the link
      you send shows your changes. Saving again updates your copy in place (this browser keeps its key);
      someone else editing your copy gets their own, so nobody overwrites anybody. Auto-save does it for you. */
+  var saveBarClosed = false;
   var OWN_KEY = "msq.lv.own", saving = null, saveAgain = false, autoTimer = 0, saveErr = "", lastSaved = null;
   var autoSave = (function () { try { return localStorage.getItem("msq.lv.autosave") !== "0"; } catch (e) { return true; } })();
   function owned() { try { return JSON.parse(localStorage.getItem(OWN_KEY) || "{}") || {}; } catch (e) { return {}; } }
@@ -1116,9 +1135,12 @@
   function renderSaveBars() {
     var n = editCount(), tablesN = Object.keys(edits).length, copy = idx && idx.tune && idx.tune.parent;
     $$(".lv-save").forEach(function (bar) {
-      bar.hidden = !TUNE || (!n && !copy && !lastSaved && !saveErr);
+      var idle = !n && !saving && !saveErr;  // nothing waiting: a slim line that doesn't follow you around
+      bar.hidden = !TUNE || (!n && !copy && !lastSaved && !saveErr) || (idle && saveBarClosed);
+      bar.classList.toggle("idle", idle);
       var label = $(".lv-save-n", bar), btn = $("[data-save-tune]", bar);
       $("[data-save-discard]", bar).hidden = !n || !!saving;
+      $("[data-save-close]", bar).hidden = !idle;
       $("[data-save-compare]", bar).hidden = !n && !changedCells();
       $("[data-autosave]", bar).checked = autoSave;
       label.classList.toggle("err", !!saveErr);
@@ -1135,7 +1157,8 @@
       '<label class="check sm lv-auto" title="Save every change to your edited copy as you go, so your link always has the latest"><input type="checkbox" data-autosave><span>Auto-save</span></label>' +
       '<button class="btn sm" type="button" data-save-discard>Discard</button>' +
       '<button class="btn sm" type="button" data-save-compare title="Before and after, side by side">Compare</button>' +
-      '<button class="btn sm primary" type="button" data-save-tune>Save &amp; share</button></div>';
+      '<button class="btn sm primary" type="button" data-save-tune>Save &amp; share</button>' +
+      '<button class="lv-save-x" type="button" data-save-close title="Hide this until you change something" aria-label="Hide">×</button></div>';
   }
   function scheduleAuto(ms) {
     clearTimeout(autoTimer);
@@ -1289,7 +1312,7 @@
         '<div class="lv-ve-bar"><i></i></div>' +
       "</div>" +
       '<div class="lv-ve-warn" hidden></div>' +
-      '<div class="lv-ve-main"><div class="lv-ve-gridbox"><div class="lv-th"><b>' + esc(t.label) + '</b><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button></div><div class="lv-grid"></div>' + toolbar() +
+      '<div class="lv-ve-main"><div class="lv-ve-gridbox"><div class="lv-th"><b>' + esc(t.label) + '</b><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button></div><div class="lv-grid"></div>' + toolbar() +
         '<p class="lv-tn">' + esc((t.yl || "Load") + (t.yu ? " (" + t.yu + ")" : "") + " ↑ · " + (t.xl || "RPM") + " →") + " · after a run, select cells to adjust them</p></div>" +
         '<div class="lv-ve-side">' +
           '<div class="lv-ve-why"></div>' +
@@ -1340,6 +1363,7 @@
     });
     renderSaveBars();
     renderFilters();
+    if (root.classList.contains("cells-big")) $$("[data-cells]").forEach(function (x) { x.textContent = "Fit"; x.classList.add("on"); });
     if (also.length) also.forEach(function (s, i) {
       fetch("/l/" + s + "/index.json" + query).then(function (r) { return r.json(); }).then(function (j) {
         var lab = $('[data-also="' + s + '"] + span');
@@ -1810,6 +1834,7 @@
     }
     cv.addEventListener("pointerdown", function (e) {
       if (e.button || ve.running) return;
+      if (e.pointerType === "touch" && !overview) return;  // fingers on a graph: see touchGraph below
       try { cv.setPointerCapture(e.pointerId); } catch (err) { /* older browsers */ }
       pts[e.pointerId] = e.clientX;
       var ids = Object.keys(pts);
@@ -1866,7 +1891,76 @@
         zoom(Math.exp(e.deltaY * unit * (e.ctrlKey ? 0.01 : 0.0016)), overview ? tAt(e) : view.t0 + (e.clientX - r.left) / r.width * span);
       }
     }, { passive: false });
-    if (!overview) cv.addEventListener("dblclick", function (e) { zoom(0.5, tAt(e)); });
+    if (!overview) {
+      cv.addEventListener("dblclick", function (e) { zoom(0.5, tAt(e)); });
+      touchGraph(cv.parentNode || cv, cv);
+    }
+  }
+  /* Fingers on a graph, handled from touch events so nothing depends on hitting a sweet spot:
+     two fingers anywhere zoom and pan (spread in any direction), one finger sideways scrubs (or selects a
+     section in ✂ mode), one finger up or down scrolls the page, a tap moves the cursor, a double-tap zooms in. */
+  function touchGraph(el, cv) {
+    var g = null, lastTap = 0, lastX = 0;
+    var tAtX = function (x) { var r = cv.getBoundingClientRect(); return view.t0 + (x - r.left) / r.width * (view.t1 - view.t0); };
+    var startPinch = function (e) {
+      var a = e.touches[0], b = e.touches[1];
+      g = { pinch: true, d: Math.max(24, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)), t0: view.t0, t1: view.t1,
+            mid: (a.clientX + b.clientX) / 2 };
+      selDrag = null;
+    };
+    el.addEventListener("touchstart", function (e) {
+      if (ve.running) return;
+      if (e.touches.length >= 2) { e.preventDefault(); if (playing) play(false); startPinch(e); return; }
+      if (e.target.closest && e.target.closest("button")) { g = null; return; }  // a channel name: let it be tapped
+      var t = e.touches[0];
+      g = { x: t.clientX, y: t.clientY, mode: null };
+    }, { passive: false });
+    el.addEventListener("touchmove", function (e) {
+      if (!g) return;
+      if (e.touches.length >= 2) {
+        if (e.cancelable) e.preventDefault();
+        if (!g.pinch) startPinch(e);
+        var a = e.touches[0], b = e.touches[1], r = cv.getBoundingClientRect();
+        var d = Math.max(24, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)), mid = (a.clientX + b.clientX) / 2;
+        var span = (g.t1 - g.t0) * g.d / d, anchor = g.t0 + (g.mid - r.left) / r.width * (g.t1 - g.t0);
+        var t0 = anchor - (mid - r.left) / r.width * span;
+        setView(t0, t0 + span);
+        return;
+      }
+      if (g.pinch) return;  // one finger left after a pinch: do nothing until it lifts
+      var t = e.touches[0], dx = t.clientX - g.x, dy = t.clientY - g.y;
+      if (!g.mode) {
+        if (Math.abs(dx) > 6 && Math.abs(dx) >= Math.abs(dy) * 0.8) {
+          g.mode = "h";
+          if (playing) play(false);
+          if (selMode) selDrag = { a: tAtX(g.x), b: tAtX(g.x) };
+        } else if (Math.abs(dy) > 8) { g.mode = "v"; return; }  // the page scrolls
+        else return;
+      }
+      if (g.mode !== "h") return;
+      if (e.cancelable) e.preventDefault();
+      if (selDrag) { selDrag.b = tAtX(t.clientX); invalidate(); }
+      else setCursor(nearest(tAtX(t.clientX)));
+    }, { passive: false });
+    var end = function (e) {
+      if (!g) return;
+      if (g.pinch) { if (!e.touches.length) g = null; return; }
+      if (selDrag) {
+        var a = selDrag.a, b = selDrag.b;
+        selDrag = null;
+        if (Math.abs(b - a) >= 0.2) addSection(a, b); else invalidate();
+      } else if (!g.mode && e.type === "touchend") {  // a tap
+        var now = Date.now();
+        if (e.cancelable) e.preventDefault();  // no emulated mouse click / dblclick after it
+        if (playing) play(false);
+        if (now - lastTap < 320 && Math.abs(g.x - lastX) < 40) { zoom(0.5, tAtX(g.x)); lastTap = 0; }
+        else { setCursor(nearest(tAtX(g.x))); lastTap = now; lastX = g.x; }
+      }
+      g = null;
+    };
+    el.addEventListener("touchend", end, { passive: false });
+    el.addEventListener("touchcancel", end);
+    el.addEventListener("gesturestart", function (e) { e.preventDefault(); });  // iOS: no page zoom over a graph
   }
 
   /* ---------- channel picker ---------- */
@@ -2057,6 +2151,8 @@
     if (b) { if (b.dataset.ve === "run") runVE(); else ve.running = false; return; }
     b = e.target.closest("[data-save-tune]");
     if (b) { saveAndShare(b); return; }
+    b = e.target.closest("[data-save-close]");
+    if (b) { saveBarClosed = true; renderSaveBars(); return; }
     b = e.target.closest("[data-save-compare]");
     if (b) {
       setTab("ve");
@@ -2065,6 +2161,8 @@
       if (cbox && !cbox.hidden) setTimeout(function () { cbox.scrollIntoView({ behavior: "smooth", block: "start" }); }, 60);
       return;
     }
+    b = e.target.closest("[data-cells]");
+    if (b) { setCellSize(!root.classList.contains("cells-big")); return; }
     b = e.target.closest("[data-3d]");
     if (b) {
       var box = b.closest(".lv-table, .lv-ve-gridbox"), gr = null;
@@ -2260,6 +2358,21 @@
     if (own) own.addEventListener("click", function () { location.href = urlWithTune(own.dataset.tuneOwn); });
   })();
 
+  function gestureHint() {
+    var seen = false;
+    try { seen = localStorage.getItem("msq.lv.hint") === "1"; } catch (e) { /* ignore */ }
+    if (seen || !window.matchMedia("(pointer: coarse)").matches) return;
+    var box = document.createElement("div");
+    box.className = "lv-hint";
+    box.innerHTML = "<p><b>Two fingers</b> to zoom · <b>drag sideways</b> to move through the log · <b>double-tap</b> to zoom in · " +
+      "<b>tap a channel name</b> to change it</p><button type=\"button\" class=\"btn sm primary\">Got it</button>";
+    graphs.appendChild(box);
+    var done = function () { box.remove(); try { localStorage.setItem("msq.lv.hint", "1"); } catch (e) { /* ignore */ } };
+    box.querySelector("button").addEventListener("click", done);
+    setTimeout(function () { if (box.isConnected) box.classList.add("fade"); }, 9000);
+    setTimeout(function () { if (box.isConnected) done(); }, 9800);
+  }
+
   /* ---------- start ---------- */
   function fail(msg) { loadNote.textContent = msg; loadNote.classList.add("err"); loadNote.hidden = false; }
   Promise.all([
@@ -2295,7 +2408,11 @@
     }
     renderSaveBars();
     renderSections();
+    try { if (localStorage.getItem("msq.lv.cells") === "big") setCellSize(true); } catch (e) { /* ignore */ }
+    var repaintT = 0;
+    window.addEventListener("resize", function () { clearTimeout(repaintT); repaintT = setTimeout(function () { allGrids().forEach(function (g) { g.paint(); }); }, 150); });
     loadNote.hidden = true;
+    gestureHint();
     root.classList.add("ready");
     if (window.ResizeObserver) new ResizeObserver(function () { scatterDirty = true; invalidate(); }).observe($(".lv-main"));
     // Held wide (a phone on its side, an iPhone Duo open), the viewer fits the screen: tell the CSS how much
