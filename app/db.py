@@ -136,12 +136,17 @@ class Store:
     def _hash_key(key: str) -> str:
         return hashlib.sha256(key.encode()).hexdigest()
 
-    def create_tune(self, raw: bytes, doc: TuneDoc, parent: str | None = None) -> tuple[str, str]:
+    def create_tune(self, raw: bytes, doc: TuneDoc, parent: str | None = None,
+                    slug: str | None = None) -> tuple[str, str]:
+        """Store a tune under a new slug (or `slug`, when restoring a link that existed before)."""
         delete_key = secrets.token_urlsafe(18)
         now = int(time.time())
         parsed = json.dumps(doc.to_dict(), separators=(",", ":"))
-        for _ in range(8):
-            slug = "".join(secrets.choice(SLUG_ALPHABET) for _ in range(SLUG_LEN))
+        wanted = slug
+        if wanted is not None and not SLUG_RE.match(wanted):
+            raise ValueError("bad slug")
+        for _ in range(1 if wanted else 8):
+            slug = wanted or "".join(secrets.choice(SLUG_ALPHABET) for _ in range(SLUG_LEN))
             path = self.raw_path(slug)
             if path.exists():
                 continue
@@ -316,13 +321,18 @@ class Store:
         """The log as a column store, which the viewer loads channels from."""
         return self.log_path(slug).with_suffix(".col")
 
-    def create_log(self, raw: bytes, tune_slug: str, name: str, report: dict, columns=None) -> tuple[str, str]:
-        """Store a log. `tune_slug` is "" for a log uploaded on its own. `columns(path)` writes its column store."""
+    def create_log(self, raw: bytes, tune_slug: str, name: str, report: dict, columns=None,
+                   slug: str | None = None) -> tuple[str, str]:
+        """Store a log. `tune_slug` is "" for a log uploaded on its own. `columns(path)` writes its column store.
+        `slug` keeps the link of a log being restored."""
         delete_key = secrets.token_urlsafe(18)
         now = int(time.time())
         payload = json.dumps(report, separators=(",", ":"))
-        for _ in range(8):
-            slug = "".join(secrets.choice(SLUG_ALPHABET) for _ in range(SLUG_LEN))
+        wanted = slug
+        if wanted is not None and not SLUG_RE.match(wanted):
+            raise ValueError("bad slug")
+        for _ in range(1 if wanted else 8):
+            slug = wanted or "".join(secrets.choice(SLUG_ALPHABET) for _ in range(SLUG_LEN))
             path = self.log_path(slug).with_suffix(".log.gz")  # logs are big and squash well
             if path.exists() or self.log_path(slug).exists():
                 continue

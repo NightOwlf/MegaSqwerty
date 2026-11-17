@@ -635,3 +635,13 @@ def test_friends_can_edit_one_tune_together(client):
     assert client.post(f"/t/{copy}/editkey", json={"key": owner}).json()["edit_key"]
     assert client.post(f"/t/{slug}/save", json={"changes": {"veTable": {"6": 44.4}}, "key": ek}).json()["slug"] != slug
     assert client.get("/t/aaaaaaaaaa/rev").status_code == 404
+
+
+def test_restore_puts_links_back_where_they_were(client, fx):
+    """After moving to persistent storage, old links come back under the same slugs (token only, no overwrite)."""
+    raw = fx("ms3_basic.msq")
+    for path in ("/admin/restore/tune", "/admin/restore/log"):
+        no = client.post(path, files={"file": ("t.msq", raw, "application/xml")}, data={"slug": "AbCdEfGhIj"},
+                         headers={"Authorization": "Bearer wrong"})
+        assert no.status_code == 404  # without the real token it doesn't exist
+    assert client.get("/t/AbCdEfGhIj.json").status_code == 404

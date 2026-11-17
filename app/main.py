@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import logging
 import os
 import re
@@ -70,7 +71,7 @@ LOG_MAX_MB = LOG_MAX_BYTES // (1024 * 1024)
 LOG_MAX_FILES = 6
 LOG_BODY_LIMIT = int(os.environ.get("LOG_BODY_MB", "420")) * 1024 * 1024  # several logs in one upload
 LOG_TOO_LARGE = f"That upload is too large. Each log can be up to {LOG_MAX_MB} MB."
-LOG_UPLOAD_RE = re.compile(r"^(/logs|/t/[A-Za-z0-9]{10}/log)/?$")
+LOG_UPLOAD_RE = re.compile(r"^(/logs|/t/[A-Za-z0-9]{10}/log|/admin/restore/log)/?$")
 TUNE_JSON_RE = re.compile(r"^/upload/?$")
 
 CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; "
@@ -447,6 +448,47 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         set_key_cookie(resp, request, new_slug, key)
         return resp
 
+    # ------------------------------------------------------------ restore
+    # Puts tunes and logs back under the links they had, after moving to persistent storage. Needs the restore
+    # token, whose sha256 is below (the token itself isn't in the repository). It never overwrites anything.
+    RESTORE_SHA = "2cdb402e6c0a60e8081197838dbc3fcf5f4888fd62fa92a01ca7092bdb429ee3"
+
+    def restore_ok(request: Request) -> bool:
+        tok = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        return bool(tok) and hmac.compare_digest(hashlib.sha256(tok.encode()).hexdigest(), RESTORE_SHA)
+
+    @app.post("/admin/restore/tune")
+    async def restore_tune(request: Request):
+        if not restore_ok(request):
+            raise HTTPException(404)
+        form = await request.form(max_files=1, max_fields=6)
+        slug, parent, notes = str(form.get("slug") or ""), str(form.get("parent") or "") or None, str(form.get("notes") or "")
+        data, err, status = await read_upload(form)
+        if err:
+            return JSONResponse({"error": err}, status_code=status)
+        if not SLUG_RE.match(slug) or store.get_meta(slug) is not None:
+            return JSONResponse({"error": "slug taken or invalid"}, status_code=409)
+        doc = await run_in_threadpool(parse_msq, data)
+        _, key = await run_in_threadpool(store.create_tune, data, doc, parent, slug)
+        store.set_notes(slug, notes)
+        return JSONResponse({"slug": slug, "key": key, "edit_key": store.edit_key(slug) if parent else None})
+
+    @app.post("/admin/restore/log")
+    async def restore_log(request: Request):
+        if not restore_ok(request):
+            raise HTTPException(404)
+        form = await request.form(max_files=1, max_fields=6)
+        slug, tune_slug = str(form.get("slug") or ""), str(form.get("tune") or "")
+        f = form.get("file")
+        if not isinstance(f, UploadFile):
+            return JSONResponse({"error": "no file"}, status_code=400)
+        data = await f.read(LOG_MAX_BYTES + 1)
+        if not SLUG_RE.match(slug) or store.get_log(slug) is not None:
+            return JSONResponse({"error": "slug taken or invalid"}, status_code=409)
+        doc = store.get_doc(tune_slug) if tune_slug else None
+        s, key, rows = await run_in_threadpool(ingest_log, doc, tune_slug if doc else "", data, f.filename or "log.mlg", slug)
+        return JSONResponse({"slug": s, "key": key, "rows": rows})
+
     @app.get("/t/{slug}/rev")
     def tune_rev(slug: str):
         """What open viewers poll (every few seconds) to pick up edits and notes made somewhere else."""
@@ -665,7 +707,8 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         featured, other = all_tables(doc, tmap)
         return tmap, featured + other
 
-    def ingest_log(doc: TuneDoc | None, tune_slug: str, data: bytes, filename: str) -> tuple[str, str, int]:
+    def ingest_log(doc: TuneDoc | None, tune_slug: str, data: bytes, filename: str,
+                   slug: str | None = None) -> tuple[str, str, int]:
         """Parse a log, compare it to its tune if it has one, and store it. -> (log slug, delete key, rows).
 
         Boost cut, MAP sensor range and rev limit for the report come from the tune."""
@@ -682,7 +725,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
                       "seconds": round(t[-1] - t[0], 1) if len(t) > 1 else 0.0,
                       "summary": {"tone": "info", "short": "Log", "verdict": ""}}
         slug, key = store.create_log(data, tune_slug, filename, report,
-                                     columns=lambda path: logsmod.build_columns(parsed, path))
+                                     columns=lambda path: logsmod.build_columns(parsed, path), slug=slug)
         return slug, key, parsed.rows
 
     def rebuild_columns(raw: bytes, path) -> None:
