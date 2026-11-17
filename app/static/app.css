@@ -1204,7 +1204,8 @@ body.page-viewer .main { max-width: none; padding-block: 8px 12px; padding-inlin
   .lv.has-side:not(.tab-ve) .lv-graphs, .lv.has-side:not(.tab-ve) .lv-scatter { flex: 1 1 0; height: auto; min-height: 120px; }
   .lv.has-side:not(.tab-ve) .lv-gauges { flex: none; flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
   .lv.has-side:not(.tab-ve) .lv-g { flex: none; }
-  .lv.has-side:not(.tab-ve) .lv-transport { flex: none; flex-wrap: nowrap; }
+  .lv.has-side:not(.tab-ve) .lv-transport { flex: none; flex-wrap: wrap; row-gap: 4px; }
+  .lv.has-side:not(.tab-ve) .lv-btns { flex-wrap: wrap; row-gap: 4px; }
   .lv.has-side:not(.tab-ve) .lv-status { flex: 1 1 0; }
   .lv.has-side:not(.tab-ve) .lv-side { grid-template-columns: minmax(0, 1fr); max-height: var(--lvh, calc(100dvh - 140px)); overflow-y: auto; overscroll-behavior: contain; align-content: start; -webkit-overflow-scrolling: touch; }
   .lv-3d { height: clamp(200px, 46dvh, 360px); }
@@ -1547,3 +1548,5 @@ body.page-live .main { max-width: 1200px; }
 .lv-btns .lv-together-btn.on { background: linear-gradient(#2eb36a, #1f8f4e); border-color: #1f8f4e; color: #fff; }
 .lv-undobtn[hidden] { display: none; }
 .lv-undobtn { color: var(--link); }
+.lv-3dreset { position: absolute; right: 6px; bottom: 6px; z-index: 2; min-height: 28px; padding: 0 10px; border: 1px solid rgba(255,255,255,.25); border-radius: 14px; background: rgba(20,22,26,.8); color: #e8eaed; font: 600 12px var(--ui); cursor: pointer; }
+.lv-3dreset[hidden] { display: none; }

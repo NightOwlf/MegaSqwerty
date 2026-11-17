@@ -103,6 +103,7 @@
     if (have) return have.then ? have : Promise.resolve(have);
     var m = idx.channels[i];
     var p = (m.virt ? m.virt() : fetchF32(base + "/ch/" + i)).then(function (v) {
+      if (m.toF) for (var q = 0; q < v.length; q++) v[q] = v[q] * 1.8 + 32;  // shown in °F
       store[i] = { v: v, pyr: pyramid(v) };
       scatterDirty = true;
       invalidate();
@@ -704,7 +705,7 @@
     this.is3d = on;
     if (on && !this.s3) this.s3 = new Surface(this);
     this.wrap.style.display = on ? "none" : "";
-    if (this.s3) { this.s3.cv.hidden = !on; if (on) this.s3.draw(); }
+    if (this.s3) { this.s3.cv.hidden = !on; this.s3.reset.hidden = !on; if (on) this.s3.draw(); }
     var b = this.el.parentNode && this.el.parentNode.querySelector("[data-3d]");
     if (b) b.classList.toggle("on", on);
     var sb = this.el.parentNode && this.el.parentNode.querySelector("[data-shape]");
@@ -716,7 +717,13 @@
   function Surface(grid) {
     this.g = grid; this.cam = grid.opts.cam || { yaw: -0.62, pitch: 0.62, zoom: 1 }; this.pts = [];
     this.cv = document.createElement("canvas"); this.cv.className = "lv-3d";
+    var self0 = this;
+    this.reset = document.createElement("button");
+    this.reset.type = "button"; this.reset.className = "lv-3dreset"; this.reset.textContent = "⟲ Reset view";
+    this.reset.title = "Back to the whole map, from the usual angle";
+    this.reset.addEventListener("click", function () { self0.cam.yaw = -0.62; self0.cam.pitch = 0.62; self0.cam.zoom = 1; self0.draw(); });
     grid.el.appendChild(this.cv);
+    grid.el.appendChild(this.reset);
     this.bind();
   }
   Surface.prototype.draw = function (alone) {
@@ -832,7 +839,7 @@
       var ids = Object.keys(pts);
       if (pinch && ids.length === 2) {
         var a = pts[ids[0]], b = pts[ids[1]];
-        self.cam.zoom = Math.max(0.5, Math.min(3, pinch.z * (Math.hypot(a[0] - b[0], a[1] - b[1]) || 1) / pinch.d));
+        self.cam.zoom = Math.max(0.5, Math.min(2.2, pinch.z * (Math.hypot(a[0] - b[0], a[1] - b[1]) || 1) / pinch.d));
         self.draw(); return;
       }
       if (!start) return;
@@ -878,7 +885,7 @@
     cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
     cv.addEventListener("wheel", function (e) {
       e.preventDefault();
-      self.cam.zoom = Math.max(0.5, Math.min(3, self.cam.zoom * Math.exp(-e.deltaY * 0.0015))); self.draw();
+      self.cam.zoom = Math.max(0.5, Math.min(2.2, self.cam.zoom * Math.exp(-e.deltaY * 0.0015))); self.draw();
     }, { passive: false });
     cv.addEventListener("dblclick", function () { self.cam.yaw = -0.62; self.cam.pitch = 0.62; self.cam.zoom = 1; self.draw(); });
   };
@@ -1601,7 +1608,7 @@
         '<div class="lv-ve-side">' +
           '<div class="lv-ve-why"></div>' +
           '<details class="lv-ve-set"><summary>Filters &amp; settings</summary>' +
-            opt("minClt", "Min coolant", 70, 1, "°C") +
+            opt("minClt", "Min coolant", TEMP_F ? 158 : 70, 1, TEMP_F ? "°F" : "°C") +
             opt("maxChange", "Max change per cell", 15, 1, "% per run (run again for more)") +
             opt("minData", "Data for full change", 0.5, 0.1, "s per cell") +
             opt("tpsRate", "Throttle moving faster than", 30, 1, "%/s") +
@@ -1917,6 +1924,7 @@
         }
       }
       if (t.ya !== 1 || t.yb !== 0) d.load = d.load.map(function (v) { return v * t.ya + t.yb; });
+      if (d.clt && TEMP_F && isCelsius((meta.channels[R.clt] || {}).u)) d.clt = d.clt.map(f);  // other logs arrive in °C
       if (d.trim) d.trimMode = meta.channels[R.ego_corr].hi > 50 ? "pct100" : "pct0";
       return d;
     });
@@ -2770,6 +2778,7 @@
   })();
   function openOpts() {
     var dlg = $d('[data-dlg="opts"]');
+    $d("[data-temp]").value = TEMP_F ? "F" : "C";
     $$("[data-opt]", dlg).forEach(function (el) {
       var k = el.dataset.opt;
       if (el.type === "checkbox") el.checked = !!opt[k]; else el.value = String(opt[k]);
@@ -2777,6 +2786,10 @@
     dlg.hidden = false;
   }
   $d('[data-dlg="opts"]').addEventListener("change", function (e) {
+    if (e.target.matches("[data-temp]")) {
+      try { localStorage.setItem("msq.lv.temp", e.target.value); } catch (err) { /* ignore */ }
+      location.reload(); return;
+    }
     var el = e.target.closest("[data-opt]");
     if (!el) return;
     var k = el.dataset.opt;
@@ -2882,6 +2895,24 @@
     setTimeout(function () { if (box.isConnected) done(); }, 9800);
   }
 
+  /* Temperatures in °F (the default; ⚙ has °C): whatever the log or tune stores, °C channels, ranges and
+     temperature axes are converted for display. Table values themselves aren't, so edits save as stored. */
+  var TEMP_F = (function () { try { return (localStorage.getItem("msq.lv.temp") || "F") !== "C"; } catch (e) { return true; } })();
+  function isCelsius(u) { return /^\s*(°\s*c|deg\s*c|degc|c|celsius|degrees\s*c)\s*$/i.test(String(u || "")); }
+  function f(v) { return v == null ? v : v * 1.8 + 32; }
+  function toFahrenheit() {
+    if (!TEMP_F || !idx) return;
+    idx.channels.forEach(function (m) {
+      if (!isCelsius(m.u)) return;
+      m.toF = true; m.u = "°F"; m.lo = f(m.lo); m.hi = f(m.hi);
+      if (m.lo != null) { m.lo = Math.round(m.lo * 10) / 10; m.hi = Math.round(m.hi * 10) / 10; }
+    });
+    (idx.tables || []).forEach(function (t) {
+      if (isCelsius(t.xu)) { t.x = t.x.map(f); t.xu = "°F"; }
+      if (isCelsius(t.yu)) { t.y = t.y.map(f); t.yu = "°F"; }
+    });
+  }
+
   /* ---------- start ---------- */
   function fail(msg) { loadNote.textContent = msg; loadNote.classList.add("err"); loadNote.hidden = false; }
   Promise.all([
@@ -2889,6 +2920,7 @@
     fetchF32(base + "/ch/t")
   ]).then(function (res) {
     idx = res[0]; T = res[1]; N = T.length;
+    toFahrenheit();
     if (N < 2) return fail("This log has no records to show.");
     addVirtual();
     if (idx.tune && idx.tune.stoich) stoich = idx.tune.stoich;

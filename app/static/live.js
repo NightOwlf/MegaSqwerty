@@ -17,6 +17,11 @@
   var layout = null, tables = {}, och = {}, state = {}, ws = null, wsOpen = false;
   var ecu = null, pipe = null, running = false, undoStack = [], queue = [], reqN = 0, pending = {};
   var STOICH = 14.7;
+  // Temperatures shown in °F (the ECU works in °C: values are converted for display, and back when set)
+  var TEMP_F = (function () { try { return (localStorage.getItem("msq.lv.temp") || "F") !== "C"; } catch (e) { return true; } })();
+  function isC(u) { return /^\s*(°\s*c|deg\s*c|degc|c|celsius|degrees\s*c)\s*$/i.test(String(u || "")); }
+  function showT(v, u) { return TEMP_F && isC(u) && v != null ? v * 1.8 + 32 : v; }
+  function showU(u) { return TEMP_F && isC(u) ? "°F" : u || ""; }
   var frames = 0, fps = 0, rtt = null, chList = [];
   setInterval(function () { fps = frames; frames = 0; if (ROLE === "view") { send({ t: "ping", at: Date.now() }); pill(); } }, 1000);
   var hist = { t: [], rows: {} }, HIST_S = 30;
@@ -352,7 +357,7 @@
     z.forEach(function (v) { if (v < lo) lo = v; if (v > hi) hi = v; });
     var d = c.digits == null ? 1 : c.digits, h = [];
     for (var r = R - 1; r >= 0; r--) {
-      h.push("<tr><th>" + (t.y ? bin(ys[r]) : esc(c.units || "")) + "</th>");
+      h.push("<tr><th>" + (t.y ? bin(showT(ys[r], (layout.constants[t.y] || {}).units)) : esc(showU(c.units))) + "</th>");
       for (var cc = 0; cc < C; cc++) {
         var k = r * C + cc, v = z[k];
         var cls = (sel[k] ? " sel" : "") + (pending[t.z + ":" + k] ? " pend" : "");
@@ -360,7 +365,8 @@
       }
       h.push("</tr>");
     }
-    h.push('<tr class="ax"><th></th>' + xs.map(function (x) { return "<th>" + bin(x) + "</th>"; }).join("") + "</tr>");
+    var xu = (layout.constants[t.x] || {}).units;
+    h.push('<tr class="ax"><th></th>' + xs.map(function (x) { return "<th>" + bin(showT(x, xu)) + "</th>"; }).join("") + "</tr>");
     box.innerHTML = '<table class="lt-tt"><tbody>' + h.join("") + "</tbody></table>";
     fitText(box);
     cursor();
@@ -423,7 +429,7 @@
     if (!n || !(n in och)) return null;
     var v = och[n];
     if ((role === "afr" || role === "lambda_target") && v > 0 && v < 2) v *= STOICH;  // show mixture as AFR
-    return v;
+    return showT(v, (layout.outputs[n] || {}).units);
   }
   // gauges the tuner added: any live channel the ECU has (kept in this browser)
   var extra = (function () { try { return JSON.parse(localStorage.getItem("msq.live.gauges") || "[]") || []; } catch (e) { return []; } })();
@@ -437,10 +443,10 @@
       box.dataset.built = sig;
       box.innerHTML = GAUGES.filter(function (g) { return layout.roles && layout.roles[g[0]]; }).map(function (g) {
         var o = layout.outputs[layout.roles[g[0]]] || {};
-        return '<div class="lt-g" data-g="' + g[0] + '"><small>' + esc(g[1]) + '</small><b class="mono">–</b><i>' + esc(g[0] === "afr" || g[0] === "lambda_target" ? "AFR" : o.units || "") + "</i></div>";
+        return '<div class="lt-g" data-g="' + g[0] + '"><small>' + esc(g[1]) + '</small><b class="mono">–</b><i>' + esc(g[0] === "afr" || g[0] === "lambda_target" ? "AFR" : showU(o.units)) + "</i></div>";
       }).join("") + extra.filter(function (n) { return layout.outputs[n]; }).map(function (n) {
         var o = layout.outputs[n];
-        return '<div class="lt-g mine" data-ch="' + esc(n) + '"><small>' + esc(o.label || n) + '</small><b class="mono">–</b><i>' + esc(o.units || "") +
+        return '<div class="lt-g mine" data-ch="' + esc(n) + '"><small>' + esc(o.label || n) + '</small><b class="mono">–</b><i>' + esc(showU(o.units)) +
           '</i><button type="button" class="lt-gx" data-gdel="' + esc(n) + '" aria-label="Remove this gauge">×</button></div>';
       }).join("") + (ROLE === "view" || ROLE === "car" ? '<button type="button" class="lt-g lt-gadd" data-gadd>＋ Gauge</button>' : "");
     }
@@ -450,7 +456,7 @@
     });
     extra.forEach(function (n) {
       var el = box.querySelector('[data-ch="' + n + '"] b'), o = layout.outputs[n];
-      if (el && o) el.textContent = fmt(och[n], o.kind === "bits" ? 0 : Math.abs(och[n]) >= 100 ? 0 : 2);
+      if (el && o) { var sv = showT(och[n], o.units); el.textContent = fmt(sv, o.kind === "bits" ? 0 : Math.abs(sv) >= 100 ? 0 : 2); }
     });
   }
   function pickGauge() {
@@ -568,6 +574,7 @@
     if (sg) {
       var li = sg.closest("[data-set]"), name = li.dataset.set, nv = parseFloat(li.querySelector("input").value);
       if (!(nv === nv)) { li.querySelector("input").focus(); return; }
+      if (TEMP_F && isC(layout.constants[name].units)) nv = Math.round((nv - 32) / 1.8 * 100) / 100;  // typed in °F, the ECU wants °C
       var cells = { 0: nv };
       if (ROLE === "car") {
         var why = check(name, cells);
@@ -668,9 +675,10 @@
       .filter(function (r) { var s = (r[1] + " " + r[0]).toLowerCase(); return words.every(function (w) { return s.indexOf(w) >= 0; }); })
       .sort(function (a, b) { return a[1].localeCompare(b[1]); }).slice(0, 60);
     box.innerHTML = rows.map(function (r) {
-      var c = layout.constants[r[0]], v = tables[r[0]][0];
-      return '<li data-set="' + esc(r[0]) + '"><span><b>' + esc(r[1]) + '</b> <small class="dim">' + esc(r[0]) + (c.units ? " · " + esc(c.units) : "") +
-        (c.lo != null ? " · " + c.lo + " to " + c.hi : "") + '</small></span><b class="mono">' + fmt(v, c.digits == null ? 2 : c.digits) + "</b>" +
+      var c = layout.constants[r[0]], v = showT(tables[r[0]][0], c.units);
+      var lo = c.lo != null ? +showT(c.lo, c.units).toFixed(1) : null, hi = c.hi != null ? +showT(c.hi, c.units).toFixed(1) : null;
+      return '<li data-set="' + esc(r[0]) + '"><span><b>' + esc(r[1]) + '</b> <small class="dim">' + esc(r[0]) + (c.units ? " · " + esc(showU(c.units)) : "") +
+        (lo != null ? " · " + lo + " to " + hi : "") + '</small></span><b class="mono">' + fmt(v, c.digits == null ? 2 : c.digits) + "</b>" +
         '<input type="text" inputmode="decimal" aria-label="New value"><button class="btn sm" type="button" data-setgo>Set</button></li>';
     }).join("") || '<li class="dim">' + (names.length ? "No setting matches." : "Waiting for the tune from the ECU…") + "</li>";
   }
