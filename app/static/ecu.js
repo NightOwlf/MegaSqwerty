@@ -313,7 +313,11 @@
     }
     function reply(payload) {
       var out = frame(payload);
-      setTimeout(function () { listeners.forEach(function (f) { f(out); }); }, 2 + Math.random() * 3);  // a USB round trip
+      var deliver = function () { listeners.forEach(function (f) { f(out); }); };
+      // a USB round trip of a few ms; but a timer in a background tab is slowed to ~1/s by the browser, which real
+      // USB isn't, so there the reply comes straight back instead
+      if (typeof document !== "undefined" && document.hidden) Promise.resolve().then(deliver);
+      else setTimeout(deliver, 2 + Math.random() * 3);
     }
     function u16(b, at) { return little ? b[at] | (b[at + 1] << 8) : (b[at] << 8) | b[at + 1]; }
     function handle(req) {

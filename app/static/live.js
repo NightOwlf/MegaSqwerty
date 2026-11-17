@@ -162,7 +162,7 @@
   }
   function pollLoop() {
     if (!running || !ecu) return;
-    if (queue.length) return work().then(function () { setTimeout(pollLoop, 0); });
+    if (queue.length) return work().then(function () { Promise.resolve().then(pollLoop); });
     var started = Date.now();
     ecu.och().then(function (block) {
       och = ECU.decodeOutputs(layout, block, ecu.little);
