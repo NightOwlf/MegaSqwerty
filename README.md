@@ -455,6 +455,15 @@ three 3D surfaces on one height scale that turn together, with the changed cells
 changed cell, biggest first, with its RPM, load, before, after, change and (after a run) how many seconds of
 the log it was built from; tap one to find it in all three. On a phone it shows one at a time.
 
+### Simulate: this drive with the new VE table
+
+The **Simulate** tab (it never opens by itself) replays the log with the VE table as it is now: your edits, 3D
+drags, or a VE Analyze suggestion (its strip has a *See it simulated* button). The top graph is the recorded AFR
+and target, the one under it the simulated AFR and target, on the same timeline, with a summary of how far each
+is from target on average and how often it's within ±0.5 AFR (only in your sections, if you marked any). Fuel
+follows VE, so each record's simulated AFR = recorded AFR × VE that ran ÷ VE now. It updates as you edit. It
+doesn't model closed-loop trim reacting or wideband delay: a guide, not a replacement for logging again.
+
 ### Remote tuning: edits travel with the link
 
 Nobody has to download or upload a file to send changes back and forth. With **Auto-save** on (the default),

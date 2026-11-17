@@ -36,6 +36,7 @@
       <button type="button" role="tab" data-lv-tab="graphs" aria-selected="true">Data Log</button>
       <button type="button" role="tab" data-lv-tab="scatter" aria-selected="false">Scatter Plot</button>
       <button type="button" role="tab" data-lv-tab="ve" aria-selected="false">VE Analyze</button>
+      <button type="button" role="tab" data-lv-tab="sim" aria-selected="false" title="This drive, simulated with the VE table as it is now">Simulate</button>
     </div>
     <div class="lv-actions">
       <button class="btn sm" type="button" data-lv-tune title="Choose the tune to read this log with">{{ icon('folder') }}<span>{{ 'Change tune' if tune_slug else 'Add tune' }}</span></button>
@@ -65,6 +66,13 @@
           <label class="check sm"><input type="checkbox" data-sc-range checked><span>Only the zoomed range</span></label>
         </div>
         <canvas class="lv-scatter-cv"></canvas>
+      </div>
+      <div class="lv-sim" data-lv-panel="sim" hidden>
+        <div class="lv-sim-head"><b>Simulated log</b><span class="dim">this drive's AFR as it would have been with the VE table as it is now (your edits, 3D changes or a VE Analyze suggestion)</span>
+          <span class="st-grow"></span><button class="btn sm" type="button" data-sim-run>↻ Update</button></div>
+        <p class="lv-sim-sum"></p>
+        <div class="lv-sim-graph"></div>
+        <p class="fine">Fuel follows VE: where a cell is 5% higher than what the engine ran, it gets about 5% more fuel, so AFR comes out about 5% richer. Simulated AFR = recorded AFR × VE that ran ÷ VE now, record by record. It doesn't model closed-loop trim reacting or the wideband's delay: a guide to whether changes move AFR towards target, not a substitute for logging again after you burn. Edit cells in the VE table on this page and it updates.</p>
       </div>
       <div class="lv-ve" data-lv-panel="ve" hidden>
         <div class="lv-ve-graph"></div>
@@ -209,6 +217,7 @@
       <dt>↶ Undo</dt><dd>Steps back the last change to a table (a 3D drag, a typed value, any button), one at a time, for as long as the page is open; Ctrl/Cmd+Z does the same. Older versions are in History.</dd>
       <dt>“now 48.5 %” by a table</dt><dd>What the engine was using at the cursor: the table read at that moment's RPM and load (the dot), blended between the four cells around it.</dd>
       <dt>Shape (3D)</dt><dd>With a table in 3D, tap <b>Shape</b>, then drag a point up or down to raise or lower it; its neighbours follow a little, for a smooth change. Tap cells first (or Range) to move a whole area together, e.g. to change a slope. Tap Shape again to go back to turning the map.</dd>
+      <dt>Simulate</dt><dd>This drive replayed with the VE table as it is now: the recorded AFR and target, and below it the AFR your changes would have given, with how close each gets to target. Open it after editing cells or running VE Analyze; it updates as you edit.</dd>
       <dt>Compare</dt><dd>Before, after and the % change of every table you or VE Analyze changed, side by side as tables or 3D, with a list of every changed cell.</dd>
       <dt>3D</dt><dd>Shows a table as a surface. Drag to turn it, pinch or scroll to zoom, double-click to reset, tap a point to select that cell.</dd>
       <dt>⚙ Display options</dt><dd>The highest and lowest on screen or in the whole log, the graph scale, line and text size, and peak markers.</dd>

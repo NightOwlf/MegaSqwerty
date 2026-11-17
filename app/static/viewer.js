@@ -115,6 +115,66 @@
   function got(i) { var d = store[i]; return d && !d.then ? d : null; }
   /* Computed channels, added to the log's own. "AFR correction needed": how far the wideband is from the
      target, as the % more (+) or less (−) fuel it would take to hit it. It works with closed loop off. */
+  /* "What if": this drive's AFR as it would have been with the VE table as it is now (edits, 3D drags, a VE
+     Analyze suggestion). Fuel follows VE, so at every record
+         simulated AFR = measured AFR × VE that ran ÷ VE now
+     where "VE that ran" is the ECU's logged VE (else the table this tune started from) and "VE now" is the
+     table read at that record's RPM and load. It doesn't model closed-loop trim reacting or the wideband's
+     delay, so it's a guide to the direction and size of a change, not a replacement for a new log. */
+  var simIdx = -1, simStats = null;
+  function veTableDef() { return (idx.tables || []).filter(function (t) { return t.id === "ve"; })[0] || null; }
+  function addSimulated() {
+    var R = idx.roles || {}, t = veTableDef();
+    if (!t || t.xc == null || t.yc == null || R.lambda == null) return;
+    var lamDiv = (idx.lam && idx.lam.lambda) || 1, tgtDiv = (idx.lam && idx.lam.lambda_target) || 1;
+    simIdx = idx.channels.length;
+    idx.channels.push({ n: "AFR (simulated)", u: "AFR", d: 2, lo: 9, hi: 18, sim: true, virt: function () {
+      var need = [load(t.xc), load(t.yc), load(R.lambda), R.lambda_target != null ? load(R.lambda_target) : Promise.resolve(null),
+                  R.ve != null ? load(R.ve) : Promise.resolve(null), R.rpm != null ? load(R.rpm) : Promise.resolve(null)];
+      return Promise.all(need).then(function (r) {
+        var X = r[0].v, Y = r[1].v, L = r[2].v, G = r[3] && r[3].v, V = r[4] && r[4].v, n = X.length, out = new Float32Array(n);
+        var base = t.p || t.z, now = function (k) { return valueAt(t, k); }, was = function (k) { return base[k]; };
+        var sec = inSections(T), st = { n: 0, eb: 0, ea: 0, wb: 0, wa: 0, changed: 0 };
+        for (var i = 0; i < n; i++) {
+          var fx = where(t.x, X[i]), fy = where(t.y, Y[i] * t.ya + t.yb), afr = L[i] / lamDiv * stoich;
+          if (!(fx === fx) || !(fy === fy) || !(afr > 5 && afr < 30)) { out[i] = NaN; continue; }
+          var veNow = interpTable(t, now, fx, fy), veRan = V && V[i] > 1 && V[i] < 300 ? V[i] : interpTable(t, was, fx, fy);
+          var sim = veNow > 0 ? afr * veRan / veNow : NaN;
+          out[i] = sim;
+          if (Math.abs(veNow / veRan - 1) > 0.001) st.changed++;
+          var tgt = G ? G[i] / tgtDiv * (G[i] / tgtDiv < 2 ? stoich : 1) : NaN;
+          if (sec && !sec[i]) continue;
+          if (tgt > 9 && tgt < 20 && afr > 9 && afr < 18 && sim === sim) {  // running, not fuel cut
+            st.n++;
+            var eb = Math.abs(afr - tgt), ea = Math.abs(sim - tgt);
+            st.eb += eb; st.ea += ea; if (eb <= 0.5) st.wb++; if (ea <= 0.5) st.wa++;
+          }
+        }
+        simStats = st;
+        return out;
+      });
+    } });
+  }
+  var simTimer = 0;
+  function resim() {
+    if (simIdx < 0) return;
+    delete store[simIdx];
+    $(".lv-sim-sum") && ($(".lv-sim-sum").textContent = "Simulating…");
+    load(simIdx).then(function () { renderSimSummary(); invalidate(); });
+  }
+  function simSoon() { clearTimeout(simTimer); simTimer = setTimeout(resim, 400); }
+  function renderSimSummary() {
+    var box = $(".lv-sim-sum");
+    if (!box) return;
+    var s = simStats;
+    if (simIdx < 0) { box.textContent = "This log can't be simulated: it needs a wideband channel and a tune with a VE table."; return; }
+    if (!s || !s.n) { box.textContent = "Not enough running data to compare (outside fuel cut, with a target)."; return; }
+    var where2 = sections.length ? " in your sections" : "";
+    var head = s.changed ? "" : "The VE table is the same as what ran" + where2 + ", so the simulated log matches the recorded one. Edit cells or run VE Analyze, then look again.\n";
+    box.innerHTML = esc(head) + "<b>Recorded</b>: " + (s.eb / s.n).toFixed(2) + " AFR off target on average, within ±0.5 AFR " + Math.round(s.wb / s.n * 100) + "% of the time" +
+      "<br><b>Simulated</b>: " + (s.ea / s.n).toFixed(2) + " AFR off on average, within ±0.5 AFR <b>" + Math.round(s.wa / s.n * 100) + "%</b> of the time" +
+      (s.ea < s.eb - 0.02 ? ' <span class="up-good">closer to target</span>' : s.ea > s.eb + 0.02 ? ' <span class="up-bad">further from target</span>' : "") + where2;
+  }
   function addVirtual() {
     var R = idx.roles || {};
     if (R.lambda == null || R.lambda_target == null) return;
@@ -1187,6 +1247,7 @@
     renderSaveBars();
     scheduleAuto();
     compareSoon();
+    if (tab === "sim") simSoon();
   }
   function allGrids() {
     var out = tableSlots.map(function (s) { return s.grid; });
@@ -1812,6 +1873,7 @@
       box.hidden = false; box.className = "lv-ve-apply pending";
       box.innerHTML = "<span><b>VE Analyze suggests " + plural(n, "cell") + "</b> · not applied yet. The tune is backed up before it changes.</span>" +
         '<span class="st-grow"></span><button class="btn sm" type="button" data-save-compare>Compare</button>' +
+        '<button class="btn sm" type="button" data-goto-sim>See it simulated</button>' +
         '<button class="btn sm" type="button" data-ve-discard>Discard</button><button class="btn sm primary" type="button" data-ve-apply>Apply to tune</button>';
     } else if (veUndo) {
       box.hidden = false; box.className = "lv-ve-apply done";
@@ -2165,6 +2227,7 @@
       if (tab === "graphs") panes.slice(0, paneCount).forEach(function (p, i) { drawPane(p, i === paneCount - 1); });
       else if (tab === "scatter") drawScatter();
       else if (tab === "ve" && vePane) drawPane(vePane, true);
+      else if (tab === "sim" && simPanes) simPanes.forEach(function (p, k) { drawPane(p, k === simPanes.length - 1); });
       drawOverview(); drawGauges(); drawStatus(); drawTables();
       if (tab === "ve" && ve.grid && !ve.running) {
         var pos = tablePos(ve.table);
@@ -2495,7 +2558,24 @@
       if (!vePane.el) { makePane(vePane, $(".lv-ve-graph")); vePane.el.classList.add("lv-pane-ve"); }
       if (!ve.grid && !$(".lv-ve-body").children.length) buildVE();
     }
+    if (tab === "sim") openSim();
     invalidate(); saveSoon();
+  }
+  var simPanes = null;
+  function openSim() {
+    var host = $(".lv-sim-graph");
+    if (!simPanes && simIdx >= 0) {
+      var afrC = channelFor("afr"), tgtC = channelFor("afr_target"), rpmC = channelFor("rpm");
+      simPanes = [{ ch: [afrC, tgtC, rpmC, -1], i: 0, sim: true, ve: true }, { ch: [simIdx, tgtC, rpmC, -1], i: 1, sim: true, ve: true }];
+      simPanes.forEach(function (p, k) {
+        makePane(p, host);
+        var tag = document.createElement("span");
+        tag.className = "lv-pane-tag " + (k ? "sim" : "rec");
+        tag.textContent = k ? "Simulated: with the VE table as it is now" : "Recorded";
+        p.el.appendChild(tag);
+      });
+    }
+    resim();
   }
 
   /* ---------- controls ---------- */
@@ -2545,6 +2625,10 @@
     if (b) { if (confirm("Throw away VE Analyze's suggestion? The tune stays as it is.")) { var vt = ve.table; delete edits[vt.name]; setVePending(false); editsChanged(vt); } return; }
     b = e.target.closest("[data-ve-undo]");
     if (b) { undoVE(b); return; }
+    b = e.target.closest("[data-goto-sim]");
+    if (b) { setTab("sim"); window.scrollTo(0, 0); return; }
+    b = e.target.closest("[data-sim-run]");
+    if (b) { resim(); return; }
     b = e.target.closest("[data-lv-history]");
     if (b) { openHistory(); return; }
     b = e.target.closest("[data-undo-edit]");
@@ -2923,6 +3007,7 @@
     toFahrenheit();
     if (N < 2) return fail("This log has no records to show.");
     addVirtual();
+    addSimulated();
     if (idx.tune && idx.tune.stoich) stoich = idx.tune.stoich;
     initialLayout();
     buildPanes();

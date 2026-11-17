@@ -1550,3 +1550,18 @@ body.page-live .main { max-width: 1200px; }
 .lv-undobtn { color: var(--link); }
 .lv-3dreset { position: absolute; right: 6px; bottom: 6px; z-index: 2; min-height: 28px; padding: 0 10px; border: 1px solid rgba(255,255,255,.25); border-radius: 14px; background: rgba(20,22,26,.8); color: #e8eaed; font: 600 12px var(--ui); cursor: pointer; }
 .lv-3dreset[hidden] { display: none; }
+
+/* ---------- simulated log ---------- */
+.lv-sim[hidden] { display: none; }
+.lv-sim { display: flex; flex-direction: column; gap: 6px; }
+.lv-sim-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; }
+.lv-sim-head .dim { font-size: 12px; }
+.lv-sim-sum { margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--win); font-size: 13px; line-height: 1.55; white-space: pre-line; }
+.lv-sim-sum .up-good { color: var(--ok-ink, #1f8f4e); font-weight: 700; }
+.lv-sim-sum .up-bad { color: var(--err-ink, #c0392b); font-weight: 700; }
+.lv-sim-graph { display: flex; flex-direction: column; gap: 2px; height: max(360px, calc(100dvh - 420px)); border: 1px solid var(--line); background: #000; }
+.lv-sim-graph .lv-pane { flex: 1 1 0; }
+.lv-pane-tag { position: absolute; left: 50%; bottom: 4px; transform: translateX(-50%); padding: 1px 8px; border-radius: 10px; font: 700 11px var(--ui); pointer-events: none; }
+.lv-pane-tag.rec { background: rgba(255, 255, 255, .14); color: #e8eaed; }
+.lv-pane-tag.sim { background: rgba(255, 196, 0, .25); color: #ffd54a; }
+@media (max-width: 759px) { .lv-sim-graph { height: 340px; } }
