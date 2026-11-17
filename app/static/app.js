@@ -58,20 +58,29 @@
       input.value = "";
     }
     /* Big uploads (datalogs): send in the background so the page can show how far along it is. */
-    function send(f) {
+    function send(label) {
       var bar = $(".upbar", form), fill = bar && $("i", bar), xhr = new XMLHttpRequest();
       if (bar) bar.hidden = false;
+      if (fill) fill.style.width = "0";
       xhr.open("POST", form.getAttribute("action"));
       xhr.setRequestHeader("X-Upload", "1");
       xhr.upload.onprogress = function (e) {
         if (!e.lengthComputable) return;
         var pct = Math.round(e.loaded / e.total * 100);
         if (fill) fill.style.width = pct + "%";
-        if (status) status.textContent = pct < 100 ? "Uploading " + f.name + " · " + pct + "%" : "Reading " + f.name + "…";
+        if (status) status.textContent = pct < 100 ? "Uploading " + label + " · " + pct + "%" : "Reading " + label + "… big logs take a few seconds";
       };
       xhr.onload = function () {
         var res = null;
         try { res = JSON.parse(xhr.responseText); } catch (e) { /* not JSON */ }
+        if (res && res.url && res.partial) {  // some files went up, one didn't
+          if (bar) bar.hidden = true;
+          fail(res.error);
+          var a = document.createElement("a");
+          a.href = res.url; a.className = "btn primary"; a.textContent = "Open the logs that uploaded";
+          if (status) status.appendChild(document.createElement("br")), status.appendChild(a);
+          return;
+        }
         if (res && res.url) { location.href = res.url; return; }
         if (bar) bar.hidden = true;
         fail(res && res.error ? res.error : "The upload didn't come through. Try again.");
@@ -79,17 +88,38 @@
       xhr.onerror = function () { if (bar) bar.hidden = true; fail("The upload didn't come through. Check your connection and try again."); };
       xhr.send(new FormData(form));
     }
+    var tuneAction = form.getAttribute("action");
+    function isLog(f) { return /\.(mlg|msl|csv|tsv|txt|log)$/i.test(f.name); }
+    function mb(n) { return (n / 1048576).toFixed(1) + " MB"; }
     input.addEventListener("change", function () {
-      var f = input.files && input.files[0];
-      if (!f) return;
-      if (f.size > max) return fail("That file is " + (f.size / 1048576).toFixed(1) + " MB. The limit is " + Math.round(max / 1048576) + " MB.");
-      if (status) { status.classList.remove("err"); status.textContent = f.name + " · " + Math.max(1, Math.round(f.size / 1024)) + " KB"; }
+      var files = Array.prototype.slice.call(input.files || []);
+      if (!files.length) return;
+      var limit = max, progress = form.hasAttribute("data-progress");
+      // The home page's box takes tunes and logs: a log goes to the log viewer, with the log size limit.
+      if (form.dataset.logAction) {
+        var logs = files.filter(isLog);
+        if (logs.length && logs.length < files.length) return fail("Upload the tune and the logs separately: open the logs, then add the tune from the log viewer.");
+        if (logs.length) {
+          form.setAttribute("action", form.dataset.logAction);
+          limit = parseInt(form.dataset.logMax, 10); progress = true;
+        } else {
+          form.setAttribute("action", tuneAction);
+          if (files.length > 1) return fail("Choose one .msq file at a time.");
+        }
+      }
+      if (files.length > 6) return fail("Up to 6 logs at a time.");
+      var big = files.filter(function (f) { return f.size > limit; })[0];
+      if (big) return fail((files.length > 1 ? big.name + " is " : "That file is ") + mb(big.size) + ". The limit is " + Math.round(limit / 1048576) + " MB." +
+        (!isLog(big) && form.dataset.logAction ? "" : ""));
+      var label = files.length > 1 ? files.length + " logs" : files[0].name;
+      var total = files.reduce(function (s, f) { return s + f.size; }, 0);
+      if (status) { status.classList.remove("err"); status.textContent = label + " · " + (total > 1048576 ? mb(total) : Math.max(1, Math.round(total / 1024)) + " KB"); }
       var main = zone && $(".dz-main", zone);
-      if (main) main.textContent = f.name;
+      if (main) main.textContent = label;
       if (form.hasAttribute("data-autosubmit")) {
         form.classList.add("busy");
-        if (status) status.textContent = "Uploading " + f.name + "…";
-        if (form.hasAttribute("data-progress") && window.FormData && window.XMLHttpRequest) return send(f);
+        if (status) status.textContent = "Uploading " + label + "…";
+        if (progress && window.FormData && window.XMLHttpRequest) return send(label);
         if (form.requestSubmit) form.requestSubmit(); else form.submit();
       }
     });

@@ -61,8 +61,13 @@ ROLES: dict[str, tuple[str, ...]] = {
     "egt": (r"^egt1?$", r"^exhausttemp", r"^exhaustgastemp"),
     "ego_corr": (r"^egocor", r"^o2correction", r"^shorttermfueltrim", r"^stft", r"^closedloopcorrection",
                  r"^fueltrim"),
-    "ve": (r"^fuelve$", r"^vecurr", r"^vecurrent", r"^ve1?$", r"^vetable"),
+    "ve": (r"^fuelve$", r"^vecurr", r"^vecurrent", r"^ve1?$", r"^vetable1?$"),
     "accel": (r"^accelenrich", r"^tpsaccel", r"^accel$", r"^aeamount"),
+    # Used by the viewer's VE Analyze to leave out samples the VE table wasn't in charge of.
+    "ae_active": (r"^fueltpsaeactive$", r"^tpsaeactive$", r"^aeactive$"),
+    "dfco": (r"^dfcoactive$", r"^fuelcut$", r"^dfco$"),
+    "lambda_ok": (r"^lambdacurrentlygood$",),
+    "idle_active": (r"^idleclosedloopactive$",),
 }
 
 
@@ -154,6 +159,7 @@ class Report:
     timing: dict | None = None
     seconds: float = 0.0
     rows: int = 0
+    stoich: float = 14.7  # mixture is reported as AFR on this fuel's scale
 
     @property
     def summary(self) -> dict:
@@ -288,6 +294,11 @@ def analyze(log: LogDoc, doc: TuneDoc, views: list[TableView], cut_kpa: float | 
     r.notes += [n for n in (clt_note, iat_note) if n]
 
     stoich = stoich_of(doc)
+    r.stoich = stoich
+
+    def afr(v: float) -> str:
+        return f"AFR {v * stoich:.1f}"
+
     lam = lam_t = None
     if "lambda" in ch:
         c = ch["lambda"]
@@ -343,24 +354,26 @@ def analyze(log: LogDoc, doc: TuneDoc, views: list[TableView], cut_kpa: float | 
                 and (_at(rpm, i) or 0) > 2500 and lam[i] > lam_t[i] + 0.04]
         if lean:
             i = max(lean, key=lambda k: lam[k] - lam_t[k])
-            add("error", "Fuel", f"Lean in boost: λ {lam[i]:.2f} against a target of λ {lam_t[i]:.2f} "
-                                 f"({len(lean)} samples). Add fuel before the next pull.", i)
+            add("error", "Fuel", f"Lean in boost: {afr(lam[i])} against a target of {lam_t[i] * stoich:.1f} "
+                                 f"(λ {lam[i]:.2f} vs {lam_t[i]:.2f}, {len(lean)} samples). Add fuel before the next pull.", i)
         elif in_boost:
             add("ok", "Fuel", "The wideband matched the AFR target in boost.")
         rich = [i for i in in_boost if _at(lam, i) is not None and lam[i] < 0.68]
         if rich:
             i = min(rich, key=lambda k: lam[k])
-            add("warn", "Fuel", f"Very rich in boost: λ {lam[i]:.2f}. That's safe for the engine but costs power "
+            add("warn", "Fuel", f"Very rich in boost: {afr(lam[i])}. That's safe for the engine but costs power "
                                 "and fouls plugs.", i)
         wot_lean = [i for i in wot if _at(lam, i) is not None and (_at(rpm, i) or 0) > 2500 and lam[i] > 0.95
                     and not boost[i]]
         if wot_lean:
             i = max(wot_lean, key=lambda k: lam[k])
-            add("warn", "Fuel", f"Lean at full throttle: λ {lam[i]:.2f}. Full load usually wants λ 0.85–0.90.", i)
+            add("warn", "Fuel", f"Lean at full throttle: {afr(lam[i])}. Full load usually wants AFR "
+                                f"{0.85 * stoich:.1f}–{0.90 * stoich:.1f} (λ 0.85–0.90).", i)
     if lam is not None:
         nums = [v for v in lam if v is not None]
         if nums and max(nums) - min(nums) < 0.02:
-            add("warn", "Sensors", f"The wideband barely moved all log (λ {min(nums):.2f}–{max(nums):.2f}). "
+            add("warn", "Sensors", f"The wideband barely moved all log (AFR {min(nums) * stoich:.1f}–"
+                                   f"{max(nums) * stoich:.1f}). "
                                    "Check the sensor is working and warmed up.")
     if "ego_corr" in ch:
         nums = [v for v in ch["ego_corr"].nums]
@@ -492,9 +505,9 @@ def analyze(log: LogDoc, doc: TuneDoc, views: list[TableView], cut_kpa: float | 
         add("info", "Limits", f"The rev limit was reached ({_g(rpm[i], 0)} rpm against a limit of {_g(rev, 0)}).", i)
 
     # ---- readouts, pulls and charts
-    r.stats = _stats(log, ch, t, rpm, kpa, lam, clt, iat, inj, in_boost)
+    r.stats = _stats(log, ch, t, rpm, kpa, lam, clt, iat, inj, in_boost, stoich)
     r.pulls = _pulls(t, rpm, kpa, tps, lam, lam_t, ch.get("advance"), ch.get("knock"))
-    r.charts = _charts(t, rpm, kpa, lam, lam_t, ch)
+    r.charts = _charts(t, rpm, kpa, lam, lam_t, ch, stoich)
     r.ve = _ve_suggestion(doc, views, t, rpm, kpa, lam, lam_t, clt, tps, inj, ch)
     r.timing = _knock_suggestion(doc, views, rpm, kpa, ch)
     if r.ve:
@@ -506,7 +519,7 @@ def analyze(log: LogDoc, doc: TuneDoc, views: list[TableView], cut_kpa: float | 
     return r
 
 
-def _stats(log, ch, t, rpm, kpa, lam, clt, iat, inj, in_boost) -> list[dict]:
+def _stats(log, ch, t, rpm, kpa, lam, clt, iat, inj, in_boost, stoich: float = 14.7) -> list[dict]:
     def stat(label, value, units=""):
         return {"label": label, "value": value, "units": units}
 
@@ -521,7 +534,7 @@ def _stats(log, ch, t, rpm, kpa, lam, clt, iat, inj, in_boost) -> list[dict]:
     if lam is not None:
         in_b = [lam[i] for i in in_boost if lam[i] is not None]
         if in_b:
-            out.append(stat("Leanest in boost", f"{max(in_b):.2f}", "λ"))
+            out.append(stat("Leanest in boost", f"{max(in_b) * stoich:.1f}", "AFR"))
     for label, vals, units in (("Max coolant", clt, "°C"), ("Max intake air", iat, "°C"),
                                ("Max injector duty", inj, "%")):
         nums = [v for v in (vals or []) if v is not None]
@@ -550,7 +563,7 @@ def _pulls(t, rpm, kpa, tps, lam, lam_t, advance, knock) -> list[Pull]:
     return out[:12]
 
 
-def _charts(t, rpm, kpa, lam, lam_t, ch) -> list[dict]:
+def _charts(t, rpm, kpa, lam, lam_t, ch, stoich: float = 14.7) -> list[dict]:
     """Downsampled traces, each normalised to its own range, with its range in the legend."""
     n = len(t)
     if n < 2:
@@ -581,8 +594,11 @@ def _charts(t, rpm, kpa, lam, lam_t, ch) -> list[dict]:
     engine = [x for x in (trace(rpm, "RPM", "c1", units="rpm"), trace(kpa, "MAP", "c2", units="kPa")) if x]
     if engine:
         charts.append({"title": "Engine speed and manifold pressure", "series": engine})
-    fuel = [x for x in (trace(lam, "Wideband λ", "c3", mode="max"),
-                        trace(lam_t, "Target λ", "c4", mode="mean")) if x]
+    def as_afr(vals):
+        return None if vals is None else [None if v is None else v * stoich for v in vals]
+
+    fuel = [x for x in (trace(as_afr(lam), "Wideband AFR", "c3", mode="max"),
+                        trace(as_afr(lam_t), "Target AFR", "c4", mode="mean")) if x]
     if fuel:
         charts.append({"title": "Mixture against target (higher is leaner)", "series": fuel})
     spark = [x for x in (trace(ch["advance"].values if "advance" in ch else None, "Advance", "c1", units="°"),
@@ -791,6 +807,27 @@ def map_scale(units: str, lo, hi) -> tuple[float, float]:
     return 1.0, 0.0
 
 
+def meta_is_lambda(meta: dict | None) -> bool:
+    """`_is_lambda` for a stored channel, from its name, units and range."""
+    if not meta:
+        return True
+    name, units = _key(meta.get("n", "")), (meta.get("u") or "").lower()
+    if "lambda" in name or "lambda" in units:
+        return True
+    if "afr" in name or "afr" in units:
+        return False
+    return meta.get("hi") is not None and meta["hi"] <= 2.0
+
+
+def _axis_channel(index: dict, table_name: str) -> int | None:
+    """FOME and rusEFI log the exact load each table was read at (`veTableYAxis`): use it when it's there."""
+    want = _key(table_name + "YAxis")
+    for i, c in enumerate(index.get("channels", [])):
+        if _key(c.get("n", "")) == want and c.get("lo") is not None:
+            return i
+    return None
+
+
 def viewer_tables(views: list[TableView], index: dict, digits_of=None, limit: int = 16) -> list[dict]:
     """The tune's tables as plain data for the viewer, each with the log channels that move its cursor."""
     roles, channels = index.get("roles", {}), index.get("channels", [])
@@ -804,14 +841,19 @@ def viewer_tables(views: list[TableView], index: dict, digits_of=None, limit: in
         xc = roles.get("rpm") if ("rpm" in (v.x_label + v.x_units).lower() or max(xs) > 1000) else None
         yc, ya, yb = None, 1.0, 0.0
         y_text = (v.y_label + " " + v.y_units).lower()
-        if _load_is_map(v) and "map" in roles:
+        own = _axis_channel(index, v.z.name)
+        if own is not None:
+            yc = own
+        elif _load_is_map(v) and "map" in roles:
             yc = roles["map"]
             c = channels[yc]
             ya, yb = map_scale(c.get("u", ""), c.get("lo"), c.get("hi"))
         elif "tps" in y_text and "tps" in roles:
             yc = roles["tps"]
         digits = digits_of(v.z) if digits_of else v.z.digits
-        out.append({"id": v.id, "label": v.label, "units": v.units, "xl": v.x_label, "yl": v.y_label,
+        zs = list(v.z.values)
+        out.append({"id": v.id, "name": v.z.name, "label": v.label, "units": v.units, "xl": v.x_label, "yl": v.y_label,
+                    "lam": (1.0 if max(zs) <= 2.0 else None) if v.id == "afr" else None,
                     "xu": v.x_units, "yu": v.y_units, "x": xs, "y": ys, "z": list(v.z.values),
                     "cols": v.z.cols, "rows": v.z.rows, "d": digits if digits is not None and 0 <= digits <= 4 else 1,
                     "xc": xc, "yc": yc, "ya": ya, "yb": yb})

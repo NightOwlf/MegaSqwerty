@@ -19,7 +19,7 @@ import zlib
 
 import numpy as np
 
-MAX_BYTES = int(__import__("os").environ.get("LOG_MAX_MB", "128")) * 1024 * 1024
+MAX_BYTES = int(__import__("os").environ.get("LOG_MAX_MB", "200")) * 1024 * 1024
 MAX_ROWS = 400_000
 MAX_FIELDS = 2000
 
@@ -81,9 +81,10 @@ class Channel:
 
 class LogDoc:
     def __init__(self, channels=None, rows: int = 0, source: str = "text", truncated: bool = False,
-                 title: str = ""):
+                 title: str = "", markers=None):
         self.channels: list[Channel] = channels or []
         self.rows, self.source, self.truncated, self.title = rows, source, truncated, title
+        self.markers: list[tuple[int, str]] = markers or []  # (record it comes before, its note)
 
     def by_name(self, name: str) -> Channel | None:
         want = _key(name)
@@ -238,7 +239,7 @@ def parse_mlg(data: bytes) -> LogDoc:
     stride = record_len + 5  # block header, the record, one checksum byte
 
     # Data records are back to back; a marker is a shorter block in between, so read the runs around them.
-    runs, rows, truncated, pos = [], 0, False, begin
+    runs, rows, truncated, pos, markers = [], 0, False, begin, []
     raw = np.frombuffer(data, dtype=np.uint8)
     while pos + stride <= len(data):
         kind = data[pos]
@@ -254,6 +255,9 @@ def parse_mlg(data: bytes) -> LogDoc:
             if truncated:
                 break
         elif kind == 1:
+            if pos + _MLG_MARKER <= len(data) and len(markers) < 500:
+                note = data[pos + 4:pos + _MLG_MARKER].split(b"\0")[0].decode("latin-1", "replace").strip()
+                markers.append((rows, note[:50]))
             pos += _MLG_MARKER
         else:
             break  # a torn or foreign tail: keep what was read
@@ -277,7 +281,8 @@ def parse_mlg(data: bytes) -> LogDoc:
     if 0 < info < begin:
         title = data[info:begin].split(b"\0")[0].decode("latin-1", "replace").strip().split("\n")[0].strip('"')
     return LogDoc([Channel(name, units, None, digits, loader(fmt, off, scale, transform))
-                   for name, units, fmt, off, scale, transform, digits in fields], rows, "mlg", truncated, title)
+                   for name, units, fmt, off, scale, transform, digits in fields], rows, "mlg", truncated, title,
+                  [(min(r, rows - 1), n) for r, n in markers])
 
 
 def parse_log(data: bytes, filename: str = "") -> LogDoc:
@@ -329,6 +334,7 @@ def write_columns(log: LogDoc, time: list[float], path, extra: dict | None = Non
 
     t = np.asarray(time, dtype=np.float64)
     index = {"v": 1, "rows": log.rows, "source": log.source, "truncated": log.truncated, "title": log.title,
+             "markers": [[r, n] for r, n in log.markers],
              "seconds": _num(t[-1] - t[0]) if t.size > 1 else 0.0, "time": add(t), "channels": []}
     for c in log.channels:
         a = c.arr

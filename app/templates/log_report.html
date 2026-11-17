@@ -57,7 +57,7 @@
           <td class="mono">{{ p.seconds }} s</td>
           <td class="mono">{{ p.rpm_from }}–{{ p.rpm_to }}</td>
           <td class="mono">{{ p.peak_psi }} psi</td>
-          <td class="mono">{% if p.leanest_lambda %}λ {{ p.leanest_lambda }}{% else %}—{% endif %}</td>
+          <td class="mono">{% if p.leanest_lambda %}{{ '%.1f'|format(p.leanest_lambda * (r.stoich or 14.7)) }} AFR{% else %}—{% endif %}</td>
           <td class="mono">{% if p.max_advance %}{{ p.max_advance }}°{% else %}—{% endif %}</td>
           <td>{% if p.knock %}<span class="chk-tag tag-error">knock</span>{% endif %}{% if p.lean %}<span class="chk-tag tag-error">lean</span>{% endif %}</td>
         </tr>

@@ -8,22 +8,37 @@
 <meta property="og:description" content="{{ og_desc }}">
 {% endblock %}
 {% block bodyclass %}page-viewer{% endblock %}
-{% block scripts %}<script src="/static/viewer.js?v={{ asset_v }}" defer></script>{% endblock %}
+{% block scripts %}<script src="/static/veal.js?v={{ asset_v }}" defer></script><script src="/static/viewer.js?v={{ asset_v }}" defer></script>{% endblock %}
 {% set led = {'ok': 'on', 'warn': 'warn', 'error': 'bad', 'info': ''} %}
 {% block main %}
-{% if delete_key %}{{ keybox(delete_key, "Log") }}{% endif %}
-<div class="lv" id="lv" data-log="{{ log_slug }}" data-rows="{{ index.rows }}">
+{% if keys or tune_key %}
+<section class="win keybox" role="status">
+  <header class="win-title">{{ icon('key') }}<h2>Delete key{{ 's' if (keys|length + (1 if tune_key else 0)) > 1 }}</h2></header>
+  <div class="win-body keybox-body">
+    <span class="alert-ic">{{ icon('warn') }}</span>
+    <div class="keybox-text">
+      <p class="keybox-h">Uploaded. Save {{ 'these keys' if (keys|length + (1 if tune_key else 0)) > 1 else 'your delete key' }}.</p>
+      <p>Each is shown <b>once</b>, and it's the only way to remove that upload later.</p>
+      {% for s, n, k in keys %}<div class="keyrow"><small class="keyname">{{ n }}</small><code {% if loop.first %}id="dkey" {% endif %}class="mono" data-key-for="{{ s }}">{{ k }}</code><button class="btn" type="button" data-copy="[data-key-for='{{ s }}']">{{ icon('copy') }}<span>Copy</span></button></div>{% endfor %}
+      {% if tune_key %}<div class="keyrow"><small class="keyname">Tune: {{ tune_label }}</small><code class="mono" id="tkey">{{ tune_key }}</code><button class="btn" type="button" data-copy="#tkey">{{ icon('copy') }}<span>Copy</span></button></div>{% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
+<div class="lv" id="lv" data-log="{{ log_slug }}" data-rows="{{ index.rows }}" data-tune="{{ tune_slug }}" data-also="{{ also|join(',') }}" data-name="{{ name }}">
   <div class="lv-bar">
     <div class="lv-name">
-      {% if tune_slug %}<a class="lv-back" href="/t/{{ tune_slug }}" title="Back to the tune">{{ icon('left') }}<span>{{ tune_label }}</span></a>{% else %}<a class="lv-back" href="/logs" title="Open another log">{{ icon('left') }}<span>Logs</span></a>{% endif %}
+      {% if tune_slug %}<a class="lv-back" href="/t/{{ tune_slug }}" title="Open the tune">{{ icon('left') }}<span>{{ tune_label }}</span></a>{% else %}<a class="lv-back" href="/logs" title="Open another log">{{ icon('left') }}<span>Logs</span></a>{% endif %}
       <b title="{{ name }}">{{ name }}</b>
       <span class="dim mono">{{ length }} · {{ '{:,}'.format(index.rows) }} records · {{ index.channels|length }} channels</span>
     </div>
     <div class="lv-tabs" role="tablist">
       <button type="button" role="tab" data-lv-tab="graphs" aria-selected="true">Data Log</button>
       <button type="button" role="tab" data-lv-tab="scatter" aria-selected="false">Scatter Plot</button>
+      <button type="button" role="tab" data-lv-tab="ve" aria-selected="false">VE Analyze</button>
     </div>
     <div class="lv-actions">
+      <button class="btn sm" type="button" data-lv-tune title="Choose the tune to read this log with">{{ icon('folder') }}<span>{{ 'Change tune' if tune_slug else 'Add tune' }}</span></button>
       {% if summary %}<a class="btn sm" href="/t/{{ tune_slug }}/log/{{ log_slug }}" title="What this log shows about the tune"><span class="led {{ led[summary.tone] }}"></span><span>Report: {{ summary.short }}</span></a>{% endif %}
       <label class="lv-sel" title="How many graphs to stack">Graphs
         <select data-lv-count><option>1</option><option>2</option><option>3</option><option>4</option></select>
@@ -46,6 +61,10 @@
         </div>
         <canvas class="lv-scatter-cv"></canvas>
       </div>
+      <div class="lv-ve" data-lv-panel="ve" hidden>
+        <div class="lv-ve-graph"></div>
+        <div class="lv-ve-body"></div>
+      </div>
       <div class="lv-over"><canvas></canvas></div>
       <div class="lv-transport">
         <div class="lv-btns">
@@ -65,7 +84,11 @@
       </div>
       <div class="lv-gauges"></div>
     </div>
-    <aside class="lv-side" hidden>
+    <aside class="lv-side">
+      <div class="lv-notune" hidden>
+        <p><b>Add your tune</b> to see its tables follow the log, edit them, and run VE Analyze.</p>
+        <button class="btn primary" type="button" data-lv-tune>{{ icon('folder') }}<span>Add tune</span></button>
+      </div>
       <div class="lv-table" data-slot="0"></div>
       <div class="lv-table" data-slot="1"></div>
     </aside>
@@ -85,6 +108,44 @@
   <input type="search" placeholder="Search channels…" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Search channels">
   <ul></ul>
 </div>
+<div class="lv-dlg" data-dlg="tune" hidden>
+  <div class="lv-dlg-in">
+    <h2>Read this log with a tune</h2>
+    <p class="dim">The tune's tables follow the cursor, and VE Analyze writes its corrections into a copy of it. The tune you choose isn't changed.</p>
+    <form class="upload-card" method="post" action="/upload" enctype="multipart/form-data" data-tune-upload>
+      <label class="dropzone dropzone-sm">
+        <input type="file" name="file" accept=".msq,.xml">
+        <span class="dz-icon">{{ icon('upload') }}</span>
+        <span class="dz-main">Choose a .msq file</span>
+        <span class="dz-sub">up to {{ max_mb }} MB · anyone with the link can see it</span>
+      </label>
+      <p class="upload-status mono" aria-live="polite"></p>
+    </form>
+    <form class="lv-tunelink" data-tune-link>
+      <label class="field-row"><span>Or paste a tune link</span><input type="text" name="tune" placeholder="https://…/t/AbCdEfGhIj" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <div class="lv-dlg-btns">
+        {% if tune_slug %}<button class="btn" type="button" data-tune-clear>Use no tune</button>{% endif %}
+        {% if own_tune and own_tune != tune_slug %}<button class="btn" type="button" data-tune-own="{{ own_tune }}">Use the tune it was uploaded with</button>{% endif %}
+        <span class="st-grow"></span>
+        <button class="btn" type="button" data-dlg-close>Cancel</button>
+        <button class="btn primary" type="submit">Use this tune</button>
+      </div>
+    </form>
+  </div>
+</div>
+<div class="lv-dlg" data-dlg="saved" hidden>
+  <div class="lv-dlg-in">
+    <h2>Saved as a new tune</h2>
+    <p class="dim">Your changes are in a new tune with its own link. The tune you started from is unchanged.</p>
+    <div class="lv-dlg-btns lv-dlg-col">
+      <a class="btn primary big" data-saved-download href="#">{{ icon('download') }}<span>Download the .msq</span></a>
+      <a class="btn big" data-saved-open href="#">{{ icon('grid') }}<span>Open the new tune</span></a>
+      <a class="btn big" data-saved-continue href="#">{{ icon('curve') }}<span>Keep going with the new tune</span></a>
+    </div>
+    <p class="fine">Load the .msq in TunerStudio, check it, then burn it. Log again afterwards: one pass gets close, the second gets it right.</p>
+    <button class="btn" type="button" data-dlg-close>Close</button>
+  </div>
+</div>
 <div class="lv-help" hidden>
   <div class="lv-help-in">
     <h2>Using the log viewer</h2>
@@ -96,6 +157,8 @@
       <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Step one record. Hold Shift for ten.</dd>
       <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Zoom in and out. <kbd>F</kbd> shows the whole log.</dd>
       <dt><kbd>Space</kbd></dt><dd>Play and pause. <kbd>Home</kbd> and <kbd>End</kbd> jump to the ends.</dd>
+      <dt>VE Analyze</dt><dd>Plays through the log, works out what each VE cell should be from the wideband, and shows the cells changing as it goes. Then save the result as a new tune.</dd>
+      <dt>Edit a table</dt><dd>Tap or drag across cells, then type a value or use the buttons (+, −, ×%, interpolate, smooth). Save as a new tune when you're done.</dd>
       <dt>Copy link</dt><dd>The link opens at this exact moment with the same channels and zoom, so a friend sees what you see.</dd>
     </dl>
     <button class="btn primary" type="button" data-lv-help-close>Got it</button>

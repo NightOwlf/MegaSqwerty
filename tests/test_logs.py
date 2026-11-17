@@ -468,7 +468,7 @@ def test_a_log_can_be_uploaded_on_its_own_and_shared(client):
     assert client.get(f"{url}/ch/999").status_code == 404 and client.get(f"{url}/ch/x").status_code == 404
     assert client.get(f"{url}/download").content.startswith(b'"speeduino')
 
-    key = re.search(r'<code id="dkey" class="mono">([^<]+)</code>', viewer.text).group(1)
+    key = re.search(r'<code id="dkey"[^>]*>([^<]+)</code>', viewer.text).group(1)
     assert client.post(f"{url}/delete", data={"key": "wrong"}).status_code == 403
     assert client.post(f"{url}/delete", data={"key": key}).status_code == 303
     assert client.get(url).status_code == 404 and client.get(f"{url}/index.json").status_code == 404
@@ -516,3 +516,59 @@ def test_a_log_bigger_than_a_tune_is_accepted_and_one_over_the_limit_is_not(clie
     monkeypatch.setattr(main, "LOG_BODY_LIMIT", 1024)
     r = client.post("/logs", files={"file": ("drive.msl", msl(drive()), "text/plain")})
     assert r.status_code == 413 and "too large" in r.text
+
+
+def test_several_logs_upload_together_and_open_ready_for_ve_analyze(client):
+    files = [("file", ("a.msl", msl(drive()), "text/plain")), ("file", ("b.msl", msl(drive(pulls=2)), "text/plain"))]
+    r = client.post("/logs", files=files)
+    assert r.status_code == 303
+    first, also = re.fullmatch(r"/l/([A-Za-z0-9]{10})\?also=([A-Za-z0-9]{10})", r.headers["location"]).groups()
+    page = client.get(r.headers["location"]).text
+    assert f'data-also="{also}"' in page and page.count('class="mono" data-key-for=') == 2  # both delete keys, once
+    assert client.get(f"/l/{also}").status_code == 200
+    bad = client.post("/logs", files=[("file", ("a.msl", msl(drive()), "text/plain")),
+                                      ("file", ("notes.txt", b"hello there", "text/plain"))])
+    assert bad.status_code == 400 and "notes.txt" in bad.text and "uploaded fine" in bad.text and "/l/" in bad.text
+    j = client.post("/logs", headers={"X-Upload": "1"}, files=[("file", ("a.msl", msl(drive()), "text/plain")),
+                                                               ("file", ("x.txt", b"nope nope", "text/plain"))]).json()
+    assert j["partial"] and j["url"].startswith("/l/") and "x.txt" in j["error"]
+
+
+def test_any_tune_can_be_chosen_for_a_log_in_the_viewer(client):
+    slug = upload_tune(client, sp(load=LOAD_BOOST, boostLimit=170))
+    r = client.post("/logs", files={"file": ("drive.msl", msl(drive()), "text/plain")})
+    url = r.headers["location"]
+    assert client.get(f"{url}/index.json").json()["tune"] is None
+    index = client.get(f"{url}/index.json?tune={slug}").json()
+    assert index["tune"]["slug"] == slug and index["tune"]["stoich"] == pytest.approx(14.7)
+    ve = next(t for t in index["tables"] if t["id"] == "ve")
+    assert ve["name"] == "veTable" and ve["xc"] == index["roles"]["rpm"]
+    assert index["lam"] == {"lambda": 14.7, "lambda_target": 14.7}  # this log's mixture is in AFR
+    page = client.get(f"{url}?tune=https://example.test/t/{slug}").text
+    assert f'data-tune="{slug}"' in page and "Change tune" in page
+    assert 'data-tune=""' in client.get(f"{url}?tune=nonexistent").text
+    # a log uploaded with a tune can still be read with none
+    own = client.post("/logs", data={"tune": slug}, files={"file": ("d.msl", msl(drive()), "text/plain")})
+    assert client.get(f"{own.headers['location']}/index.json?tune=none").json()["tune"] is None
+
+
+def test_a_tune_can_be_uploaded_from_the_viewer_without_leaving_it(client, fx):
+    r = client.post("/upload", headers={"X-Upload": "1"}, files={"file": ("t.msq", fx("ms3_basic.msq"), "application/xml")})
+    assert r.status_code == 200 and re.fullmatch(r"[A-Za-z0-9]{10}", r.json()["slug"])
+    bad = client.post("/upload", headers={"X-Upload": "1"}, files={"file": ("t.msq", b"nope", "application/xml")})
+    assert bad.status_code == 400 and bad.json()["error"]
+
+
+def test_mlg_markers_are_kept_for_the_viewer(tmp_path):
+    rows = drive()
+    log = logs.parse_log(mlg(CHANNELS, rows, marker_at=120), "drive.mlg")
+    assert log.markers == [(120, "launch")]
+    index = logs.build_columns(log, tmp_path / "x.col")
+    assert index["markers"] == [[120, "launch"]]
+
+
+def test_the_report_gives_mixture_as_afr():
+    r = report(rows=drive(lean=True))
+    lean = next(f for f in r.findings if f.text.startswith("Lean in boost"))
+    assert "AFR 14.0 against a target of 11.5" in lean.text
+    assert any(s["units"] == "AFR" for s in r.stats)

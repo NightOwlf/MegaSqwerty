@@ -24,7 +24,7 @@ from . import boost as boostmod
 from . import checks as checksmod
 from . import logs as logsmod
 from . import diff as diffmod
-from .axes import axis_text
+from .axes import axis_text, stoich_of
 from . import edit as editmod
 from . import views
 from .db import SLUG_RE, Store
@@ -67,9 +67,11 @@ MAX_MB = MAX_BYTES // (1024 * 1024)
 BODY_LIMIT = MAX_BYTES + 256 * 1024  # multipart framing + form fields
 LOG_MAX_BYTES = logsmod.MAX_BYTES     # datalogs are far bigger than tunes
 LOG_MAX_MB = LOG_MAX_BYTES // (1024 * 1024)
-LOG_BODY_LIMIT = LOG_MAX_BYTES + 256 * 1024
-LOG_TOO_LARGE = f"That log is too large. The limit is {LOG_MAX_MB} MB."
+LOG_MAX_FILES = 6
+LOG_BODY_LIMIT = int(os.environ.get("LOG_BODY_MB", "420")) * 1024 * 1024  # several logs in one upload
+LOG_TOO_LARGE = f"That upload is too large. Each log can be up to {LOG_MAX_MB} MB."
 LOG_UPLOAD_RE = re.compile(r"^(/logs|/t/[A-Za-z0-9]{10}/log)/?$")
+TUNE_JSON_RE = re.compile(r"^/upload/?$")
 
 CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; "
        "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
@@ -157,7 +159,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
 
     templates = Jinja2Templates(directory=HERE / "templates")
     asset_v = hashlib.sha1(b"".join((HERE / "static" / f).read_bytes()
-                                    for f in ("app.css", "app.js", "theme.js", "edit.js", "viewer.js"))).hexdigest()[:8]
+                                    for f in ("app.css", "app.js", "theme.js", "edit.js", "viewer.js", "veal.js"))).hexdigest()[:8]
     templates.env.globals.update(asset_v=asset_v, max_mb=MAX_MB, max_bytes=MAX_BYTES, icons=views.ICONS,
                                  log_max_mb=LOG_MAX_MB, log_max_bytes=LOG_MAX_BYTES,
                                  tab_names=views.TAB_NAMES, cat_labels=views.CATEGORY_LABELS,
@@ -316,22 +318,33 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
 
     @app.post("/upload")
     async def upload(request: Request):
+        def fail(message: str, status: int):
+            if request.headers.get("x-upload"):
+                return JSONResponse({"error": message}, status_code=status)
+            return home_error(request, message, status)
+
         if request.state._state.get("body_too_large"):
-            return home_error(request, MESSAGES[413], 413)
+            return fail(MESSAGES[413], 413)
         if store.over_limit(client_ip(request), limit):
-            return home_error(request, MESSAGES[429], 429)
+            return fail(MESSAGES[429], 429)
         try:
             form = await request.form(max_files=1, max_fields=8)
         except BodyTooLarge:
             raise
         except Exception:
-            return home_error(request, "The upload didn't come through. Try again.", 400)
+            return fail("The upload didn't come through. Try again.", 400)
         data, err, status = await read_upload(form)
         if err:
-            return home_error(request, err, status)
+            return fail(err, status)
         slug, key, err, status = await store_upload(request, data)
         if err:
+            if request.headers.get("x-upload"):
+                return JSONResponse({"error": err}, status_code=status)
             return home_error(request, err, status)
+        if request.headers.get("x-upload"):  # the log viewer adding a tune: it stays where it is
+            resp = JSONResponse({"url": f"/t/{slug}", "slug": slug})
+            set_key_cookie(resp, request, slug, key)
+            return resp
         resp = RedirectResponse(f"/t/{slug}", status_code=302)
         set_key_cookie(resp, request, slug, key)
         return resp
@@ -621,37 +634,52 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         return found
 
     async def take_log(request: Request, doc: TuneDoc | None, tune_slug: str):
-        """Read an uploaded log from the request and store it. -> (log slug, key, error, status)."""
+        """Read the uploaded logs (up to LOG_MAX_FILES) from the request and store each one.
+
+        -> ([(log slug, delete key), ...], error, status, form). If one file can't be read nothing more is
+        stored, and the error names it."""
         if request.state._state.get("body_too_large"):
-            return None, None, LOG_TOO_LARGE, 413, None
+            return [], LOG_TOO_LARGE, 413, None
         if store.over_limit(client_ip(request), limit):
-            return None, None, MESSAGES[429], 429, None
+            return [], MESSAGES[429], 429, None
         try:
-            form = await request.form(max_files=1, max_fields=8)
+            form = await request.form(max_files=LOG_MAX_FILES, max_fields=8)
         except BodyTooLarge:
             raise
         except Exception:
-            return None, None, "The upload didn't come through. Try again.", 400, None
-        f = form.get("file")
-        name = getattr(f, "filename", "") or "log"
-        data, err, status = await read_upload(form, max_bytes=LOG_MAX_BYTES, what="a log file")
-        if err:
-            return None, None, err, status, form
+            return [], "The upload didn't come through. Try again.", 400, None
+        files = [f for f in form.getlist("file") if isinstance(f, UploadFile) and f.filename]
+        if not files:
+            return [], "Choose a log file first.", 400, form
         if doc is None and str(form.get("tune") or "").strip():
             tune_slug = slug_from(str(form.get("tune"))) or ""
             doc = store.get_doc(tune_slug) if tune_slug else None
             if doc is None:
-                return None, None, "That tune link wasn't found. Paste a tune link, or leave it empty.", 400, form
-        try:
-            log_slug, key, rows = await run_in_threadpool(ingest_log, doc, tune_slug if doc else "", data, name)
-        except logsmod.LogError as e:
-            return None, None, str(e), 400, form
-        except Exception:
-            log.exception("failed reading log %r", name)
-            return None, None, "That log couldn't be read.", 400, form
-        store.record_upload(client_ip(request))
-        log.info("stored log %s tune=%s rows=%d size=%d", log_slug, tune_slug or "-", rows, len(data))
-        return log_slug, key, None, 200, form
+                return [], "That tune link wasn't found. Paste a tune link, or leave it empty.", 400, form
+        done = []
+        for f in files:
+            name = f.filename or "log"
+            try:
+                data = await f.read(LOG_MAX_BYTES + 1)
+            finally:
+                await f.close()
+            if len(data) > LOG_MAX_BYTES:
+                return done, f"{name} is too large. Each log can be up to {LOG_MAX_MB} MB.", 413, form
+            if done and store.over_limit(client_ip(request), limit):
+                return done, MESSAGES[429], 429, form
+            try:
+                log_slug, key, rows = await run_in_threadpool(ingest_log, doc, tune_slug if doc else "", data, name)
+            except logsmod.LogError as e:
+                return done, (f"{name}: {e}" if len(files) > 1 else str(e)), 400, form
+            except Exception:
+                log.exception("failed reading log %r", name)
+                return done, f"{name} couldn't be read.", 400, form
+            finally:
+                del data
+            store.record_upload(client_ip(request))
+            log.info("stored log %s tune=%s rows=%d", log_slug, tune_slug or "-", rows)
+            done.append((log_slug, key))
+        return done, None, 200, form
 
     def upload_error(request: Request, message: str, status: int):
         """The page's own uploader (which shows progress) wants JSON back; a plain form post gets the page."""
@@ -659,10 +687,27 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             return JSONResponse({"error": message}, status_code=status)
         return None
 
-    def upload_done(request: Request, url: str, log_slug: str, key: str):
+    def partial_upload(request: Request, err: str, url: str, done: list, page):
+        """Some logs went up and one didn't: say which, and offer the ones that worked."""
+        msg = f"{err} The {'log' if len(done) == 1 else f'{len(done)} logs'} before it uploaded fine."
+        resp = (JSONResponse({"error": msg, "url": url, "partial": True}, status_code=200)
+                if request.headers.get("x-upload") else page(msg + f" Open {'it' if len(done) == 1 else 'them'}: {url}"))
+        for log_slug, key in done:
+            set_key_cookie(resp, request, log_slug, key)
+        return resp
+
+    def viewer_url(done: list, tune: str) -> str:
+        """The viewer for the first log, with any others uploaded alongside it ready for VE Analyze."""
+        url = f"/l/{done[0][0]}"
+        if len(done) > 1:
+            url += "?also=" + ",".join(s for s, _ in done[1:])
+        return url
+
+    def upload_done(request: Request, url: str, done: list):
         resp = (JSONResponse({"url": url}) if request.headers.get("x-upload")
                 else RedirectResponse(url, status_code=303))
-        set_key_cookie(resp, request, log_slug, key)
+        for log_slug, key in done:
+            set_key_cookie(resp, request, log_slug, key)
         return resp
 
     @app.get("/t/{slug}/log", response_class=HTMLResponse)
@@ -674,10 +719,15 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
     @app.post("/t/{slug}/log")
     async def log_upload(request: Request, slug: str):
         doc = load_doc(slug)
-        log_slug, key, err, status, _ = await take_log(request, doc, slug)
-        if err:
+        done, err, status, _ = await take_log(request, doc, slug)
+        if err and not done:
             return upload_error(request, err, status) or log_list_page(request, slug, doc, err, status)
-        return upload_done(request, f"/t/{slug}/log/{log_slug}", log_slug, key)
+        if err:
+            return partial_upload(request, err, viewer_url(done, ""), done,
+                                  lambda msg: log_list_page(request, slug, doc, msg, 400))
+        if len(done) > 1:
+            return upload_done(request, viewer_url(done, ""), done)
+        return upload_done(request, f"/t/{slug}/log/{done[0][0]}", done)
 
     @app.get("/t/{slug}/log/{log_slug}", response_class=HTMLResponse)
     def log_report(request: Request, slug: str, log_slug: str):
@@ -761,11 +811,13 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
 
     @app.post("/logs")
     async def logs_upload(request: Request):
-        log_slug, key, err, status, form = await take_log(request, None, "")
-        if err:
+        done, err, status, form = await take_log(request, None, "")
+        if err and not done:
             return upload_error(request, err, status) or logs_page(
                 request, err, status, str(form.get("tune") or "") if form is not None else "")
-        return upload_done(request, f"/l/{log_slug}", log_slug, key)
+        if err:
+            return partial_upload(request, err, viewer_url(done, ""), done, lambda msg: logs_page(request, msg, 400))
+        return upload_done(request, viewer_url(done, ""), done)
 
     def any_log(log_slug: str) -> dict:
         row = store.get_log(log_slug) if SLUG_RE.match(log_slug or "") else None
@@ -773,47 +825,85 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             raise HTTPException(404)
         return row
 
+    def viewer_tune(request: Request, row: dict) -> tuple[str, TuneDoc | None]:
+        """The tune the viewer reads a log with: `?tune=` (a slug or a tune link) if given, else the log's own."""
+        if (request.query_params.get("tune") or "").strip().lower() == "none":
+            return "", None
+        asked = slug_from(request.query_params.get("tune"))
+        for slug in (asked, row["tune_slug"]):
+            doc = store.get_doc(slug) if slug else None
+            if doc is not None:
+                return slug, doc
+        return "", None
+
+    def also_logs(request: Request, log_slug: str) -> list[str]:
+        out = []
+        for s in (request.query_params.get("also") or "").split(",")[:LOG_MAX_FILES]:
+            s = s.strip()
+            if SLUG_RE.match(s) and s != log_slug and s not in out and store.get_log(s) is not None:
+                out.append(s)
+        return out
+
     @app.get("/l/{log_slug}", response_class=HTMLResponse)
     def log_viewer(request: Request, log_slug: str):
         row = any_log(log_slug)
         index, _ = log_index(log_slug)
         store.touch_log(log_slug)
-        doc = store.get_doc(row["tune_slug"]) if row["tune_slug"] else None
+        tune_slug, doc = viewer_tune(request, row)
         if doc is not None:
-            store.touch(row["tune_slug"])
-        cookie = request.cookies.get(f"dk_{log_slug}")
-        delete_key = cookie if cookie and store.check_log_key(log_slug, cookie) else None
+            store.touch(tune_slug)
+        also = also_logs(request, log_slug)
+        keys = []
+        for s in [log_slug] + also:
+            cookie = request.cookies.get(f"dk_{s}")
+            if cookie and store.check_log_key(s, cookie):
+                keys.append((s, store.get_log(s)["name"], cookie))
         seconds = index.get("seconds") or 0
         length = f"{int(seconds // 60)} min {int(seconds % 60)} s" if seconds >= 60 else f"{seconds:.1f} s"
+        own = doc is not None and tune_slug == row["tune_slug"]
+        tune_key = None
+        if doc is not None and tune_slug != row["tune_slug"]:
+            cookie = request.cookies.get(f"dk_{tune_slug}")
+            tune_key = cookie if cookie and store.check_delete_key(tune_slug, cookie) else None
         resp = templates.TemplateResponse(request, "viewer.html", {
             "log_slug": log_slug, "name": row["name"], "index": index, "length": length,
-            "tune_slug": row["tune_slug"] if doc is not None else "",
-            "tune_label": views.tune_label(doc) if doc is not None else "",
-            "summary": row["report"].get("summary") if doc is not None else None,
-            "delete_key": delete_key, "og_url": page_url(request),
+            "tune_slug": tune_slug, "tune_label": views.tune_label(doc) if doc is not None else "",
+            "own_tune": row["tune_slug"] if row["tune_slug"] and store.get_doc(row["tune_slug"]) else "",
+            "summary": row["report"].get("summary") if own else None, "also": also,
+            "keys": keys, "tune_key": tune_key, "og_url": page_url(request),
             "og_title": f"Datalog · {row['name']}",
             "og_desc": f"{length} · {index['rows']:,} records · {len(index['channels'])} channels"
                        + (f" · {index['title']}" if index.get("title") else ""),
         })
-        if delete_key:
-            resp.delete_cookie(f"dk_{log_slug}", path="/")
+        for s, _, _ in keys:
+            resp.delete_cookie(f"dk_{s}", path="/")
+        if tune_key:
+            resp.delete_cookie(f"dk_{tune_slug}", path="/")
         return resp
 
     @app.get("/l/{log_slug}/index.json")
-    def log_index_json(log_slug: str):
+    def log_index_json(request: Request, log_slug: str):
         row = any_log(log_slug)
         index, _ = log_index(log_slug)
-        doc = store.get_doc(row["tune_slug"]) if row["tune_slug"] else None
-        tables = []
+        tune_slug, doc = viewer_tune(request, row)
+        tables, tune = [], None
+        roles = index.get("roles", {})
+        channels = index["channels"]
         if doc is not None:
             tmap, tviews = tune_views(doc)
             tables = logsmod.viewer_tables(tviews, index, lambda z: meta_digits(tmap, z))
+            idle = doc.get("useSeparateVeForIdle")
+            tune = {"slug": tune_slug, "label": views.tune_label(doc), "stoich": stoich_of(doc),
+                    "idle_ve": bool(idle and idle.values and str(idle.values[0]).strip('"').lower() == "true")}
+        stoich = tune["stoich"] if tune else 14.7
+        lam = {r: (1.0 if logsmod.meta_is_lambda(channels[roles[r]]) else stoich)
+               for r in ("lambda", "lambda_target") if r in roles}
         return JSONResponse({
             "rows": index["rows"], "seconds": index.get("seconds"), "title": index.get("title", ""),
             "note": index.get("note", ""), "truncated": index.get("truncated", False),
-            "roles": index.get("roles", {}), "tables": tables,
-            "channels": [{k: c.get(k) for k in ("n", "u", "d", "lo", "hi")} for c in index["channels"]],
-        }, headers={"Cache-Control": "private, max-age=300"})
+            "roles": roles, "tables": tables, "tune": tune, "lam": lam, "markers": index.get("markers", []),
+            "channels": [{k: c.get(k) for k in ("n", "u", "d", "lo", "hi")} for c in channels],
+        }, headers={"Cache-Control": "private, no-cache"})
 
     @app.get("/l/{log_slug}/ch/{which}")
     def log_channel(log_slug: str, which: str):

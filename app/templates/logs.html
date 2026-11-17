@@ -13,13 +13,13 @@
     <form class="upload-card" method="post" action="/logs" enctype="multipart/form-data" data-max="{{ log_max_bytes }}" data-autosubmit data-progress>
       <label class="field-row">
         <span>Tune link <small class="dim">optional</small></span>
-        <input type="text" name="tune" value="{{ tune }}" placeholder="Paste a tune link to see its VE and spark tables follow the log" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <input type="text" name="tune" value="{{ tune }}" placeholder="Paste a tune link for its tables, editing and VE Analyze" autocomplete="off" autocapitalize="off" spellcheck="false">
       </label>
       <label class="dropzone">
-        <input type="file" name="file" accept=".mlg,.msl,.csv,.tsv,.txt" required>
+        <input type="file" name="file" accept=".mlg,.msl,.csv,.tsv,.txt" required multiple>
         <span class="dz-icon">{{ icon('upload') }}</span>
         <span class="dz-main">Choose a log file</span>
-        <span class="dz-sub">.mlg, .msl or .csv · or drop it here · up to {{ log_max_mb }} MB</span>
+        <span class="dz-sub">.mlg, .msl or .csv · or drop them here · up to {{ log_max_mb }} MB each, 6 at a time</span>
       </label>
       <div class="upbar" hidden><i></i></div>
       <p class="upload-status mono" aria-live="polite"></p>

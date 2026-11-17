@@ -288,7 +288,7 @@ safely, the whole target becomes the lowest point you asked for, and the plan sa
 
 **Read a log** on the Dash (`/t/{slug}/log`, `app/logs.py`) takes a datalog you recorded with that tune and
 says what it shows. Text logs (`.msl`, `.csv`, `.tsv`) and binary `.mlg` logs (MLVLG format 1 and 2, read to
-EFI Analytics' published layout in `app/logfile.py`) both work, up to `LOG_MAX_MB` (128 MB by default); an
+EFI Analytics' published layout in `app/logfile.py`) both work, up to `LOG_MAX_MB` (200 MB by default) each; an
 `.mlg` that doesn't add up is refused with a message telling you to export text from TunerStudio rather than
 being guessed at. Channel names differ between firmware, so channels are
 matched by pattern (`AFR`, `AFR1`, `Lambda`, `O2`, `Engine Speed`…) and the report always lists which channel
@@ -329,8 +329,10 @@ when the tune goes, and they're purged after 180 days without a view.
 
 ## The log viewer
 
-**Open log** (`/logs`) takes a datalog on its own, or with a tune link, and opens it at `/l/{log}`: a link
-you can send to someone so they can go through the drive. Every log read against a tune opens there too.
+**Open log** (`/logs`, or drop a log on the home page's box) takes up to six datalogs at once, on their own or
+with a tune link, and opens the first at `/l/{log}`: a link you can send to someone so they can go through the
+drive. Every log read against a tune opens there too. **Add tune / Change tune** reads the log with any tune
+(upload a .msq right there, or paste a link); the choice is in the link as `?tune=`, so it's shared too.
 It works the way a desktop log viewer does (`app/static/viewer.js`, plain canvas, no libraries):
 
 - **Stacked graphs**, one to four, each with up to four channels drawn against their own range, with each
@@ -345,6 +347,37 @@ It works the way a desktop log viewer does (`app/static/viewer.js`, plain canvas
 - **Scatter plot**: any channel against any other, coloured by a third, for the zoomed range or the whole log.
 - **Copy link** puts the channels, zoom and cursor position in the link, so whoever opens it sees the same
   moment. Your channel layout is remembered for the next log you open.
+- **Mixture as AFR**: AFR channels are shown in preference to lambda, and the report gives AFR too.
+- **Markers** recorded in an `.mlg` show as red lines.
+- **Edit the tables**: drag (or tap, then *Range*) across cells, then type a value and Enter, or use −/+,
+  ±1%, *Interp* (fill between the selection's corners) and *Smooth*. Edits are kept in the browser until you
+  **Save as new tune**, which writes them into a copy of the .msq (only those numbers change, byte for byte)
+  with its own link and a download.
+
+### VE Analyze
+
+The **VE Analyze** tab plays through the log (and any logs uploaded with it) and works out what every VE cell
+should be from the wideband, with the cells changing on screen as it goes, then solves the table and puts the
+result in the editor to adjust and save. It's in `app/static/veal.js`, with its tests in `tests/js` (run by
+`tests/test_veal.py` under node). How it works:
+
+- **From the VE that actually ran.** The VE each record needed is *VE used × measured λ ÷ target λ × closed-loop
+  trim*. When the log has the ECU's VE (`Fuel: VE`, `VEcurr`…) that's what it starts from, so VE blends
+  and a tune that isn't the one attached don't throw it off. It rebuilds the table that was on the car from
+  those readings, limits changes relative to *that*, and says so when the attached tune is a different one.
+- **The wideband's delay is measured** from the log (lining up fuel changes with the opposite λ change),
+  around 150–250 ms on a typical setup, and scaled for RPM.
+- **Every sample counts where it belongs.** A sample between four cells is shared between them by the same
+  bilinear weights the ECU interpolates with, and the final table is the least-squares fit to every sample
+  through that interpolation, lightly smoothed between neighbouring cells that both have data. A cell moves in
+  proportion to how much data it has, up to the most it may change in one pass (25% by default).
+- **Only steady, warm, fuelled samples**: it leaves out a cold engine, throttle or MAP moving fast and the
+  moments after, fuel cut and decel, a wideband at its rail or not ready, maxed injectors, idle when a separate
+  idle VE table runs it, and readings too far off to be real. It shows how much of the log went each way.
+
+On the two FOME logs it was developed against, holding out alternate 30 s of each log and correcting from the
+rest took the error between the VE needed and the table from 13.8% to 2.5% on one and 3.7% to 2.7% on the
+other (the remainder is wideband noise).
 
 A real log is big (an hour on rusEFI/FOME is over 100 MB, with 650 channels), so a log is stored as a
 column store (`{log}.col`: an index, then one zlib-compressed float32 block per channel) beside the gzipped
