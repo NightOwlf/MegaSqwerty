@@ -57,6 +57,28 @@
       form.classList.remove("busy");
       input.value = "";
     }
+    /* Big uploads (datalogs): send in the background so the page can show how far along it is. */
+    function send(f) {
+      var bar = $(".upbar", form), fill = bar && $("i", bar), xhr = new XMLHttpRequest();
+      if (bar) bar.hidden = false;
+      xhr.open("POST", form.getAttribute("action"));
+      xhr.setRequestHeader("X-Upload", "1");
+      xhr.upload.onprogress = function (e) {
+        if (!e.lengthComputable) return;
+        var pct = Math.round(e.loaded / e.total * 100);
+        if (fill) fill.style.width = pct + "%";
+        if (status) status.textContent = pct < 100 ? "Uploading " + f.name + " · " + pct + "%" : "Reading " + f.name + "…";
+      };
+      xhr.onload = function () {
+        var res = null;
+        try { res = JSON.parse(xhr.responseText); } catch (e) { /* not JSON */ }
+        if (res && res.url) { location.href = res.url; return; }
+        if (bar) bar.hidden = true;
+        fail(res && res.error ? res.error : "The upload didn't come through. Try again.");
+      };
+      xhr.onerror = function () { if (bar) bar.hidden = true; fail("The upload didn't come through. Check your connection and try again."); };
+      xhr.send(new FormData(form));
+    }
     input.addEventListener("change", function () {
       var f = input.files && input.files[0];
       if (!f) return;
@@ -67,6 +89,7 @@
       if (form.hasAttribute("data-autosubmit")) {
         form.classList.add("busy");
         if (status) status.textContent = "Uploading " + f.name + "…";
+        if (form.hasAttribute("data-progress") && window.FormData && window.XMLHttpRequest) return send(f);
         if (form.requestSubmit) form.requestSubmit(); else form.submit();
       }
     });

@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, keybox %}
+{% block title %}{{ name }} · Log viewer · MSQ Viewer{% endblock %}
+{% block og %}
+<meta property="og:site_name" content="MSQ Viewer">
+<meta property="og:type" content="website">
+<meta property="og:title" content="{{ og_title }}">
+<meta property="og:description" content="{{ og_desc }}">
+{% endblock %}
+{% block bodyclass %}page-viewer{% endblock %}
+{% block scripts %}<script src="/static/viewer.js?v={{ asset_v }}" defer></script>{% endblock %}
+{% set led = {'ok': 'on', 'warn': 'warn', 'error': 'bad', 'info': ''} %}
+{% block main %}
+{% if delete_key %}{{ keybox(delete_key, "Log") }}{% endif %}
+<div class="lv" id="lv" data-log="{{ log_slug }}" data-rows="{{ index.rows }}">
+  <div class="lv-bar">
+    <div class="lv-name">
+      {% if tune_slug %}<a class="lv-back" href="/t/{{ tune_slug }}" title="Back to the tune">{{ icon('left') }}<span>{{ tune_label }}</span></a>{% else %}<a class="lv-back" href="/logs" title="Open another log">{{ icon('left') }}<span>Logs</span></a>{% endif %}
+      <b title="{{ name }}">{{ name }}</b>
+      <span class="dim mono">{{ length }} · {{ '{:,}'.format(index.rows) }} records · {{ index.channels|length }} channels</span>
+    </div>
+    <div class="lv-tabs" role="tablist">
+      <button type="button" role="tab" data-lv-tab="graphs" aria-selected="true">Data Log</button>
+      <button type="button" role="tab" data-lv-tab="scatter" aria-selected="false">Scatter Plot</button>
+    </div>
+    <div class="lv-actions">
+      {% if summary %}<a class="btn sm" href="/t/{{ tune_slug }}/log/{{ log_slug }}" title="What this log shows about the tune"><span class="led {{ led[summary.tone] }}"></span><span>Report: {{ summary.short }}</span></a>{% endif %}
+      <label class="lv-sel" title="How many graphs to stack">Graphs
+        <select data-lv-count><option>1</option><option>2</option><option>3</option><option>4</option></select>
+      </label>
+      <button class="btn sm primary" type="button" data-lv-share title="Copy a link that opens at this exact moment, with these channels">{{ icon('link') }}<span>Copy link</span></button>
+      <a class="btn sm" href="/l/{{ log_slug }}/download" title="Download the original log file">{{ icon('download') }}<span class="lv-wide">Download</span></a>
+      <button class="btn sm" type="button" data-lv-help title="Keyboard shortcuts and help">?</button>
+    </div>
+  </div>
+
+  <div class="lv-body">
+    <div class="lv-main">
+      <div class="lv-graphs" data-lv-panel="graphs"></div>
+      <div class="lv-scatter" data-lv-panel="scatter" hidden>
+        <div class="lv-scatter-bar">
+          <button type="button" class="lv-pick" data-sc="x"></button>
+          <button type="button" class="lv-pick" data-sc="y"></button>
+          <button type="button" class="lv-pick" data-sc="z"></button>
+          <label class="check sm"><input type="checkbox" data-sc-range checked><span>Only the zoomed range</span></label>
+        </div>
+        <canvas class="lv-scatter-cv"></canvas>
+      </div>
+      <div class="lv-over"><canvas></canvas></div>
+      <div class="lv-transport">
+        <div class="lv-btns">
+          <button type="button" data-lv="start" title="Go to start (Home)">⏮</button>
+          <button type="button" data-lv="back" title="Back one record (←)">◀</button>
+          <button type="button" data-lv="play" title="Play / pause (Space)" class="lv-play">▶</button>
+          <button type="button" data-lv="fwd" title="Forward one record (→)">▶</button>
+          <button type="button" data-lv="end" title="Go to end (End)">⏭</button>
+          <select data-lv-speed title="Playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select>
+        </div>
+        <div class="lv-btns">
+          <button type="button" data-lv="zout" title="Zoom out (↓ or −)">−</button>
+          <button type="button" data-lv="zin" title="Zoom in (↑ or +)">+</button>
+          <button type="button" data-lv="fit" title="Show the whole log (F)">Fit</button>
+        </div>
+        <div class="lv-status mono" aria-live="off"></div>
+      </div>
+      <div class="lv-gauges"></div>
+    </div>
+    <aside class="lv-side" hidden>
+      <div class="lv-table" data-slot="0"></div>
+      <div class="lv-table" data-slot="1"></div>
+    </aside>
+  </div>
+  <p class="lv-load" role="status">Loading the log…</p>
+
+  <details class="danger lv-danger">
+    <summary>{{ icon('trash') }}<span>Delete this log</span></summary>
+    <form method="post" action="/l/{{ log_slug }}/delete">
+      <label>Delete key <input name="key" autocomplete="off" autocapitalize="off" spellcheck="false" required></label>
+      <button class="btn danger-btn" type="submit">Delete</button>
+    </form>
+  </details>
+</div>
+
+<div class="lv-pop" hidden>
+  <input type="search" placeholder="Search channels…" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Search channels">
+  <ul></ul>
+</div>
+<div class="lv-help" hidden>
+  <div class="lv-help-in">
+    <h2>Using the log viewer</h2>
+    <dl>
+      <dt>Click or drag on a graph</dt><dd>Move the cursor. Every value at that moment shows beside it and in the strip below.</dd>
+      <dt>Scroll wheel / pinch</dt><dd>Zoom in and out around the pointer. Shift + wheel, or a sideways swipe, pans.</dd>
+      <dt>Drag the strip under the graphs</dt><dd>Move through the log. Drag across empty space to jump.</dd>
+      <dt>Click a channel name</dt><dd>Swap it for any other channel, or remove it. Up to four per graph.</dd>
+      <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Step one record. Hold Shift for ten.</dd>
+      <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Zoom in and out. <kbd>F</kbd> shows the whole log.</dd>
+      <dt><kbd>Space</kbd></dt><dd>Play and pause. <kbd>Home</kbd> and <kbd>End</kbd> jump to the ends.</dd>
+      <dt>Copy link</dt><dd>The link opens at this exact moment with the same channels and zoom, so a friend sees what you see.</dd>
+    </dl>
+    <button class="btn primary" type="button" data-lv-help-close>Got it</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block status %}<span class="led on"></span><span>{{ name }}</span><span class="st-sep"></span><span class="st-dim">{{ index.title[:80] if index.title else 'Datalog' }}</span><span class="st-grow"></span><span class="st-dim">{{ length }}</span>{% endblock %}
+
+{% block after %}<div class="bubble" role="status" hidden></div>{% endblock %}

@@ -19,6 +19,7 @@
 <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js" defer></script>
 <script src="/static/app.js?v={{ asset_v }}" defer></script>
 <script src="/static/edit.js?v={{ asset_v }}" defer></script>
+{% block scripts %}{% endblock %}
 </head>
 {% from "_macros.html" import icon %}
 <body class="{% block bodyclass %}{% endblock %}"{% block bodyattrs %}{% endblock %}>
@@ -27,6 +28,7 @@
     <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="brand-word">MSQ Viewer</span></a>
     <nav class="menu" aria-label="Main">
       <a href="/">{{ icon('folder') }}<span>Open tune</span></a>
+      <a href="/logs">{{ icon('curve') }}<span>Open log</span></a>
       <a href="/compare">{{ icon('compare') }}<span>Compare</span></a>
       <button type="button" class="menu-theme" data-theme-toggle hidden title="Switch between dark and light theme" aria-label="Switch between dark and light theme">{{ icon('sun', 'ic-sun') }}{{ icon('moon', 'ic-moon') }}</button>
     </nav>

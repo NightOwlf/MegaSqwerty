@@ -22,193 +22,15 @@ import re
 import struct
 from dataclasses import asdict, dataclass, field
 
+from .logfile import (MAX_BYTES, MAX_ROWS, Channel, LogDoc, LogError, _key, parse_log,  # noqa: F401
+                      parse_mlg, parse_text, read_block, read_index, write_columns)
 from .axes import ATMOSPHERE_KPA, BOOST_EDGE_KPA, stoich_of
 from .parser import Constant, TuneDoc
 from .render import fuel_mode
 from .tablemaps import TableView
 
-MAX_BYTES = 16 * 1024 * 1024
-MAX_ROWS = 400_000
-MAX_FIELDS = 400
 CHART_POINTS = 700
 PSI_KPA = 6.894757
-
-
-class LogError(ValueError):
-    """Raised for any log we can't read. `str(err)` is safe to show users."""
-
-
-# ------------------------------------------------------------------ the log itself
-
-@dataclass
-class Channel:
-    name: str
-    units: str
-    values: list  # one per row; None where the log had no number
-
-    @property
-    def nums(self) -> list[float]:
-        return [v for v in self.values if v is not None]
-
-
-@dataclass
-class LogDoc:
-    channels: list[Channel] = field(default_factory=list)
-    rows: int = 0
-    source: str = "text"
-    truncated: bool = False
-    title: str = ""
-
-    def by_name(self, name: str) -> Channel | None:
-        want = _key(name)
-        return next((c for c in self.channels if _key(c.name) == want), None)
-
-
-def _key(name: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
-
-
-def _float(text: str):
-    t = text.strip().strip('"')
-    if not t or t in ("-", "n/a", "NA", "null"):
-        return None
-    try:
-        v = float(t)
-    except ValueError:
-        return None
-    return v if math.isfinite(v) else None
-
-
-def _split(line: str, sep: str) -> list[str]:
-    return [p.strip().strip('"') for p in line.split(sep)]
-
-
-def _looks_numeric(parts: list[str]) -> float:
-    """How much of a row is numbers, 0–1."""
-    if not parts:
-        return 0.0
-    return sum(1 for p in parts if _float(p) is not None) / len(parts)
-
-
-def parse_text(data: bytes) -> LogDoc:
-    """A TunerStudio .msl / .csv / .tsv log: some header lines, a names row, usually a units row, then data."""
-    text = data.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n")
-    lines = [ln for ln in text.split("\n")]
-    sep = "\t" if text.count("\t") > text.count(",") else ("," if text.count(",") >= text.count(";") else ";")
-    head_i, names = None, []
-    for i, line in enumerate(lines[:200]):
-        parts = _split(line, sep)
-        if len(parts) < 3 or _looks_numeric(parts) > 0.5 or not any(p for p in parts):
-            continue
-        nxt = _split(lines[i + 1], sep) if i + 1 < len(lines) else []
-        if len(nxt) != len(parts):
-            continue
-        head_i, names = i, parts
-        break
-    if head_i is None:
-        raise LogError("That file doesn't look like a datalog: no row of channel names was found.")
-    if len(names) > MAX_FIELDS:
-        raise LogError(f"That log has too many channels to read ({len(names)}).")
-
-    body = head_i + 1
-    units = [""] * len(names)
-    first = _split(lines[body], sep) if body < len(lines) else []
-    if first and _looks_numeric(first) < 0.5:  # a units row, not data
-        units = first
-        body += 1
-
-    cols: list[list] = [[] for _ in names]
-    rows = 0
-    truncated = False
-    for line in lines[body:]:
-        if not line.strip():
-            continue
-        parts = _split(line, sep)
-        if len(parts) != len(names) or _looks_numeric(parts) < 0.4:
-            continue  # markers, notes and torn last lines
-        if rows >= MAX_ROWS:
-            truncated = True
-            break
-        for k, p in enumerate(parts):
-            cols[k].append(_float(p))
-        rows += 1
-    if rows < 2:
-        raise LogError("That log has no data rows in it.")
-    title = lines[0].strip().strip('"') if head_i > 0 else ""
-    return LogDoc([Channel(n or f"Channel {i + 1}", units[i] if i < len(units) else "", cols[i])
-                   for i, n in enumerate(names)], rows, "text", truncated, title)
-
-
-_MLG_TYPES = {0: ("B", 1), 1: ("b", 1), 2: (">H", 2), 3: (">h", 2), 4: (">I", 4), 5: (">i", 4), 6: (">f", 4)}
-
-
-def parse_mlg(data: bytes) -> LogDoc:
-    """A binary MLVLG log, read to its documented layout. Anything inconsistent is refused, not guessed."""
-    def bad(why: str):
-        raise LogError(f"This .mlg log can't be read ({why}). In TunerStudio use File → Export → and save the "
-                       "log as CSV or MSL, then upload that.")
-
-    if len(data) < 32:
-        bad("the file is too short")
-    version, = struct.unpack_from(">H", data, 6)
-    if version not in (1, 2):
-        bad(f"unknown format version {version}")
-    info_start, begin, record_len, n_fields = struct.unpack_from(">HIHH", data, 12)
-    if not 0 < n_fields <= MAX_FIELDS:
-        bad(f"it declares {n_fields} channels")
-    entry = 55 if version == 1 else 89
-    at = 22
-    if at + entry * n_fields > len(data) or begin >= len(data):
-        bad("its header runs past the end of the file")
-    channels, fmt, size = [], [], 0
-    for _ in range(n_fields):
-        kind = data[at]
-        if kind not in _MLG_TYPES:
-            bad(f"a channel has an unknown data type ({kind})")
-        code, width = _MLG_TYPES[kind]
-        name = data[at + 1:at + 35].split(b"\0")[0].decode("latin-1").strip()
-        units = data[at + 35:at + 45].split(b"\0")[0].decode("latin-1").strip()
-        scale, transform = struct.unpack_from(">ff", data, at + 46)
-        channels.append(Channel(name or f"Channel {len(channels) + 1}", units, []))
-        fmt.append((code, width, scale if scale else 1.0, transform))
-        size += width
-        at += entry
-    head = 4  # block type, counter, timestamp; anything after the field data (a checksum) is ignored
-    if not size + head <= record_len <= size + head + 4:
-        bad("its record length doesn't match its channels")
-
-    rows, truncated, pos = 0, False, begin
-    while pos + record_len <= len(data):
-        if rows >= MAX_ROWS:
-            truncated = True
-            break
-        if data[pos] != 0:  # 0 is a data record; markers and annotations are skipped
-            pos += record_len
-            continue
-        off = pos + head
-        for c, (code, width, scale, transform) in zip(channels, fmt):
-            raw, = struct.unpack_from(code, data, off)
-            c.values.append(raw * scale + transform)
-            off += width
-        rows += 1
-        pos += record_len
-    if rows < 2:
-        bad("it has no data records")
-    return LogDoc(channels, rows, "mlg", truncated)
-
-
-def parse_log(data: bytes, filename: str = "") -> LogDoc:
-    if not isinstance(data, (bytes, bytearray)) or not data.strip():
-        raise LogError("That file is empty.")
-    if len(data) > MAX_BYTES:
-        raise LogError("That log is too large (16 MB max).")
-    if data[:5] == b"MLVLG":
-        return parse_mlg(bytes(data))
-    if filename.lower().endswith(".mlg"):
-        raise LogError("That .mlg file doesn't start like an MLVLG log. In TunerStudio, export the log as CSV "
-                       "or MSL and upload that.")
-    return parse_text(bytes(data))
-
 
 # ------------------------------------------------------------------ channels we look for
 
@@ -219,17 +41,19 @@ ROLES: dict[str, tuple[str, ...]] = {
     "rpm": (r"^rpm$", r"^enginerpm$", r"^enginespeed$", r"^speedrpm$"),
     "map": (r"^map$", r"^mapkpa$", r"^manifoldpressure", r"^mapvalue$", r"^boostpressure$"),
     "tps": (r"^tps$", r"^tps1$", r"^throttle", r"^tpsposition$"),
-    "lambda_target": (r"^lambdatarget", r"^targetlambda", r"^afrtarget", r"^targetafr", r"^afrtgt",
-                      r"^lambdatgt", r"^airfuelratiotarget"),
+    "lambda_target": (r"^lambdatarget", r"^targetlambda", r"^fueltargetlambda", r"^afrtarget", r"^targetafr",
+                      r"^afrtgt", r"^lambdatgt", r"^airfuelratiotarget", r"^fueltargetafr"),
     "lambda": (r"^lambda1?$", r"^afr1?$", r"^widebandafr", r"^wbafr", r"^o2$", r"^ego1?$", r"^airfuelratio$"),
-    "advance": (r"^advance", r"^ignitionadvance", r"^sparkadvance", r"^timing$", r"^ignadv", r"^spkadv"),
-    "knock": (r"^knock", r"^detonation", r"^knkretard", r"^ignitionretard"),
+    "advance": (r"^advance", r"^ignitionadvance", r"^sparkadvance", r"^timing$", r"^ignadv", r"^spkadv",
+                r"^igntimingcyl1$", r"^igntiming"),
+    "knock": (r"^knockretard$", r"^knock", r"^detonation", r"^knkretard", r"^ignitionretard"),
     "clt": (r"^clt$", r"^coolant", r"^cltdeg", r"^enginetemp"),
     "iat": (r"^iat$", r"^mat$", r"^intakeair", r"^intaketemp", r"^chargetemp", r"^airtemp"),
-    "duty": (r"^boostduty", r"^boostpwm", r"^bcduty", r"^wastegateduty", r"^boostcontrolduty"),
+    "duty": (r"^boostoutput$", r"^boostduty", r"^boostpwm", r"^bcduty", r"^wastegateduty", r"^boostcontrolduty"),
     "boost_target": (r"^boosttarget", r"^targetboost", r"^boostcontroltarget", r"^boostkpatarget"),
-    "inj_duty": (r"^injduty", r"^injectorduty", r"^dutycycle", r"^duty$", r"^injectorssduty"),
-    "pw": (r"^pw1?$", r"^pulsewidth", r"^injpulsewidth", r"^injectorpulsewidth"),
+    "inj_duty": (r"^injduty", r"^injectorduty", r"^dutycycle", r"^duty$", r"^injectorssduty",
+                 r"^fuelinjectordutycycle$"),
+    "pw": (r"^pw1?$", r"^pulsewidth", r"^injpulsewidth", r"^injectorpulsewidth", r"^fuellastinjpulsewidth$"),
     "batt": (r"^batt", r"^vbatt", r"^batteryvoltage", r"^voltage$"),
     "vss": (r"^vss$", r"^vehiclespeed", r"^speed$", r"^roadspeed"),
     "gear": (r"^gear$", r"^currentgear", r"^detectedgear", r"^gearnumber"),
@@ -237,7 +61,7 @@ ROLES: dict[str, tuple[str, ...]] = {
     "egt": (r"^egt1?$", r"^exhausttemp", r"^exhaustgastemp"),
     "ego_corr": (r"^egocor", r"^o2correction", r"^shorttermfueltrim", r"^stft", r"^closedloopcorrection",
                  r"^fueltrim"),
-    "ve": (r"^vecurr", r"^vecurrent", r"^ve1?$", r"^vetable"),
+    "ve": (r"^fuelve$", r"^vecurr", r"^vecurrent", r"^ve1?$", r"^vetable"),
     "accel": (r"^accelenrich", r"^tpsaccel", r"^accel$", r"^aeamount"),
 }
 
@@ -251,7 +75,7 @@ def resolve(log: LogDoc) -> dict[str, Channel]:
             for i, c in enumerate(log.channels):
                 if i in taken or not re.match(pattern, _key(c.name)):
                     continue
-                if not c.nums:
+                if not c.has_data:
                     continue
                 out[role] = c
                 taken.add(i)
@@ -540,9 +364,10 @@ def analyze(log: LogDoc, doc: TuneDoc, views: list[TableView], cut_kpa: float | 
                                    "Check the sensor is working and warmed up.")
     if "ego_corr" in ch:
         nums = [v for v in ch["ego_corr"].nums]
-        worst = max(nums, key=lambda v: abs(v - 100 if max(nums) > 50 else v), default=None)
+        centre = 100 if nums and max(nums) > 50 else 0  # logged as a percentage of 100, or as a trim around 0
+        worst = max(nums, key=lambda v: abs(v - centre), default=None)
         if worst is not None:
-            off = abs(worst - 100) if max(nums) > 50 else abs(worst)
+            off = abs(worst - centre)
             if off > 10:
                 add("warn", "Fuel", f"Closed-loop fuel is working hard ({_g(off)}% correction). The VE table needs "
                                     "attention rather than the correction covering for it.")
@@ -942,3 +767,54 @@ def to_dict(r: Report) -> dict:
     d = asdict(r)
     d["summary"] = r.summary
     return d
+
+
+# ------------------------------------------------------------------ for the log viewer
+
+def build_columns(log: LogDoc, path) -> dict:
+    """Save a parsed log as the column store the viewer loads from, with which channel plays which role."""
+    ch = resolve(log)
+    t, note = _timebase(log, ch)
+    where = {id(c): i for i, c in enumerate(log.channels)}
+    extra = {"roles": {role: where[id(c)] for role, c in ch.items()}, "note": note}
+    return write_columns(log, t, path, extra)
+
+
+def map_scale(units: str, lo, hi) -> tuple[float, float]:
+    """(a, b) so that a * logged MAP + b is absolute kPa, by the same rules the report uses."""
+    u = (units or "").lower()
+    if "psi" in u:
+        gauge = lo is not None and hi is not None and lo > -20 and hi < 60
+        return (PSI_KPA, ATMOSPHERE_KPA) if gauge else (PSI_KPA, 0.0)
+    if "bar" in u:
+        return 100.0, 0.0
+    return 1.0, 0.0
+
+
+def viewer_tables(views: list[TableView], index: dict, digits_of=None, limit: int = 16) -> list[dict]:
+    """The tune's tables as plain data for the viewer, each with the log channels that move its cursor."""
+    roles, channels = index.get("roles", {}), index.get("channels", [])
+    out = []
+    for v in views:
+        if v.x is None or v.y is None or len(v.x.values) != v.z.cols or len(v.y.values) != v.z.rows:
+            continue
+        if not all(isinstance(n, float) for n in list(v.z.values) + list(v.x.values) + list(v.y.values)):
+            continue
+        xs, ys = list(v.x.values), list(v.y.values)
+        xc = roles.get("rpm") if ("rpm" in (v.x_label + v.x_units).lower() or max(xs) > 1000) else None
+        yc, ya, yb = None, 1.0, 0.0
+        y_text = (v.y_label + " " + v.y_units).lower()
+        if _load_is_map(v) and "map" in roles:
+            yc = roles["map"]
+            c = channels[yc]
+            ya, yb = map_scale(c.get("u", ""), c.get("lo"), c.get("hi"))
+        elif "tps" in y_text and "tps" in roles:
+            yc = roles["tps"]
+        digits = digits_of(v.z) if digits_of else v.z.digits
+        out.append({"id": v.id, "label": v.label, "units": v.units, "xl": v.x_label, "yl": v.y_label,
+                    "xu": v.x_units, "yu": v.y_units, "x": xs, "y": ys, "z": list(v.z.values),
+                    "cols": v.z.cols, "rows": v.z.rows, "d": digits if digits is not None and 0 <= digits <= 4 else 1,
+                    "xc": xc, "yc": yc, "ya": ya, "yb": yb})
+        if len(out) >= limit:
+            break
+    return out

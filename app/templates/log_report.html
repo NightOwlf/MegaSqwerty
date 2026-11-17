@@ -8,6 +8,7 @@
 <nav class="crumbs"><a href="/t/{{ slug }}">{{ icon('left') }}<span>{{ tune_label }}</span></a><span class="crumb-sep">/</span><a href="/t/{{ slug }}/log">Logs</a><span class="crumb-sep">/</span><span class="crumb-cur">{{ name }}</span></nav>
 
 <div class="boost">
+<p class="rep-top"><a class="btn primary" href="/l/{{ log_slug }}">{{ icon('curve') }}<span>Open in log viewer</span></a></p>
 {% if delete_key %}{{ keybox(delete_key, "Log") }}{% endif %}
 {% if flash %}<p class="flash err" role="alert">{{ icon('warn') }}<span>{{ flash }}</span></p>{% endif %}
 
@@ -37,25 +38,11 @@
   </div>
 </section>
 
-{% if r.charts %}
-<section class="win">
-  <header class="win-title">{{ icon('curve') }}<h2>The drive</h2><span class="win-sub">{{ r.seconds }} s · {{ '{:,}'.format(r.rows) }} samples</span></header>
-  <div class="win-body">
-    {% for chart in r.charts %}
-    <figure class="logchart">
-      <figcaption>{{ chart.title }}</figcaption>
-      <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="{{ chart.title }}">
-        {% for s in chart.series %}<polyline class="ser {{ s.cls }}" points="{{ s.points }}"/>{% endfor %}
-      </svg>
-      <div class="legend legend-log">
-        {% for s in chart.series %}<span class="lg"><i class="sw {{ s.cls }}"></i>{{ s.label }} <span class="mono dim">{{ s.lo }}–{{ s.hi }}{% if s.units %} {{ s.units }}{% endif %}</span></span>{% endfor %}
-      </div>
-    </figure>
-    {% endfor %}
-    <p class="hint">Each trace is scaled to its own range (shown beside its name), so they can share one picture. Time runs left to right.</p>
-  </div>
-</section>
-{% endif %}
+<a class="viewer-cta" href="/l/{{ log_slug }}">
+  <span class="viewer-cta-ic">{{ icon('curve') }}</span>
+  <span class="viewer-cta-t"><b>Open in the log viewer</b><small>Scrub through the drive: every channel over time, playback, and this tune's tables following along. {{ r.seconds }} s · {{ '{:,}'.format(r.rows) }} records</small></span>
+  <span class="chev">{{ icon('right') }}</span>
+</a>
 
 {% if r.pulls %}
 <section class="win">

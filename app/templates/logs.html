@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon %}
+{% block title %}Open a datalog · MSQ Viewer{% endblock %}
+{% block bodyclass %}page-log{% endblock %}
+{% block main %}
+<div class="boost">
+<section class="win">
+  <header class="win-title">{{ icon('curve') }}<h1>Open a datalog</h1><span class="win-sub">Log viewer</span></header>
+  <div class="win-body">
+    <p class="lede-sm">Upload a log from TunerStudio or the ECU's SD card and it opens in a viewer you can scrub and play back: stacked graphs of any channels, a cursor with every value, zoom, and scatter plots. You get a link to send to a friend, who sees the same drive.</p>
+    {% if request.query_params.get('deleted') %}<p class="flash ok" role="status">Log deleted.</p>{% endif %}
+    {% if error %}<p class="flash err" role="alert">{{ icon('warn') }}<span>{{ error }}</span></p>{% endif %}
+    <form class="upload-card" method="post" action="/logs" enctype="multipart/form-data" data-max="{{ log_max_bytes }}" data-autosubmit data-progress>
+      <label class="field-row">
+        <span>Tune link <small class="dim">optional</small></span>
+        <input type="text" name="tune" value="{{ tune }}" placeholder="Paste a tune link to see its VE and spark tables follow the log" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </label>
+      <label class="dropzone">
+        <input type="file" name="file" accept=".mlg,.msl,.csv,.tsv,.txt" required>
+        <span class="dz-icon">{{ icon('upload') }}</span>
+        <span class="dz-main">Choose a log file</span>
+        <span class="dz-sub">.mlg, .msl or .csv · or drop it here · up to {{ log_max_mb }} MB</span>
+      </label>
+      <div class="upbar" hidden><i></i></div>
+      <p class="upload-status mono" aria-live="polite"></p>
+      <noscript><button class="btn primary big" type="submit">Upload &amp; view</button></noscript>
+      <div class="notice">{{ icon('warn') }}<p><strong>ANYONE WITH THE LINK CAN SEE THIS LOG.</strong> A log records where and how you drove. Don't upload anything private.</p></div>
+    </form>
+    <p class="fine">With a tune link, the log is also checked against that tune (lean in boost, knock, overboost, injector duty) and the tune's tables show a live cursor. No tune uploaded yet? <a href="/">Open the .msq first</a>, then use <b>Read a log</b> on its page. Logs nobody views for 180 days are removed.</p>
+  </div>
+</section>
+</div>
+{% endblock %}
+
+{% block status %}<span class="led"></span><span>Ready</span><span class="st-sep"></span><span class="st-dim">No log loaded</span>{% endblock %}

@@ -104,25 +104,33 @@ def test_files_that_arent_logs_are_refused(data, expect):
         logs.parse_log(data, "x.mlg" if data.startswith(b"MLVLG") else "x.msl")
 
 
-def mlg(channels, rows, version=2) -> bytes:
-    """A binary log written to the documented MLVLG layout, for the reader to be checked against."""
-    entry = 55 if version == 1 else 89
-    size = 4 * len(channels)
-    record_len = size + 5
+def mlg(channels, rows, version=2, marker_at=None) -> bytes:
+    """A binary log written to EFI Analytics' published MLVLG layout, for the reader to be checked against.
+
+    v1 has a 2-byte info offset (22-byte header, 55-byte fields); v2 a 4-byte one (24 and 89). The record
+    length is the field data alone; each block adds a 4-byte header and a checksum byte. RPM is stored as a
+    scaled U16 and the rest as F32, so both the type table and (raw + transform) * scale are exercised."""
+    entry, head = (55, 22) if version == 1 else (89, 24)
+    kinds = [(2, ">H", 0.5, 10.0) if name == "RPM" else (7, ">f", 1.0, 0.0) for name, _ in channels]
+    record_len = sum(struct.calcsize(fmt) for _, fmt, _, _ in kinds)
+    begin = head + entry * len(channels)
     out = bytearray(b"MLVLG\0" + struct.pack(">HI", version, 0))
-    out += struct.pack(">HIHH", 22, 22 + entry * len(channels), record_len, len(channels))
-    for name, units in channels:
+    out += struct.pack(">HIHH" if version == 1 else ">IIHH", 0, begin, record_len, len(channels))
+    for (name, units), (kind, _, scale, transform) in zip(channels, kinds):
         field = bytearray(entry)
-        field[0] = 6  # F32
+        field[0] = kind
         field[1:1 + len(name)] = name.encode()
         field[35:35 + len(units)] = units.encode()
-        struct.pack_into(">ff", field, 46, 1.0, 0.0)
+        struct.pack_into(">ff", field, 46, scale, transform)
+        field[54] = 2
         out += field
     for i, r in enumerate(rows):
+        if i == marker_at:
+            out += bytes([1, i % 256]) + struct.pack(">H", i) + b"launch".ljust(50, b"\0")
         out += bytes([0, i % 256]) + struct.pack(">H", i)  # block type, counter, timestamp
-        for v in r:
-            out += struct.pack(">f", float(v))
-        out += b"\0"                                       # trailing checksum byte
+        for v, (_, fmt, scale, transform) in zip(r, kinds):
+            out += struct.pack(fmt, round(v / scale - transform) if fmt == ">H" else float(v))
+        out += b"\0"                                       # checksum byte
     return bytes(out)
 
 
@@ -137,7 +145,7 @@ def test_a_binary_mlg_log_is_read(version):
 
 def test_an_mlg_that_doesnt_add_up_says_to_export_text():
     data = bytearray(mlg(CHANNELS, drive()))
-    struct.pack_into(">H", data, 18, 999)  # a record length its channels can't fill
+    struct.pack_into(">H", data, 20, 999)  # a record length its channels can't fill
     with pytest.raises(logs.LogError, match="CSV or MSL"):
         logs.parse_log(bytes(data), "drive.mlg")
 
@@ -388,3 +396,123 @@ def test_a_table_is_only_compared_against_a_log_when_its_load_is_map():
     assert logs._load_is_map(spark)
     spark.y_units, spark.y_label, spark.load = "%", "TPS", None  # an Alpha-N spark table
     assert not logs._load_is_map(spark)
+
+
+# ------------------------------------------------------------------ the log viewer
+
+def test_an_mlg_marker_between_records_is_skipped():
+    rows = drive()
+    log = logs.parse_log(mlg(CHANNELS, rows, marker_at=50), "drive.mlg")
+    assert log.rows == len(rows)
+    assert log.by_name("RPM").values[49:52] == pytest.approx([r[1] for r in rows[49:52]], abs=0.5)
+
+
+def test_an_mlg_channel_is_scaled_the_way_the_format_says():
+    rows = drive()
+    log = logs.parse_log(mlg(CHANNELS, rows), "drive.mlg")
+    rpm = log.by_name("RPM")  # stored as U16 with scale 0.5 and transform 10: (raw + 10) * 0.5
+    assert rpm.values[0] == pytest.approx(850, abs=0.5) and rpm.digits == 2
+    assert max(rpm.nums) == pytest.approx(7000, abs=0.5)
+
+
+def test_fome_channel_names_are_recognised():
+    names = ["Time", "RPM", "MAP", "Lambda", "Fuel: target lambda", "Ign: Timing Cyl 1", "Knock: Retard",
+             "Fuel: injector duty cycle", "Fuel: Last inj pulse width", "Boost: Output"]
+    log = logs.LogDoc([logs.Channel(n, "", [1.0, 2.0]) for n in names], 2)
+    got = {role: c.name for role, c in logs.resolve(log).items()}
+    assert got["lambda_target"] == "Fuel: target lambda" and got["advance"] == "Ign: Timing Cyl 1"
+    assert got["knock"] == "Knock: Retard" and got["inj_duty"] == "Fuel: injector duty cycle"
+    assert got["pw"] == "Fuel: Last inj pulse width" and got["duty"] == "Boost: Output"
+
+
+def test_a_log_is_stored_as_columns_the_viewer_can_load(tmp_path):
+    import zlib
+    import numpy as np
+    rows = drive()
+    log = logs.parse_log(msl(rows))
+    index = logs.build_columns(log, tmp_path / "x.col")
+    assert index["rows"] == len(rows) and index["roles"]["rpm"] == 1 and index["roles"]["map"] == 2
+    again, base = logs.read_index(tmp_path / "x.col")
+    assert again == index
+    rpm = again["channels"][1]
+    assert rpm["n"] == "RPM" and rpm["u"] == "rpm" and rpm["lo"] == 850 and rpm["hi"] == 7000
+    block = logs.read_block(tmp_path / "x.col", base, rpm)
+    values = np.frombuffer(zlib.decompress(block), dtype="<f4")
+    assert len(values) == len(rows) and values[0] == 850
+    t = np.frombuffer(zlib.decompress(logs.read_block(tmp_path / "x.col", base, again["time"])), dtype="<f4")
+    assert t[0] == 0 and t[-1] == pytest.approx(rows[-1][0], abs=0.01)
+
+
+def test_a_log_can_be_uploaded_on_its_own_and_shared(client):
+    import numpy as np
+    page = client.get("/logs")
+    assert page.status_code == 200 and "Choose a log file" in page.text
+    assert 'href="/logs"' in client.get("/").text
+    rows = drive()
+    r = client.post("/logs", files={"file": ("drive.msl", msl(rows), "text/plain")})
+    assert r.status_code == 303 and re.fullmatch(r"/l/[A-Za-z0-9]{10}", r.headers["location"])
+    url = r.headers["location"]
+    viewer = client.get(url)
+    assert viewer.status_code == 200 and "drive.msl" in viewer.text and 'id="dkey"' in viewer.text
+    assert "viewer.js" in viewer.text and viewer.headers["x-robots-tag"] == "noindex"
+    assert 'id="dkey"' not in client.get(url).text  # the key is shown once
+
+    index = client.get(f"{url}/index.json").json()
+    assert index["rows"] == len(rows) and index["tables"] == []
+    assert [c["n"] for c in index["channels"]][:3] == ["Time", "RPM", "MAP"]
+    ch = client.get(f"{url}/ch/{index['roles']['rpm']}")
+    assert ch.status_code == 200 and "immutable" in ch.headers["cache-control"]
+    values = np.frombuffer(ch.content, dtype="<f4")  # the client undoes the deflate encoding
+    assert len(values) == len(rows) and values.max() == 7000
+    assert len(client.get(f"{url}/ch/t").content) == 4 * len(rows)
+    assert client.get(f"{url}/ch/999").status_code == 404 and client.get(f"{url}/ch/x").status_code == 404
+    assert client.get(f"{url}/download").content.startswith(b'"speeduino')
+
+    key = re.search(r'<code id="dkey" class="mono">([^<]+)</code>', viewer.text).group(1)
+    assert client.post(f"{url}/delete", data={"key": "wrong"}).status_code == 403
+    assert client.post(f"{url}/delete", data={"key": key}).status_code == 303
+    assert client.get(url).status_code == 404 and client.get(f"{url}/index.json").status_code == 404
+
+
+def test_a_log_uploaded_with_a_tune_link_gets_the_report_and_the_tunes_tables(client):
+    slug = upload_tune(client, sp(load=LOAD_BOOST, boostLimit=170))
+    r = client.post("/logs", data={"tune": f"https://example.test/t/{slug}"},
+                    files={"file": ("drive.msl", msl(drive(lean=True)), "text/plain")})
+    assert r.status_code == 303
+    url = r.headers["location"]
+    assert f'href="/t/{slug}/log/{url[3:]}"' in client.get(url).text  # the viewer links to the report
+    assert "Lean in boost" in client.get(f"/t/{slug}/log/{url[3:]}").text
+    index = client.get(f"{url}/index.json").json()
+    ve = next(t for t in index["tables"] if t["id"] == "ve")
+    assert ve["xc"] == index["roles"]["rpm"] and ve["yc"] == index["roles"]["map"]
+    assert len(ve["z"]) == ve["rows"] * ve["cols"] and len(ve["x"]) == ve["cols"]
+
+    bad = client.post("/logs", data={"tune": "nope"}, files={"file": ("d.msl", msl(drive()), "text/plain")})
+    assert bad.status_code == 400 and "tune link" in bad.text
+
+
+def test_the_page_uploader_gets_json_back(client):
+    r = client.post("/logs", headers={"X-Upload": "1"}, files={"file": ("drive.msl", msl(drive()), "text/plain")})
+    assert r.status_code == 200 and re.fullmatch(r"/l/[A-Za-z0-9]{10}", r.json()["url"])
+    r = client.post("/logs", headers={"X-Upload": "1"}, files={"file": ("notes.txt", b"hello there", "text/plain")})
+    assert r.status_code == 400 and "datalog" in r.json()["error"]
+
+
+def test_a_log_uploaded_on_its_own_survives_the_purge_and_a_tunes_log_opens_in_the_viewer(client):
+    r = client.post("/logs", files={"file": ("drive.msl", msl(drive()), "text/plain")})
+    client.app.state.store.purge_stale()
+    assert client.get(r.headers["location"]).status_code == 200
+    slug = upload_tune(client, sp(load=LOAD_BOOST))
+    log_slug = upload_log(client, slug, msl(drive()))
+    assert f'href="/l/{log_slug}"' in client.get(f"/t/{slug}/log/{log_slug}").text
+    assert client.get(f"/l/{log_slug}").status_code == 200
+
+
+def test_a_log_bigger_than_a_tune_is_accepted_and_one_over_the_limit_is_not(client, monkeypatch):
+    from app import main
+    big = msl(drive(pulls=40)) + b"\n" * (main.MAX_BYTES + 1024)  # larger than any tune may be
+    r = client.post("/logs", files={"file": ("drive.msl", big, "text/plain")})
+    assert r.status_code == 303
+    monkeypatch.setattr(main, "LOG_BODY_LIMIT", 1024)
+    r = client.post("/logs", files={"file": ("drive.msl", msl(drive()), "text/plain")})
+    assert r.status_code == 413 and "too large" in r.text

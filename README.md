@@ -73,6 +73,10 @@ The app binds `0.0.0.0:$PORT`. Optional env var: `UPLOADS_PER_HOUR` (default `20
 | `GET /t/{slug}/log/{log}` | The report. `/download` gets the original log back |
 | `POST /t/{slug}/log/{log}/apply` | Write the VE or timing suggestions into a new tune |
 | `POST /t/{slug}/log/{log}/delete` | Delete a log with the key from its upload |
+| `GET /logs`, `POST /logs` | Open a datalog on its own (optionally with a tune link), then 303 to the viewer |
+| `GET /l/{log}` | The log viewer. `/download` gets the original file, `POST /delete` removes it with its key |
+| `GET /l/{log}/index.json` | Channels (name, units, range), which channel plays which role, and the tune's tables |
+| `GET /l/{log}/ch/{n}` | One channel as little-endian float32 (`t` for the time of each record) |
 | `GET /compare`, `POST /compare` | Pick two tunes, or paste A and upload B |
 | `GET /d/{a}/{b}` | Cell-by-cell diff, plus a list of settings that differ |
 | `GET /healthz` | Healthcheck |
@@ -283,9 +287,10 @@ safely, the whole target becomes the lowest point you asked for, and the plan sa
 ## Read a datalog
 
 **Read a log** on the Dash (`/t/{slug}/log`, `app/logs.py`) takes a datalog you recorded with that tune and
-says what it shows. Text logs (`.msl`, `.csv`, `.tsv`) are read most reliably; binary `.mlg` logs are read to
-the documented MLVLG layout, and anything that doesn't add up is refused with a message telling you to export
-text from TunerStudio rather than being guessed at. Channel names differ between firmware, so channels are
+says what it shows. Text logs (`.msl`, `.csv`, `.tsv`) and binary `.mlg` logs (MLVLG format 1 and 2, read to
+EFI Analytics' published layout in `app/logfile.py`) both work, up to `LOG_MAX_MB` (128 MB by default); an
+`.mlg` that doesn't add up is refused with a message telling you to export text from TunerStudio rather than
+being guessed at. Channel names differ between firmware, so channels are
 matched by pattern (`AFR`, `AFR1`, `Lambda`, `O2`, `Engine Speed`…) and the report always lists which channel
 it used for what, and which checks couldn't run because a channel wasn't logged. MAP in psi or bar and
 temperatures in °F are converted, and the report says so.
@@ -321,6 +326,30 @@ have changed, and Tune Health must still find nothing to fix, or the edit is ref
 
 Logs are stored like tunes — **anyone with the link can see them**, they have their own delete key, they go
 when the tune goes, and they're purged after 180 days without a view.
+
+## The log viewer
+
+**Open log** (`/logs`) takes a datalog on its own, or with a tune link, and opens it at `/l/{log}`: a link
+you can send to someone so they can go through the drive. Every log read against a tune opens there too.
+It works the way a desktop log viewer does (`app/static/viewer.js`, plain canvas, no libraries):
+
+- **Stacked graphs**, one to four, each with up to four channels drawn against their own range, with each
+  channel's min and max at the left edge. Click a channel name to swap it for any other channel in the log.
+- **A cursor**: click or drag on a graph and every channel's value at that record shows beside the line and
+  in the strip of readouts underneath. Arrow keys step one record (Shift for ten).
+- **Zoom and pan**: scroll wheel or pinch zooms around the pointer, Shift + wheel pans, and the strip under
+  the graphs shows the whole log with the visible window to drag. `F` fits the whole log.
+- **Playback** at 0.25× to 8× real time, with the view paging along (Space to play and pause).
+- **The tune's tables** (when the log has a tune): VE, ignition and the rest, with the cell the engine was in
+  highlighted, a dot at the exact interpolated position and the interpolated value, moving with the cursor.
+- **Scatter plot**: any channel against any other, coloured by a third, for the zoomed range or the whole log.
+- **Copy link** puts the channels, zoom and cursor position in the link, so whoever opens it sees the same
+  moment. Your channel layout is remembered for the next log you open.
+
+A real log is big (an hour on rusEFI/FOME is over 100 MB, with 650 channels), so a log is stored as a
+column store (`{log}.col`: an index, then one zlib-compressed float32 block per channel) beside the gzipped
+original, and the viewer fetches only the channels it is drawing. A 92 MB `.mlg` becomes about 4 MB of
+columns, and each channel is a request of a few kilobytes that is cached for good.
 
 ## Abuse controls
 

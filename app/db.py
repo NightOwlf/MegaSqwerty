@@ -5,6 +5,7 @@ derived from the random slug only, never from user input.
 """
 from __future__ import annotations
 
+import gzip
 import hashlib
 import hmac
 import json
@@ -49,6 +50,7 @@ class Store:
         self.db_path = self.data_dir / "msq.db"
         self._cache: OrderedDict[str, TuneDoc] = OrderedDict()
         self._cache_lock = threading.Lock()
+        self._index_cache: OrderedDict[str, tuple] = OrderedDict()
 
     # ------------------------------------------------------------ plumbing
     @property
@@ -233,13 +235,14 @@ class Store:
                 p.unlink(missing_ok=True)
         with self.conn() as c:
             stale_logs = [r["slug"] for r in c.execute(
-                "SELECT slug FROM logs WHERE last_viewed_at < ? OR tune_slug NOT IN (SELECT slug FROM tunes)",
+                "SELECT slug FROM logs WHERE last_viewed_at < ? OR (tune_slug != '' AND tune_slug NOT IN "
+                "(SELECT slug FROM tunes))",
                 (cutoff,))]
             known_logs = {r["slug"] for r in c.execute("SELECT slug FROM logs")}
         for s in stale_logs:
             self.delete_log(s)
-        for p in self.log_dir.glob("*.log"):
-            if p.stem not in known_logs and p.stat().st_mtime < time.time() - 3600:
+        for p in self.log_dir.iterdir():
+            if p.name.split(".")[0] not in known_logs and p.stat().st_mtime < time.time() - 3600:
                 p.unlink(missing_ok=True)
         if slugs:
             log.info("purged %d stale tunes", len(slugs))
@@ -251,17 +254,23 @@ class Store:
             raise ValueError("bad slug")
         return self.log_dir / f"{slug}.log"
 
-    def create_log(self, raw: bytes, tune_slug: str, name: str, report: dict) -> tuple[str, str]:
+    def col_path(self, slug: str) -> Path:
+        """The log as a column store, which the viewer loads channels from."""
+        return self.log_path(slug).with_suffix(".col")
+
+    def create_log(self, raw: bytes, tune_slug: str, name: str, report: dict, columns=None) -> tuple[str, str]:
+        """Store a log. `tune_slug` is "" for a log uploaded on its own. `columns(path)` writes its column store."""
         delete_key = secrets.token_urlsafe(18)
         now = int(time.time())
         payload = json.dumps(report, separators=(",", ":"))
         for _ in range(8):
             slug = "".join(secrets.choice(SLUG_ALPHABET) for _ in range(SLUG_LEN))
-            path = self.log_path(slug)
-            if path.exists():
+            path = self.log_path(slug).with_suffix(".log.gz")  # logs are big and squash well
+            if path.exists() or self.log_path(slug).exists():
                 continue
             tmp = path.with_suffix(".tmp")
-            tmp.write_bytes(raw)
+            with gzip.open(tmp, "wb", compresslevel=4) as f:
+                f.write(raw)
             os.replace(tmp, path)
             try:
                 with self.conn() as c:
@@ -276,6 +285,11 @@ class Store:
             except Exception:
                 path.unlink(missing_ok=True)
                 raise
+            if columns is not None:
+                try:
+                    columns(self.col_path(slug))
+                except Exception:
+                    log.exception("failed writing the column store for log %s", slug)  # rebuilt on first view
             return slug, delete_key
         raise RuntimeError("could not allocate slug")
 
@@ -312,9 +326,40 @@ class Store:
 
     def read_log_raw(self, slug: str) -> bytes | None:
         try:
-            return self.log_path(slug).read_bytes()
-        except (OSError, ValueError):
+            path = self.log_path(slug)
+            if path.exists():
+                return path.read_bytes()
+            with gzip.open(path.with_suffix(".log.gz"), "rb") as f:
+                return f.read()
+        except (OSError, ValueError, EOFError):
             return None
+
+    def log_index(self, slug: str, build=None) -> tuple[dict, int] | None:
+        """-> (the column store's index, where its blocks start), building the store with `build(raw, path)`
+        if this log was stored before there was one."""
+        with self._cache_lock:
+            if slug in self._index_cache:
+                self._index_cache.move_to_end(slug)
+                return self._index_cache[slug]
+        from .logfile import LogError, read_index
+        path = self.col_path(slug)
+        try:
+            if not path.exists():
+                raw = self.read_log_raw(slug)
+                if raw is None or build is None:
+                    return None
+                tmp = path.with_suffix(".coltmp")
+                build(raw, tmp)
+                os.replace(tmp, path)
+            found = read_index(path)
+        except (OSError, ValueError, LogError):
+            log.exception("no column store for log %s", slug)
+            return None
+        with self._cache_lock:
+            self._index_cache[slug] = found
+            while len(self._index_cache) > 32:
+                self._index_cache.popitem(last=False)
+        return found
 
     def touch_log(self, slug: str) -> None:
         now = int(time.time())
@@ -332,8 +377,11 @@ class Store:
     def delete_log(self, slug: str) -> None:
         with self.conn() as c:
             c.execute("DELETE FROM logs WHERE slug=?", (slug,))
+        with self._cache_lock:
+            self._index_cache.pop(slug, None)
         try:
-            self.log_path(slug).unlink(missing_ok=True)
+            for suffix in (".log", ".log.gz", ".col"):
+                self.log_path(slug).with_suffix(suffix).unlink(missing_ok=True)
         except (OSError, ValueError):
             log.exception("failed removing log file for %s", slug)
 

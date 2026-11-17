@@ -65,6 +65,11 @@ def split_log_streams(*names: str) -> None:
 HERE = Path(__file__).resolve().parent
 MAX_MB = MAX_BYTES // (1024 * 1024)
 BODY_LIMIT = MAX_BYTES + 256 * 1024  # multipart framing + form fields
+LOG_MAX_BYTES = logsmod.MAX_BYTES     # datalogs are far bigger than tunes
+LOG_MAX_MB = LOG_MAX_BYTES // (1024 * 1024)
+LOG_BODY_LIMIT = LOG_MAX_BYTES + 256 * 1024
+LOG_TOO_LARGE = f"That log is too large. The limit is {LOG_MAX_MB} MB."
+LOG_UPLOAD_RE = re.compile(r"^(/logs|/t/[A-Za-z0-9]{10}/log)/?$")
 
 CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; "
        "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
@@ -72,7 +77,7 @@ CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-sr
 MESSAGES = {
     400: "That request didn't make sense.",
     403: "Not allowed.",
-    404: "Nothing here. The tune may have been deleted, or it expired after 180 days without views.",
+    404: "Nothing here. The tune or log may have been deleted, or it expired after 180 days without views.",
     405: "That action isn't supported here.",
     413: f"That file is too large. The limit is {MAX_MB} MB.",
     429: "Too many uploads from your connection. Try again in an hour.",
@@ -99,14 +104,15 @@ class BodyLimitMiddleware:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or scope["method"] in ("GET", "HEAD", "OPTIONS"):
             return await self.app(scope, receive, send)
+        limit = LOG_BODY_LIMIT if LOG_UPLOAD_RE.match(scope.get("path", "")) else self.limit
         declared = None
         for k, v in scope["headers"]:
             if k == b"content-length":
                 try:
                     declared = int(v)
                 except ValueError:
-                    declared = self.limit + 1
-        if declared is not None and declared > self.limit:
+                    declared = limit + 1
+        if declared is not None and declared > limit:
             scope.setdefault("state", {})["body_too_large"] = True
 
             async def empty():
@@ -121,7 +127,7 @@ class BodyLimitMiddleware:
             msg = await receive()
             if msg["type"] == "http.request":
                 seen += len(msg.get("body", b""))
-                if seen > self.limit:
+                if seen > limit:
                     raise BodyTooLarge()
             return msg
 
@@ -151,8 +157,9 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
 
     templates = Jinja2Templates(directory=HERE / "templates")
     asset_v = hashlib.sha1(b"".join((HERE / "static" / f).read_bytes()
-                                    for f in ("app.css", "app.js", "theme.js", "edit.js"))).hexdigest()[:8]
+                                    for f in ("app.css", "app.js", "theme.js", "edit.js", "viewer.js"))).hexdigest()[:8]
     templates.env.globals.update(asset_v=asset_v, max_mb=MAX_MB, max_bytes=MAX_BYTES, icons=views.ICONS,
+                                 log_max_mb=LOG_MAX_MB, log_max_bytes=LOG_MAX_BYTES,
                                  tab_names=views.TAB_NAMES, cat_labels=views.CATEGORY_LABELS,
                                  cat_icons=views.CAT_ICONS)
     demo = views.demo_grid()
@@ -188,7 +195,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["Referrer-Policy"] = "same-origin"
         resp.headers["X-Frame-Options"] = "DENY"
-        if request.url.path.startswith(("/t/", "/d/")):
+        if request.url.path.startswith(("/t/", "/d/", "/l/")):
             resp.headers["X-Robots-Tag"] = "noindex"
         if request.url.path.startswith("/static/"):
             resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
@@ -237,17 +244,18 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         resp.set_cookie(f"dk_{slug}", key, max_age=900, httponly=True, samesite="lax", path="/",
                         secure=request.url.scheme == "https")
 
-    async def read_upload(form, field: str = "file", required: bool = True):
+    async def read_upload(form, field: str = "file", required: bool = True, max_bytes: int = MAX_BYTES,
+                          what: str = "a .msq file"):
         """-> (bytes | None, error message | None, status)."""
         f = form.get(field)
         if not isinstance(f, UploadFile) or not f.filename:
-            return None, ("Choose a .msq file first." if required else None), 400
+            return None, (f"Choose {what} first." if required else None), 400
         try:
-            data = await f.read(MAX_BYTES + 1)
+            data = await f.read(max_bytes + 1)
         finally:
             await f.close()
-        if len(data) > MAX_BYTES:
-            return None, MESSAGES[413], 413
+        if len(data) > max_bytes:
+            return None, (MESSAGES[413] if max_bytes == MAX_BYTES else LOG_TOO_LARGE), 413
         return data, None, 200
 
     async def store_upload(request: Request, data: bytes,
@@ -565,7 +573,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
 
     def load_log(slug: str, log_slug: str) -> dict:
         row = store.get_log(log_slug) if SLUG_RE.match(log_slug or "") else None
-        if row is None or row["tune_slug"] != slug:
+        if row is None or row["tune_slug"] != slug or not slug:
             raise HTTPException(404)
         return row
 
@@ -578,16 +586,84 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             "og_url": page_url(request),
         }, status_code=status)
 
-    def read_report(doc: TuneDoc, data: bytes, filename: str) -> dict:
-        """Parse the log and compare it to the tune: boost cut, MAP sensor range and rev limit come from the tune."""
-        log = logsmod.parse_log(data, filename)
+    def tune_views(doc: TuneDoc):
         tmap = resolve_map(doc)
         featured, other = all_tables(doc, tmap)
-        tviews = featured + other
-        a = boostmod.assess(doc, tviews, tmap)
-        r = logsmod.analyze(log, doc, tviews, cut_kpa=a.cut.value if a.cut is not None else None,
-                            map_max=a.map_kpa, rev=a.rev[1] if a.rev else None)
-        return logsmod.to_dict(r)
+        return tmap, featured + other
+
+    def ingest_log(doc: TuneDoc | None, tune_slug: str, data: bytes, filename: str) -> tuple[str, str, int]:
+        """Parse a log, compare it to its tune if it has one, and store it. -> (log slug, delete key, rows).
+
+        Boost cut, MAP sensor range and rev limit for the report come from the tune."""
+        parsed = logsmod.parse_log(data, filename)
+        if doc is not None:
+            tmap, tviews = tune_views(doc)
+            a = boostmod.assess(doc, tviews, tmap)
+            r = logsmod.analyze(parsed, doc, tviews, cut_kpa=a.cut.value if a.cut is not None else None,
+                                map_max=a.map_kpa, rev=a.rev[1] if a.rev else None)
+            report = logsmod.to_dict(r)
+        else:
+            t, _ = logsmod._timebase(parsed, logsmod.resolve(parsed))
+            report = {"standalone": True, "rows": parsed.rows,
+                      "seconds": round(t[-1] - t[0], 1) if len(t) > 1 else 0.0,
+                      "summary": {"tone": "info", "short": "Log", "verdict": ""}}
+        slug, key = store.create_log(data, tune_slug, filename, report,
+                                     columns=lambda path: logsmod.build_columns(parsed, path))
+        return slug, key, parsed.rows
+
+    def rebuild_columns(raw: bytes, path) -> None:
+        logsmod.build_columns(logsmod.parse_log(raw), path)
+
+    def log_index(log_slug: str) -> tuple[dict, int]:
+        found = store.log_index(log_slug, rebuild_columns)
+        if found is None:
+            raise HTTPException(404)
+        return found
+
+    async def take_log(request: Request, doc: TuneDoc | None, tune_slug: str):
+        """Read an uploaded log from the request and store it. -> (log slug, key, error, status)."""
+        if request.state._state.get("body_too_large"):
+            return None, None, LOG_TOO_LARGE, 413, None
+        if store.over_limit(client_ip(request), limit):
+            return None, None, MESSAGES[429], 429, None
+        try:
+            form = await request.form(max_files=1, max_fields=8)
+        except BodyTooLarge:
+            raise
+        except Exception:
+            return None, None, "The upload didn't come through. Try again.", 400, None
+        f = form.get("file")
+        name = getattr(f, "filename", "") or "log"
+        data, err, status = await read_upload(form, max_bytes=LOG_MAX_BYTES, what="a log file")
+        if err:
+            return None, None, err, status, form
+        if doc is None and str(form.get("tune") or "").strip():
+            tune_slug = slug_from(str(form.get("tune"))) or ""
+            doc = store.get_doc(tune_slug) if tune_slug else None
+            if doc is None:
+                return None, None, "That tune link wasn't found. Paste a tune link, or leave it empty.", 400, form
+        try:
+            log_slug, key, rows = await run_in_threadpool(ingest_log, doc, tune_slug if doc else "", data, name)
+        except logsmod.LogError as e:
+            return None, None, str(e), 400, form
+        except Exception:
+            log.exception("failed reading log %r", name)
+            return None, None, "That log couldn't be read.", 400, form
+        store.record_upload(client_ip(request))
+        log.info("stored log %s tune=%s rows=%d size=%d", log_slug, tune_slug or "-", rows, len(data))
+        return log_slug, key, None, 200, form
+
+    def upload_error(request: Request, message: str, status: int):
+        """The page's own uploader (which shows progress) wants JSON back; a plain form post gets the page."""
+        if request.headers.get("x-upload"):
+            return JSONResponse({"error": message}, status_code=status)
+        return None
+
+    def upload_done(request: Request, url: str, log_slug: str, key: str):
+        resp = (JSONResponse({"url": url}) if request.headers.get("x-upload")
+                else RedirectResponse(url, status_code=303))
+        set_key_cookie(resp, request, log_slug, key)
+        return resp
 
     @app.get("/t/{slug}/log", response_class=HTMLResponse)
     def log_list(request: Request, slug: str):
@@ -598,34 +674,10 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
     @app.post("/t/{slug}/log")
     async def log_upload(request: Request, slug: str):
         doc = load_doc(slug)
-        if request.state._state.get("body_too_large"):
-            return log_list_page(request, slug, doc, MESSAGES[413], 413)
-        if store.over_limit(client_ip(request), limit):
-            return log_list_page(request, slug, doc, MESSAGES[429], 429)
-        try:
-            form = await request.form(max_files=1, max_fields=8)
-        except BodyTooLarge:
-            raise
-        except Exception:
-            return log_list_page(request, slug, doc, "The upload didn't come through. Try again.", 400)
-        f = form.get("file")
-        name = getattr(f, "filename", "") or "log"
-        data, err, status = await read_upload(form)
+        log_slug, key, err, status, _ = await take_log(request, doc, slug)
         if err:
-            return log_list_page(request, slug, doc, err, status)
-        try:
-            report = await run_in_threadpool(read_report, doc, data, name)
-        except logsmod.LogError as e:
-            return log_list_page(request, slug, doc, str(e), 400)
-        except Exception:
-            log.exception("failed reading log for %s", slug)
-            return log_list_page(request, slug, doc, "That log couldn't be read.", 400)
-        log_slug, key = await run_in_threadpool(store.create_log, data, slug, name, report)
-        store.record_upload(client_ip(request))
-        log.info("stored log %s for tune %s (%d rows)", log_slug, slug, report.get("rows", 0))
-        resp = RedirectResponse(f"/t/{slug}/log/{log_slug}", status_code=303)
-        set_key_cookie(resp, request, log_slug, key)
-        return resp
+            return upload_error(request, err, status) or log_list_page(request, slug, doc, err, status)
+        return upload_done(request, f"/t/{slug}/log/{log_slug}", log_slug, key)
 
     @app.get("/t/{slug}/log/{log_slug}", response_class=HTMLResponse)
     def log_report(request: Request, slug: str, log_slug: str):
@@ -641,11 +693,13 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
 
     @app.get("/t/{slug}/log/{log_slug}/download")
     def log_download(slug: str, log_slug: str):
-        row = load_log(slug, log_slug)
-        raw = store.read_log_raw(log_slug)
+        return send_log(load_log(slug, log_slug))
+
+    def send_log(row: dict):
+        raw = store.read_log_raw(row["slug"])
         if raw is None:
             raise HTTPException(404)
-        base = re.sub(r"[^A-Za-z0-9._-]+", "-", row["name"]).strip("-._")[:60] or f"{log_slug}.log"
+        base = re.sub(r"[^A-Za-z0-9._-]+", "-", row["name"]).strip("-._")[:60] or f"{row['slug']}.log"
         binary = raw[:5] == b"MLVLG"
         return Response(raw, media_type="application/octet-stream" if binary else "text/plain; charset=utf-8",
                         headers={"Content-Disposition": f'attachment; filename="{base}"'})
@@ -695,6 +749,103 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             return error_response(request, 403, "That delete key doesn't match this log.")
         store.delete_log(log_slug)
         return RedirectResponse(f"/t/{slug}/log", status_code=303)
+
+    # --------------------------------------------------------- log viewer
+    def logs_page(request: Request, error: str | None = None, status: int = 200, tune: str = ""):
+        return templates.TemplateResponse(request, "logs.html", {"error": error, "tune": tune,
+                                                                 "og_url": page_url(request)}, status_code=status)
+
+    @app.get("/logs", response_class=HTMLResponse)
+    def logs_home(request: Request, tune: str = ""):
+        return logs_page(request, tune=tune if slug_from(tune) else "")
+
+    @app.post("/logs")
+    async def logs_upload(request: Request):
+        log_slug, key, err, status, form = await take_log(request, None, "")
+        if err:
+            return upload_error(request, err, status) or logs_page(
+                request, err, status, str(form.get("tune") or "") if form is not None else "")
+        return upload_done(request, f"/l/{log_slug}", log_slug, key)
+
+    def any_log(log_slug: str) -> dict:
+        row = store.get_log(log_slug) if SLUG_RE.match(log_slug or "") else None
+        if row is None:
+            raise HTTPException(404)
+        return row
+
+    @app.get("/l/{log_slug}", response_class=HTMLResponse)
+    def log_viewer(request: Request, log_slug: str):
+        row = any_log(log_slug)
+        index, _ = log_index(log_slug)
+        store.touch_log(log_slug)
+        doc = store.get_doc(row["tune_slug"]) if row["tune_slug"] else None
+        if doc is not None:
+            store.touch(row["tune_slug"])
+        cookie = request.cookies.get(f"dk_{log_slug}")
+        delete_key = cookie if cookie and store.check_log_key(log_slug, cookie) else None
+        seconds = index.get("seconds") or 0
+        length = f"{int(seconds // 60)} min {int(seconds % 60)} s" if seconds >= 60 else f"{seconds:.1f} s"
+        resp = templates.TemplateResponse(request, "viewer.html", {
+            "log_slug": log_slug, "name": row["name"], "index": index, "length": length,
+            "tune_slug": row["tune_slug"] if doc is not None else "",
+            "tune_label": views.tune_label(doc) if doc is not None else "",
+            "summary": row["report"].get("summary") if doc is not None else None,
+            "delete_key": delete_key, "og_url": page_url(request),
+            "og_title": f"Datalog · {row['name']}",
+            "og_desc": f"{length} · {index['rows']:,} records · {len(index['channels'])} channels"
+                       + (f" · {index['title']}" if index.get("title") else ""),
+        })
+        if delete_key:
+            resp.delete_cookie(f"dk_{log_slug}", path="/")
+        return resp
+
+    @app.get("/l/{log_slug}/index.json")
+    def log_index_json(log_slug: str):
+        row = any_log(log_slug)
+        index, _ = log_index(log_slug)
+        doc = store.get_doc(row["tune_slug"]) if row["tune_slug"] else None
+        tables = []
+        if doc is not None:
+            tmap, tviews = tune_views(doc)
+            tables = logsmod.viewer_tables(tviews, index, lambda z: meta_digits(tmap, z))
+        return JSONResponse({
+            "rows": index["rows"], "seconds": index.get("seconds"), "title": index.get("title", ""),
+            "note": index.get("note", ""), "truncated": index.get("truncated", False),
+            "roles": index.get("roles", {}), "tables": tables,
+            "channels": [{k: c.get(k) for k in ("n", "u", "d", "lo", "hi")} for c in index["channels"]],
+        }, headers={"Cache-Control": "private, max-age=300"})
+
+    @app.get("/l/{log_slug}/ch/{which}")
+    def log_channel(log_slug: str, which: str):
+        """One channel as little-endian float32, or `t` for the time of each record."""
+        any_log(log_slug)
+        index, base = log_index(log_slug)
+        if which == "t":
+            entry = index["time"]
+        elif which.isdigit() and int(which) < len(index["channels"]):
+            entry = index["channels"][int(which)]
+        else:
+            raise HTTPException(404)
+        block = logsmod.read_block(store.col_path(log_slug), base, entry)
+        return Response(block, media_type="application/octet-stream",
+                        headers={"Content-Encoding": "deflate", "Cache-Control": "public, max-age=31536000, immutable"})
+
+    @app.get("/l/{log_slug}/download")
+    def log_viewer_download(log_slug: str):
+        return send_log(any_log(log_slug))
+
+    @app.post("/l/{log_slug}/delete")
+    async def log_viewer_delete(request: Request, log_slug: str):
+        row = any_log(log_slug)
+        try:
+            form = await request.form(max_files=0, max_fields=4)
+        except Exception:
+            return error_response(request, 400)
+        if not store.check_log_key(log_slug, str(form.get("key") or "").strip()):
+            return error_response(request, 403, "That delete key doesn't match this log.")
+        store.delete_log(log_slug)
+        return RedirectResponse(f"/t/{row['tune_slug']}/log" if row["tune_slug"] else "/logs?deleted=1",
+                                status_code=303)
 
     # ------------------------------------------------------------ compare
     @app.get("/compare", response_class=HTMLResponse)
