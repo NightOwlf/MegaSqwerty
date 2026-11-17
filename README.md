@@ -396,6 +396,11 @@ a phone or computer to watch it run and change the tables, sent to the ECU in mo
   pretend ECU and engine (same bytes, same commands) to try it without a car.
 - **The tuner** gets live gauges (AFR shown as AFR), a 30-second live graph, and any table with the cell the
   engine is in outlined as it runs. Select cells, change them, and they go to the car.
+- **As live as the link allows**: the car page reads the ECU as fast as it answers (up to ~60 times a
+  second, like TunerStudio) and sends tuners a compact frame ~30 times a second, which the server passes on
+  untouched; the tuner's screen redraws every frame and shows updates per second and the round trip
+  (*Live · 30/s · 85 ms*). **＋ Gauge** adds any of the ECU's live channels, and the car streams it. Keep
+  the car page open; it keeps the laptop's screen awake while the ECU is connected.
 - **Safety, decided at the car**: remote changes *Off*, *Ask me before each change* (the default: the
   driver taps Allow or Reject, refused after 30 s) or *Allow*. The car page is the only thing that writes to
   the ECU, and checks every change first: only the tables' values, inside the ECU's range, at most 25% per

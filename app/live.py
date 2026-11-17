@@ -70,6 +70,9 @@ class Session:
                             "signature": "", "ecuSignature": ""}
         self.tables: dict = {}
         self.och: dict | None = None
+        self.frame: str | None = None    # the latest live frame, as the car sent it
+        self.chs: list = []              # the channel list those frames follow
+        self.wants: dict = {}            # each tuner's extra gauges
         self.changes: list = []      # what's been applied, newest last
         self.touched = time.time()
         self.rate: dict = {}
@@ -241,13 +244,29 @@ def register(app, store, templates, deps) -> None:
             s.state["car"] = True
         else:
             s.viewers.add(ws)
-        await send(ws, {"t": "hello", "role": role, "state": s.public_state(), "tables": s.tables, "och": s.och,
-                        "changes": s.changes[-30:]})
+        och = None
+        if s.frame and s.chs:
+            try:
+                vals = json.loads(s.frame).get("v") or []
+                och = {n: v for n, v in zip(s.chs, vals) if v is not None}
+            except ValueError:
+                och = None
+        await send(ws, {"t": "hello", "role": role, "state": s.public_state(), "tables": s.tables, "och": och,
+                        "chs": s.chs, "changes": s.changes[-30:], "want": sorted({n for w in s.wants.values() for n in w})})
         await announce(s)
         try:
             while True:
                 text = await ws.receive_text()
                 if len(text) > 2_000_000:
+                    continue
+                if role == "car" and text.startswith('{"t":"o"'):  # a live frame: pass it on untouched, at once
+                    s.frame = text
+                    if s.viewers:
+                        for v in list(s.viewers):
+                            try:
+                                await v.send_text(text)
+                            except Exception:
+                                s.viewers.discard(v)
                     continue
                 try:
                     msg = json.loads(text)
@@ -256,9 +275,12 @@ def register(app, store, templates, deps) -> None:
                 s.touched = time.time()
                 t = msg.get("t")
                 if role == "car":
-                    if t == "och":
-                        s.och = msg.get("v")
-                        await to_viewers(s, {"t": "och", "v": s.och, "ts": msg.get("ts")})
+                    if t == "o":  # a live frame formatted some other way: same as the fast path
+                        s.frame = json.dumps(msg, separators=(",", ":"))
+                        await to_viewers(s, msg)
+                    elif t == "chs":
+                        s.chs = [str(n) for n in (msg.get("n") or [])][:2000]
+                        await to_viewers(s, {"t": "chs", "n": s.chs})
                     elif t == "state":
                         for key in ("ecu", "mode", "burn", "needBurn", "ecuSignature", "signature"):
                             if key in msg:
@@ -308,7 +330,10 @@ def register(app, store, templates, deps) -> None:
                             fwd = {key: msg.get(key) for key in ("t", "id", "table", "cells", "note")}
                             await send(s.car, fwd)
                     elif t == "ping":
-                        await send(ws, {"t": "pong"})
+                        await send(ws, {"t": "pong", "at": msg.get("at")})
+                    elif t == "want":  # gauges this tuner added: the car streams them too
+                        s.wants[id(ws)] = [str(n) for n in (msg.get("n") or [])][:60]
+                        await send(s.car, {"t": "want", "n": sorted({n for w in s.wants.values() for n in w})})
         except WebSocketDisconnect:
             pass
         except Exception:
@@ -319,6 +344,7 @@ def register(app, store, templates, deps) -> None:
                 s.state["car"] = False
                 s.state["ecu"] = False
             s.viewers.discard(ws)
+            s.wants.pop(id(ws), None)
             s.touched = time.time()
             try:
                 await announce(s)

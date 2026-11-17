@@ -154,10 +154,25 @@ def test_a_live_session_relays_between_the_car_and_a_tuner(client, fx):
                 break
         cw.send_json({"t": "state", "ecu": True, "mode": "auto", "burn": False})
         cw.send_json({"t": "tables", "tables": {"veTable": [60.0] * 256}})
-        cw.send_json({"t": "och", "v": {"RPMValue": 2500}})
-        seen = set()
-        while not {"och", "tables"} <= seen:
-            seen.add(vw.receive_json()["t"])
+        cw.send_json({"t": "chs", "n": ["RPMValue", "coolant"]})
+        cw.send_text('{"t":"o","v":[2500,88.5],"ts":1}')       # the fast path, passed on untouched
+        seen, frame = set(), None
+        while not {"o", "tables", "chs"} <= seen:
+            m = vw.receive_json()
+            seen.add(m["t"])
+            if m["t"] == "o":
+                frame = m
+        assert frame["v"] == [2500, 88.5]
+        # a tuner's extra gauge is asked of the car; a tuner joining late gets the latest frame at once
+        vw.send_json({"t": "want", "n": ["MAPValue"]})
+        while True:
+            m = cw.receive_json()
+            if m["t"] == "want":
+                assert m["n"] == ["MAPValue"]
+                break
+        with client.websocket_connect(f"/live/{sid}/ws?k={view}") as late:
+            hello = late.receive_json()
+            assert hello["och"] == {"RPMValue": 2500, "coolant": 88.5} and hello["chs"] == ["RPMValue", "coolant"]
         # a change is forwarded to the car (the only thing that writes to the ECU)…
         vw.send_json({"t": "set", "id": 2, "table": "veTable", "cells": {"3": 61.5}})
         while True:

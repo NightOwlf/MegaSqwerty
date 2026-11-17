@@ -17,6 +17,8 @@
   var layout = null, tables = {}, och = {}, state = {}, ws = null, wsOpen = false;
   var ecu = null, pipe = null, running = false, undoStack = [], queue = [], reqN = 0, pending = {};
   var STOICH = 14.7;
+  var frames = 0, fps = 0, rtt = null, chList = [];
+  setInterval(function () { fps = frames; frames = 0; if (ROLE === "view") { send({ t: "ping", at: Date.now() }); pill(); } }, 1000);
   var hist = { t: [], rows: {} }, HIST_S = 30;
   var sess = (function () { try { return JSON.parse(localStorage.getItem("msq.live.car") || "null"); } catch (e) { return null; } })();
 
@@ -52,10 +54,20 @@
   function onMessage(m) {
     if (m.t === "hello") {
       state = m.state || {}; tables = Object.keys(m.tables || {}).length ? m.tables : tables; if (m.och) och = m.och;
+      if (m.chs) chList = m.chs;
+      if (m.want && ROLE === "car") { wanted = {}; m.want.forEach(function (n) { wanted[n] = 1; }); }
+      if (ROLE === "view") sendWant();
       (m.changes || []).forEach(logChange);
       renderAll();
     } else if (m.t === "state") { state = Object.assign(state, m.state); renderState(); }
-    else if (m.t === "och" && ROLE === "view") { och = m.v || {}; pushHist(); drawLive(); }
+    else if (m.t === "chs") { chList = m.n || []; }
+    else if (m.t === "o" && ROLE === "view") {
+      var v = m.v || [];
+      for (var i = 0; i < chList.length; i++) if (v[i] != null) och[chList[i]] = v[i];
+      frames++; pushHist(); drawLive();
+    }
+    else if (m.t === "want" && ROLE === "car") { wanted = {}; (m.n || []).forEach(function (n) { wanted[n] = 1; }); }
+    else if (m.t === "pong") { rtt = Date.now() - (m.at || Date.now()); pill(); }
     else if (m.t === "tables" && ROLE === "view") { Object.keys(m.tables).forEach(function (k) { tables[k] = m.tables[k]; }); renderTable(); }
     else if (m.t === "applied") {
       if (ROLE === "view") {
@@ -118,39 +130,59 @@
       send({ t: "tables", tables: tables });
       running = true; root.classList.add("ecu-on"); root.classList.toggle("is-sim", !!sim);
       $(".lt-status").textContent = (sim ? "Simulated ECU" : "ECU") + " connected: " + state.ecuSignature;
-      pushState(); renderAll(); pollLoop();
+      pushState(); renderAll(); pollLoop(); keepAwake();
     }).catch(function (e) {
       if (e && e.name === "NotFoundError") { $(".lt-status").textContent = "No port chosen."; return; }
       $(".lt-status").textContent = "Couldn't connect: " + (e && e.message || e);
     });
   }
+  /* keep the laptop's screen (and so the USB link and this page) awake while the ECU is connected */
+  var wake = null;
+  function keepAwake() {
+    if (!("wakeLock" in navigator) || !running) return;
+    navigator.wakeLock.request("screen").then(function (w) { wake = w; }, function () { /* not allowed here */ });
+  }
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && running && !wake) keepAwake(); });
   function disconnectEcu() {
+    if (wake) { wake.release().catch(function () { /* ignore */ }); wake = null; }
     running = false; root.classList.remove("ecu-on");
     if (pipe) pipe.close(); pipe = null; ecu = null;
     pushState(); $(".lt-status").textContent = "ECU disconnected.";
   }
-  var lastSent = 0;
+  /* Read the ECU as fast as it answers (up to ~60 times a second, the way TunerStudio does), and send the
+     tuners a compact frame about 30 times a second: just the numbers, in the order of a channel list sent
+     once ("chs"), so each frame is small and the server passes it on untouched. */
+  var lastSent = 0, lastRead = 0, reads = 0, rateT = Date.now(), chList = [], chKey = "", wanted = {};
+  function streamChannels() {
+    var keep = {};
+    Object.keys(layout.roles || {}).forEach(function (r) { keep[layout.roles[r]] = 1; });
+    (layout.tables || []).forEach(function (t) { if (t.xch) keep[t.xch] = 1; if (t.ych) keep[t.ych] = 1; });
+    Object.keys(wanted).forEach(function (n) { if (layout.outputs[n]) keep[n] = 1; });
+    return Object.keys(keep).sort();
+  }
   function pollLoop() {
     if (!running || !ecu) return;
-    if (queue.length) return work().then(function () { setTimeout(pollLoop, 5); });
+    if (queue.length) return work().then(function () { setTimeout(pollLoop, 0); });
+    var started = Date.now();
     ecu.och().then(function (block) {
       och = ECU.decodeOutputs(layout, block, ecu.little);
-      pushHist(); drawLive();
+      reads++; pushHist(); drawLive();
       var now = Date.now();
-      if (now - lastSent > 90) { lastSent = now; send({ t: "och", v: slimOch(), ts: now }); }
-      setTimeout(pollLoop, 40);
+      if (now - rateT >= 1000) { state.ecuHz = Math.round(reads * 1000 / (now - rateT)); reads = 0; rateT = now; pill(); }
+      if (now - lastSent >= 33) {
+        lastSent = now;
+        var list = streamChannels(), key = list.join(",");
+        if (key !== chKey) { chKey = key; chList = list; send({ t: "chs", n: chList }); }
+        send({ t: "o", v: chList.map(function (n) { var v = och[n]; return v == null ? null : v; }), ts: now });
+      }
+      // ~60 reads a second. With the page in the background Chrome slows timers right down, so there the next
+      // read follows straight on (the ECU's own reply time paces it) and only the sending is limited.
+      var wait = Math.max(0, 16 - (Date.now() - started));
+      if (document.hidden || !wait) Promise.resolve().then(pollLoop); else setTimeout(pollLoop, wait);
     }, function (e) {
       $(".lt-status").textContent = "Lost the ECU: " + e.message + ". Retrying…";
       setTimeout(pollLoop, 800);
     });
-  }
-  /* what tuners need from the live data: the channels behind gauges, graphs and table cursors */
-  function slimOch() {
-    var keep = {}, out = {};
-    Object.keys(layout.roles || {}).forEach(function (r) { keep[layout.roles[r]] = 1; });
-    (layout.tables || []).forEach(function (t) { if (t.xch) keep[t.xch] = 1; if (t.ych) keep[t.ych] = 1; });
-    Object.keys(keep).forEach(function (n) { if (n in och) out[n] = och[n]; });
-    return out;
   }
 
   /* Every change goes through here, one at a time, between live-data reads. */
@@ -340,20 +372,47 @@
     if ((role === "afr" || role === "lambda_target") && v > 0 && v < 2) v *= STOICH;  // show mixture as AFR
     return v;
   }
+  // gauges the tuner added: any live channel the ECU has (kept in this browser)
+  var extra = (function () { try { return JSON.parse(localStorage.getItem("msq.live.gauges") || "[]") || []; } catch (e) { return []; } })();
+  function saveExtra() { try { localStorage.setItem("msq.live.gauges", JSON.stringify(extra)); } catch (e) { /* ignore */ } sendWant(); }
+  function sendWant() { if (ROLE === "view") send({ t: "want", n: extra }); }
   function drawGauges() {
     var box = $(".lt-gauges");
     if (!box || !layout) return;
-    if (!box.dataset.built) {
-      box.dataset.built = "1";
+    var sig = extra.join(",");
+    if (box.dataset.built !== sig) {
+      box.dataset.built = sig;
       box.innerHTML = GAUGES.filter(function (g) { return layout.roles && layout.roles[g[0]]; }).map(function (g) {
         var o = layout.outputs[layout.roles[g[0]]] || {};
         return '<div class="lt-g" data-g="' + g[0] + '"><small>' + esc(g[1]) + '</small><b class="mono">–</b><i>' + esc(g[0] === "afr" || g[0] === "lambda_target" ? "AFR" : o.units || "") + "</i></div>";
-      }).join("");
+      }).join("") + extra.filter(function (n) { return layout.outputs[n]; }).map(function (n) {
+        var o = layout.outputs[n];
+        return '<div class="lt-g mine" data-ch="' + esc(n) + '"><small>' + esc(o.label || n) + '</small><b class="mono">–</b><i>' + esc(o.units || "") +
+          '</i><button type="button" class="lt-gx" data-gdel="' + esc(n) + '" aria-label="Remove this gauge">×</button></div>';
+      }).join("") + (ROLE === "view" || ROLE === "car" ? '<button type="button" class="lt-g lt-gadd" data-gadd>＋ Gauge</button>' : "");
     }
     GAUGES.forEach(function (g) {
       var el = box.querySelector('[data-g="' + g[0] + '"] b');
       if (el) el.textContent = fmt(gaugeValue(g[0]), g[2]);
     });
+    extra.forEach(function (n) {
+      var el = box.querySelector('[data-ch="' + n + '"] b'), o = layout.outputs[n];
+      if (el && o) el.textContent = fmt(och[n], o.kind === "bits" ? 0 : Math.abs(och[n]) >= 100 ? 0 : 2);
+    });
+  }
+  function pickGauge() {
+    var dlg = $(".lt-pick"), list = Object.keys(layout.outputs).map(function (n) { return [n, layout.outputs[n].label || n]; })
+      .sort(function (a, b) { return a[1].localeCompare(b[1]); });
+    dlg.hidden = false;
+    var inp = $("input", dlg), ul = $("ul", dlg);
+    var render = function () {
+      var q = inp.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      ul.innerHTML = list.filter(function (x) { var s = (x[1] + " " + x[0]).toLowerCase(); return q.every(function (w) { return s.indexOf(w) >= 0; }); })
+        .slice(0, 120).map(function (x) { return '<li data-pick="' + esc(x[0]) + '">' + esc(x[1]) + (x[1] !== x[0] ? " <small>" + esc(x[0]) + "</small>" : "") + "</li>"; }).join("") ||
+        '<li class="dim">No channel matches</li>';
+    };
+    inp.value = ""; inp.oninput = render; render();
+    if (window.innerWidth > 700) inp.focus();
   }
   function pushHist() {
     var now = Date.now() / 1000;
@@ -361,11 +420,16 @@
     ["rpm", "map", "afr", "lambda_target"].forEach(function (r) { (hist.rows[r] = hist.rows[r] || []).push(gaugeValue(r)); });
     while (hist.t.length && hist.t[0] < now - HIST_S) { hist.t.shift(); Object.keys(hist.rows).forEach(function (r) { hist.rows[r].shift(); }); }
   }
-  var drawPending = false;
+  var drawPending = false, lastData = 0;
   function drawLive() {
+    lastData = Date.now();
     if (drawPending) return;
     drawPending = true;
-    requestAnimationFrame(function () { drawPending = false; drawGauges(); drawChart(); cursor(); });
+    requestAnimationFrame(frame);
+  }
+  function frame() {  // keeps the graph scrolling smoothly between frames while data is flowing
+    drawGauges(); drawChart(); cursor();
+    if (Date.now() - lastData < 1500) requestAnimationFrame(frame); else drawPending = false;
   }
   function drawChart() {
     var cv = $(".lt-chart canvas");
@@ -446,6 +510,13 @@
       }
       return;
     }
+    var gb = e.target.closest("[data-gadd]");
+    if (gb) { pickGauge(); return; }
+    gb = e.target.closest("[data-gdel]");
+    if (gb) { extra = extra.filter(function (n) { return n !== gb.dataset.gdel; }); saveExtra(); drawGauges(); return; }
+    gb = e.target.closest("[data-pick]");
+    if (gb) { if (extra.indexOf(gb.dataset.pick) < 0) extra.push(gb.dataset.pick); saveExtra(); $(".lt-pick").hidden = true; drawGauges(); return; }
+    if (e.target.closest("[data-pick-close]") || e.target.classList.contains("lt-pick")) { $(".lt-pick").hidden = true; return; }
     if (e.target.closest("[data-connect]")) connectEcu(false);
     else if (e.target.closest("[data-sim]")) connectEcu(true);
     else if (e.target.closest("[data-disconnect]")) disconnectEcu();
@@ -483,8 +554,9 @@
     if (!p) return;
     var car = state.car, live = state.ecu;
     p.className = "lt-pill " + (!wsOpen ? "off" : live ? "on" : car ? "warn" : "off");
-    p.textContent = !wsOpen ? "Reconnecting…" : ROLE === "car" ? (live ? "Live · " + (state.viewers || 0) + " tuner" + (state.viewers === 1 ? "" : "s") + " watching" : "Waiting for the ECU")
-      : live ? "Car live" : car ? "Car connected, ECU not" : "Car offline";
+    p.textContent = !wsOpen ? "Reconnecting…" : ROLE === "car" ? (live ? "Live · " + (state.ecuHz || 0) + " reads/s · " + (state.viewers || 0) + " tuner" + (state.viewers === 1 ? "" : "s") + " watching" : "Waiting for the ECU")
+      : live ? "Live · " + fps + "/s" + (rtt != null ? " · " + rtt + " ms" : "") : car ? "Car connected, ECU not" : "Car offline";
+    p.title = ROLE === "view" ? "Updates per second from the car, and the round trip to the server" : "";
   }
   function renderState() {
     pill();
