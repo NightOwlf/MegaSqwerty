@@ -335,24 +335,49 @@ drive. Every log read against a tune opens there too. **Add tune / Change tune**
 (upload a .msq right there, or paste a link); the choice is in the link as `?tune=`, so it's shared too.
 It works the way a desktop log viewer does (`app/static/viewer.js`, plain canvas, no libraries):
 
-- **Stacked graphs**, one to four, each with up to four channels drawn against their own range, with each
-  channel's min and max at the left edge. Click a channel name to swap it for any other channel in the log.
-- **A cursor**: click or drag on a graph and every channel's value at that record shows beside the line and
-  in the strip of readouts underneath. Arrow keys step one record (Shift for ten).
+- **Stacked graphs**, one to four, each with up to four channels. Channels in the same units share a scale (AFR
+  with target AFR, MAP with boost target); others get their own. Down the left edge, each channel's value at
+  the cursor (it moves as you scrub or play) with the highest ▲ and lowest ▼ it reached, on screen or across
+  the whole log. Tap a channel name to swap it: the channels that matter for tuning are listed first by plain
+  name, then every channel in the log.
+- **Layouts**: one tap sets up every graph for *Tuning overview*, *Fuel / VE*, *AFR & correction*, *Boost*,
+  *Ignition & knock* or *Warm-up & idle*, skipping channels that never change in this log.
+- **AFR correction**: the closed-loop trim the ECU logged, plus *AFR correction needed*, worked out from the
+  wideband and target: the % more (+) or less (−) fuel it would take to hit target, even with closed loop off.
+- **⚙ Display options**: highs and lows on screen or in the whole log, the graph scale fixed to the log or
+  fitted to the screen, line and text size, values beside the cursor, and a marker at each channel's peak.
+- **A cursor**: click or drag on a graph; arrow keys step one record (Shift for ten). On a phone, drag sideways
+  on a graph to scrub and up or down to scroll the page.
 - **Zoom and pan**: scroll wheel or pinch zooms around the pointer, Shift + wheel pans, and the strip under
   the graphs shows the whole log with the visible window to drag. `F` fits the whole log.
 - **Playback** at 0.25× to 8× real time, with the view paging along (Space to play and pause).
 - **The tune's tables** (when the log has a tune): VE, ignition and the rest, with the cell the engine was in
   highlighted, a dot at the exact interpolated position and the interpolated value, moving with the cursor.
+  **3D** shows any of them as a surface (drag to turn, pinch or wheel to zoom, tap a point to select a cell),
+  with the cursor riding on it and VE Analyze's changes animating live.
+- **Phones and folding phones**: on a phone the graph stays pinned at the top while the tables scroll up under
+  it. Held wide (an iPhone Duo open, a small tablet) the graphs take one half and the tables the other, so the
+  fold runs between them; browsers that report the fold get the split exactly on it.
 - **Scatter plot**: any channel against any other, coloured by a third, for the zoomed range or the whole log.
 - **Copy link** puts the channels, zoom and cursor position in the link, so whoever opens it sees the same
   moment. Your channel layout is remembered for the next log you open.
 - **Mixture as AFR**: AFR channels are shown in preference to lambda, and the report gives AFR too.
 - **Markers** recorded in an `.mlg` show as red lines.
 - **Edit the tables**: drag (or tap, then *Range*) across cells, then type a value and Enter, or use −/+,
-  ±1%, *Interp* (fill between the selection's corners) and *Smooth*. Edits are kept in the browser until you
-  **Save as new tune**, which writes them into a copy of the .msq (only those numbers change, byte for byte)
-  with its own link and a download.
+  ±1%, *Interp* (fill between the selection's corners), *Smooth* and *Revert* (back to the original tune).
+
+### Remote tuning: edits travel with the link
+
+Nobody has to download or upload a file to send changes back and forth. With **Auto-save** on (the default),
+each edit is saved a moment later into an *edited copy* of the tune (a new .msq in which only those numbers
+change, byte for byte) and the page's link switches to it (`?tune=`). **Share** gives that link (or the
+phone's share sheet), the .msq to download, and on phones the .msq file itself to send to Discord or
+Messages. Whoever opens the link sees the log read with the edited tune, the changed cells marked in orange
+with what they were. Saving again from the same browser updates that copy in place, so the link already sent
+shows the latest (the browser keeps the copy's key). Anyone else who edits it gets their own copy and their
+own link to send back, so nobody overwrites anybody, and an uploaded tune is never changed.
+`POST /t/{slug}/save` takes `{"changes": {...}, "key": "..."}`; with the key of an edited copy it updates it.
+The .msq download is `application/octet-stream`, so phones keep the `.msq` name.
 
 ### VE Analyze
 

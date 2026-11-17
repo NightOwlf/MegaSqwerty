@@ -16,9 +16,33 @@
   var COLORS = [["#ffe14d", "#4fd8ff", "#ff66d9", "#5df56a"], ["#ff5b4d", "#ffffff", "#6f8cff", "#ffb9ad"],
                 ["#ffe14d", "#4fd8ff", "#ff66d9", "#5df56a"], ["#ff5b4d", "#ffffff", "#6f8cff", "#ffb9ad"]];
   var SLOTS = 4, MAX_PANES = 4;
-  var DEFAULTS = [["rpm", "map", "tps", "vss"], ["afr", "afr_target", "advance", "pw"],
-                  ["clt", "iat", "ego_corr", "batt"], ["knock", "duty", "boost_target", "inj_duty"]];
-  var WATCH = ["rpm", "map", "tps", "afr", "afr_target", "advance", "clt", "iat", "batt", "vss", "gear",
+  // The graphs a log opens with: engine and boost, the mixture with its target and the AFR correction
+  // (closed-loop trim), timing and knock with boost duty, then temperatures.
+  var DEFAULTS = [["rpm", "map", "boost_target", "tps"], ["afr", "afr_target", "afr_corr", "ego_corr", "pw"],
+                  ["advance", "knock", "duty", "inj_duty"], ["clt", "iat", "batt", "vss"]];
+  // One-tap layouts for the job at hand (the Layout menu).
+  var PRESETS = {
+    tuning: { label: "Tuning overview", n: 3, p: DEFAULTS },
+    fuel: { label: "Fuel / VE", n: 3, p: [["rpm", "map", "tps", "ve"], ["afr", "afr_target", "afr_corr", "ego_corr", "pw"], ["clt", "iat", "inj_duty", "accel"]] },
+    boost: { label: "Boost", n: 3, p: [["rpm", "map", "boost_target", "tps"], ["duty", "gear", "vss", "iat"], ["afr", "afr_target", "advance", "knock"]] },
+    spark: { label: "Ignition & knock", n: 3, p: [["rpm", "map", "tps", "gear"], ["advance", "knock", "iat", "clt"], ["afr", "afr_target", "ego_corr", "inj_duty"]] },
+    afr: { label: "AFR & correction", n: 2, p: [["afr", "afr_target", "afr_corr", "ego_corr", "rpm"], ["rpm", "map", "tps", "pw", "clt"]] },
+    warm: { label: "Warm-up & idle", n: 3, p: [["rpm", "clt", "tps", "map"], ["afr", "afr_target", "ego_corr", "advance"], ["iat", "batt", "pw", "vss"]] }
+  };
+  // What the channel picker suggests first, with plain names.
+  var SUGGEST = [["rpm", "RPM"], ["map", "MAP / boost"], ["boost_target", "Boost target"], ["tps", "Throttle"],
+                 ["afr", "AFR (wideband)"], ["afr_target", "Target AFR"], ["afr_corr", "AFR correction needed (from the wideband)"],
+                 ["ego_corr", "AFR correction (closed-loop trim)"],
+                 ["ve", "VE in use"], ["pw", "Injector pulse width"], ["inj_duty", "Injector duty"], ["advance", "Ignition advance"],
+                 ["knock", "Knock retard"], ["duty", "Boost duty"], ["clt", "Coolant temp"], ["iat", "Intake air temp"],
+                 ["gear", "Gear"], ["vss", "Speed"], ["batt", "Battery"], ["fuel_press", "Fuel pressure"], ["egt", "EGT"]];
+  function sameScale(m) {
+    var u = String(m.u || "").trim().toLowerCase();
+    if (!u || u === "%" || u === "on/off" || u === "bits") return "";
+    if (u === "ratio" || u === "afr" || u === ":1") return "afr";
+    return u.replace(/^deg\s*/, "°").replace(/^°\s*/, "°");
+  }
+  var WATCH = ["rpm", "map", "tps", "afr", "afr_target", "afr_corr", "advance", "clt", "iat", "batt", "vss", "gear",
                "inj_duty", "pw", "knock", "ego_corr", "ve"];
   // Mixture is shown as AFR: these are the names an AFR channel goes by, before falling back to lambda.
   var AFR_NAMES = { afr: ["afr", "afr1", "widebandafr", "wbafr", "airfuelratio", "afrcorrected"],
@@ -34,6 +58,17 @@
   var tableSlots = [];
   var stoich = 14.7;
   var loadNote = $(".lv-load");
+
+  /* Display options (the ⚙ menu), remembered in this browser. */
+  var OPT_DEF = { range: "view", scale: "log", cursorVals: true, peaks: false, line: 1.25, text: 1 };
+  var opt = (function () {
+    var o = {}, s = null, k;
+    for (k in OPT_DEF) o[k] = OPT_DEF[k];
+    try { s = JSON.parse(localStorage.getItem("msq.lv.opts") || "null"); } catch (e) { /* ignore */ }
+    if (s) for (k in OPT_DEF) if (k in s && typeof s[k] === typeof OPT_DEF[k]) o[k] = s[k];
+    return o;
+  })();
+  function saveOpts() { try { localStorage.setItem("msq.lv.opts", JSON.stringify(opt)); } catch (e) { /* ignore */ } }
 
   /* ---------- data ---------- */
   function pyramid(v) {
@@ -64,7 +99,8 @@
     if (i == null || i < 0 || !idx || i >= idx.channels.length) return Promise.resolve(null);
     var have = store[i];
     if (have) return have.then ? have : Promise.resolve(have);
-    var p = fetchF32(base + "/ch/" + i).then(function (v) {
+    var m = idx.channels[i];
+    var p = (m.virt ? m.virt() : fetchF32(base + "/ch/" + i)).then(function (v) {
       store[i] = { v: v, pyr: pyramid(v) };
       scatterDirty = true;
       invalidate();
@@ -74,6 +110,50 @@
     return p;
   }
   function got(i) { var d = store[i]; return d && !d.then ? d : null; }
+  /* Computed channels, added to the log's own. "AFR correction needed": how far the wideband is from the
+     target, as the % more (+) or less (−) fuel it would take to hit it. It works with closed loop off. */
+  function addVirtual() {
+    var R = idx.roles || {};
+    if (R.lambda == null || R.lambda_target == null) return;
+    var lamDiv = (idx.lam && idx.lam.lambda) || 1, tgtDiv = (idx.lam && idx.lam.lambda_target) || 1;
+    var at = idx.channels.length;
+    idx.channels.push({ n: "AFR correction needed", u: "%", d: 1, lo: -20, hi: 20, virt: function () {
+      return Promise.all([load(R.lambda), load(R.lambda_target)]).then(function (r) {
+        var a = r[0] && r[0].v, b = r[1] && r[1].v, n = a ? a.length : 0, out = new Float32Array(n), lo = Infinity, hi = -Infinity;
+        for (var k = 0; k < n; k++) {
+          var x = a[k] / lamDiv, y = b[k] / tgtDiv, c = y > 0.3 && x > 0.3 ? (x / y - 1) * 100 : NaN;
+          out[k] = c; if (c === c) { if (c < lo) lo = c; if (c > hi) hi = c; }
+        }
+        if (lo <= hi) { idx.channels[at].lo = Math.round(lo * 10) / 10; idx.channels[at].hi = Math.round(hi * 10) / 10; }
+        return out;
+      });
+    } });
+    idx.roles.afr_corr = at;
+  }
+  /* Lowest and highest value between records i0 and i1 (and where the highest is), using the min/max
+     pyramid so it stays instant on a 400,000-record log. */
+  function spanRange(d, i0, i1) {
+    var v = d.v, lo = Infinity, hi = -Infinity, at = -1, n = i1 - i0 + 1, lvl = null, i, k;
+    for (k = d.pyr.length - 1; k >= 0; k--) if (d.pyr[k].s * 48 <= n) { lvl = d.pyr[k]; break; }
+    var raw = function (a, b) {
+      for (var j = a; j <= b; j++) { var x = v[j]; if (x === x) { if (x < lo) lo = x; if (x > hi) { hi = x; at = j; } } }
+    };
+    if (!lvl) raw(i0, i1);
+    else {
+      var s = lvl.s, a = Math.ceil(i0 / s), b = Math.floor((i1 + 1) / s), best = -1;
+      raw(i0, Math.min(i1, a * s - 1));
+      for (i = a; i < b; i++) {
+        var mn = lvl.min[i], mx = lvl.max[i];
+        if (mn === mn) { if (mn < lo) lo = mn; if (mx > hi) { hi = mx; best = i; at = -2; } }
+      }
+      raw(Math.max(i0, b * s), i1);
+      if (at === -2) {  // the peak is inside a block: find the record
+        var top = -Infinity;
+        for (i = best * s; i < Math.min(v.length, (best + 1) * s); i++) if (v[i] > top) { top = v[i]; at = i; }
+      }
+    }
+    return lo <= hi ? { lo: lo, hi: hi, at: at } : null;
+  }
   function lower(t) {  // first record at or after time t
     var lo = 0, hi = N;
     while (lo < hi) { var mid = (lo + hi) >> 1; if (T[mid] < t) lo = mid + 1; else hi = mid; }
@@ -109,6 +189,11 @@
       return usable(roles[role === "afr" ? "lambda" : "lambda_target"]) ? roles[role === "afr" ? "lambda" : "lambda_target"] : -1;
     }
     return usable(roles[role]) ? roles[role] : -1;
+  }
+  /* A role's channel for a ready-made layout: not one that never changes in this log (a flat line says nothing). */
+  function layoutChannel(role) {
+    var c = channelFor(role), m = c >= 0 ? idx.channels[c] : null;
+    return m && (m.virt || m.lo !== m.hi) ? c : -1;
   }
   function plural(n, word) { return n.toLocaleString() + " " + word + (n === 1 ? "" : "s"); }
 
@@ -238,38 +323,81 @@
     drawMarkers(ctx, W, H, kx, view.t0, view.t1, last);
 
     var i0 = Math.max(0, lower(view.t0) - 1), i1 = Math.min(N - 1, lower(view.t1) + 1);
+    var j0 = Math.min(N - 1, lower(view.t0)), j1 = Math.max(j0, Math.min(N - 1, lower(view.t1)));
     var top = 5, bot = last ? 18 : 5, shown = [];
-    ctx.lineWidth = 1.25; ctx.lineJoin = "round";
+    fs = Math.round(fs * opt.text * 2) / 2; lh = fs + 3;
+    ctx.lineWidth = opt.line; ctx.lineJoin = "round";
     p.ch.forEach(function (c, k) {
       var d = got(c), m = c >= 0 ? idx.channels[c] : null;
       if (!m) return;
-      shown.push({ c: c, m: m, d: d, color: COLORS[p.i][k] });
-      if (!d || m.lo == null) return;
-      var range = m.hi - m.lo, ky = range > 0 ? (H - top - bot) / range : 0;
-      var yOf = range > 0 ? function (v) { return H - bot - (v - m.lo) * ky; } : function () { return H / 2; };
-      ctx.strokeStyle = COLORS[p.i][k];
-      trace(ctx, d, i0, i1, kx, yOf, W, view.t0);
+      var rr = d ? spanRange(d, j0, j1) : null;
+      var s = { c: c, m: m, d: d, rr: rr, color: COLORS[p.i][k], lo: m.lo, hi: m.hi };
+      if (opt.scale === "view" && rr) { s.lo = rr.lo; s.hi = rr.hi; }  // fit the trace to what's on screen
+      shown.push(s);
+    });
+    // Channels in the same units share one scale, so AFR sits on its target and MAP on the boost target.
+    var groups = {};
+    shown.forEach(function (s) {
+      var u = sameScale(s.m);
+      if (!u || s.lo == null) return;
+      var g = groups[u] || (groups[u] = { lo: Infinity, hi: -Infinity });
+      g.lo = Math.min(g.lo, s.lo); g.hi = Math.max(g.hi, s.hi);
+    });
+    shown.forEach(function (s) {
+      var u = sameScale(s.m), lo = u && groups[u] ? groups[u].lo : s.lo, hi = u && groups[u] ? groups[u].hi : s.hi;
+      if (!s.d || lo == null) return;
+      if (opt.scale === "view") { var pad = (hi - lo) * 0.06 || Math.abs(hi) * 0.05 || 1; lo -= pad; hi += pad; }
+      var range = hi - lo, ky = range > 0 ? (H - top - bot) / range : 0;
+      s.yOf = range > 0 ? function (v) { return H - bot - (v - lo) * ky; } : function () { return H / 2; };
+      ctx.strokeStyle = s.color;
+      trace(ctx, s.d, i0, i1, kx, s.yOf, W, view.t0);
     });
 
-    // min / max of each channel down the left edge, like a strip chart's scale
-    ctx.font = "bold " + fs + "px system-ui, -apple-system, 'Segoe UI', Arial, sans-serif";
+    // The left edge: each channel's value at the cursor (it follows the cursor as you scrub or play),
+    // then the highest and lowest it reached, on screen or in the whole log (the ⚙ menu).
+    var font = "px system-ui, -apple-system, 'Segoe UI', Arial, sans-serif";
     ctx.textBaseline = "top"; ctx.textAlign = "left";
-    var tight = H - bot < shown.length * lh * 3 + 8, labelW = 0;  // too short for separate max and min stacks
-    shown.forEach(function (s, k) {
-      ctx.fillStyle = s.color;
-      var u = s.m.u ? " (" + s.m.u + ")" : "", text;
-      if (tight) {
-        text = fmt(s.m.lo, s.m.d) + " – " + fmt(s.m.hi, s.m.d) + u;
-        ctx.fillText(text, 4, 3 + k * lh);
-      } else {
-        text = "Max = " + fmt(s.m.hi, s.m.d) + u;
-        ctx.fillText(text, 4, 3 + k * lh);
-        ctx.fillText("Min = " + fmt(s.m.lo, s.m.d) + u, 4, H - bot - (shown.length - k) * lh);
-      }
-      labelW = Math.max(labelW, ctx.measureText(text).width + 6);
+    var labelW = 0, rows = [];
+    shown.forEach(function (s) {
+      var src = opt.range === "log" || !s.rr ? { lo: s.m.lo, hi: s.m.hi } : s.rr;
+      var now = s.d ? fmt(s.d.v[cur], s.m.d) : "…", u = s.m.u ? " " + s.m.u : "";
+      var mm = "▲" + fmt(src.hi, s.m.d) + "  ▼" + fmt(src.lo, s.m.d);
+      ctx.font = "bold " + (fs + 1) + font; var w1 = ctx.measureText(now).width;
+      ctx.font = fs + font; var w2 = ctx.measureText(u).width, w3 = ctx.measureText(mm).width;
+      rows.push({ s: s, now: now, u: u, mm: mm, w1: w1, w2: w2 });
+      labelW = Math.max(labelW, w1 + w2 + 10 + w3 + 8);
     });
+    var legendW = Math.min(labelW, W * 0.62);
+    if (rows.length) {
+      ctx.fillStyle = "rgba(0,0,0,.62)";
+      ctx.fillRect(0, 0, legendW + 2, 4 + rows.length * lh);
+    }
+    rows.forEach(function (r, k) {
+      var y = 3 + k * lh, x = 4;
+      ctx.fillStyle = r.s.color;
+      ctx.font = "bold " + (fs + 1) + font; ctx.fillText(r.now, x, y - 1); x += r.w1;
+      ctx.font = fs + font; ctx.fillText(r.u, x, y); x += r.w2 + 10;
+      ctx.globalAlpha = 0.72; ctx.fillText(r.mm, x, y); ctx.globalAlpha = 1;
+    });
+
+    // where each channel peaks on screen
+    if (opt.peaks) {
+      ctx.font = "bold " + fs + font; ctx.textBaseline = "bottom"; ctx.textAlign = "center";
+      shown.forEach(function (s) {
+        if (!s.rr || s.rr.at < 0 || !s.yOf) return;
+        var px = (T[s.rr.at] - view.t0) * kx, py = s.yOf(s.rr.hi);
+        if (px < 0 || px > W) return;
+        ctx.fillStyle = s.color;
+        ctx.beginPath(); ctx.moveTo(px, py - 2); ctx.lineTo(px - 4, py - 8); ctx.lineTo(px + 4, py - 8); ctx.closePath(); ctx.fill();
+        var tx = Math.max(legendW + 20, Math.min(W - 20, px)), ty = Math.max(fs + 2, py - 9);
+        ctx.fillText(fmt(s.rr.hi, s.m.d), tx, ty);
+      });
+      ctx.textBaseline = "top"; ctx.textAlign = "left";
+    }
+    labelW = legendW;
 
     // the cursor and the values under it
+    ctx.font = "bold " + fs + font;
     var cx = (T[cur] - view.t0) * kx;
     if (cx >= -1 && cx <= W + 1) {
       ctx.strokeStyle = "#39e6ff"; ctx.lineWidth = 1; ctx.beginPath();
@@ -277,8 +405,8 @@
       var right = cx < W - 96;
       ctx.textAlign = right ? "left" : "right";
       var y0 = Math.min(H - bot - shown.length * lh - 2, Math.max(3 + shown.length * lh + 4, H / 2 - shown.length * lh / 2));
-      var clear = Math.max(cx + 5, labelW + 8);  // keep clear of the scale labels at the left edge
-      shown.forEach(function (s, k) {
+      var clear = cx + 5;
+      if (opt.cursorVals) shown.forEach(function (s, k) {
         var text = s.d ? fmt(s.d.v[cur], s.m.d) : "…";
         var tx = right ? clear : cx - 5, ty = y0 + k * lh;
         ctx.fillStyle = "rgba(0,0,0,.72)";
@@ -421,8 +549,141 @@
     this.el = el; this.t = t; this.opts = opts || {};
     this.sel = null; this.anchor = null; this.last = null;
     this.mode = "value";
+    this.pos = null;
     this.render();
+    if (want3d()) this.set3d(true);
   }
+  function want3d() { try { return localStorage.getItem("msq.lv.3d") === "1"; } catch (e) { return false; } }
+  Grid.prototype.set3d = function (on) {
+    this.is3d = on;
+    if (on && !this.s3) this.s3 = new Surface(this);
+    this.wrap.style.display = on ? "none" : "";
+    if (this.s3) { this.s3.cv.hidden = !on; if (on) this.s3.draw(); }
+    var b = this.el.parentNode && this.el.parentNode.querySelector("[data-3d]");
+    if (b) b.classList.toggle("on", on);
+  };
+
+  /* The table as a 3D surface: drag to turn it, pinch or wheel to zoom, tap a point to select that cell. */
+  function Surface(grid) {
+    this.g = grid; this.yaw = -0.62; this.pitch = 0.62; this.zoom = 1; this.pts = [];
+    this.cv = document.createElement("canvas"); this.cv.className = "lv-3d";
+    grid.el.appendChild(this.cv);
+    this.bind();
+  }
+  Surface.prototype.draw = function () {
+    if (this.pending) return;
+    var self = this; this.pending = true;
+    requestAnimationFrame(function () { self.pending = false; self.paint(); });
+  };
+  Surface.prototype.paint = function () {
+    var cv = this.cv;
+    if (cv.hidden || !cv.clientWidth) return;
+    var f = fit(cv), ctx = f.ctx, W = f.w, H = f.h, g = this.g, t = g.t, C = t.cols, R = t.rows, k;
+    ctx.fillStyle = "#0b0c0e"; ctx.fillRect(0, 0, W, H);
+    var vals = [], lo = Infinity, hi = -Infinity;
+    for (k = 0; k < C * R; k++) {
+      var v = g.opts.live ? g.opts.live(k) : valueAt(t, k);
+      vals[k] = v; if (v < lo) lo = v; if (v > hi) hi = v;
+    }
+    if (!(hi > lo)) hi = lo + 1;
+    var cy = Math.cos(this.yaw), sy = Math.sin(this.yaw), cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
+    var S = Math.min(W * 0.64, H * 0.9) * this.zoom, ox = W / 2, oy = H * 0.54;
+    var proj = function (c, r, v) {  // c, r may be fractional; returns [x, y, depth]
+      var x = c / (C - 1) - 0.5, y = r / (R - 1) - 0.5, z = (v - lo) / (hi - lo) * 0.5 - 0.25;
+      var X = x * cy - y * sy, Y = x * sy + y * cy;
+      return [ox + X * S, oy - (z * cp + Y * sp) * S, Y * cp - z * sp];
+    };
+    var P = [];
+    for (k = 0; k < C * R; k++) P[k] = proj(k % C, Math.floor(k / C), vals[k]);
+    this.pts = P;
+    var quads = [];
+    for (var r = 0; r < R - 1; r++) for (var c = 0; c < C - 1; c++) {
+      var a = r * C + c, b = a + 1, d2 = a + C, e = d2 + 1;
+      quads.push([a, b, e, d2, (P[a][2] + P[b][2] + P[d2][2] + P[e][2]) / 4, (vals[a] + vals[b] + vals[d2] + vals[e]) / 4]);
+    }
+    quads.sort(function (m, n) { return n[4] - m[4]; });
+    ctx.lineWidth = 0.6; ctx.strokeStyle = "rgba(0,0,0,.45)";
+    quads.forEach(function (q) {
+      ctx.beginPath(); ctx.moveTo(P[q[0]][0], P[q[0]][1]);
+      for (var j = 1; j < 4; j++) ctx.lineTo(P[q[j]][0], P[q[j]][1]);
+      ctx.closePath(); ctx.fillStyle = heat((q[5] - lo) / (hi - lo)); ctx.fill(); ctx.stroke();
+    });
+    // axis labels along two edges, and the value range
+    ctx.font = "10.5px ui-monospace, Menlo, Consolas, monospace"; ctx.fillStyle = "#9aa1a9";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    var everyC = Math.max(1, Math.ceil(C / 6)), everyR = Math.max(1, Math.ceil(R / 6));
+    for (c = 0; c < C; c += everyC) { var q1 = proj(c, -0.9, lo); ctx.fillText(binText(t.x[c]), q1[0], q1[1]); }
+    for (r = 0; r < R; r += everyR) { var q2 = proj(C - 1 + 0.9, r, lo); ctx.fillText(binText(t.y[r]), q2[0], q2[1]); }
+    ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.fillStyle = "#d6d9de";
+    ctx.fillText((t.xl || "RPM") + " × " + (t.yl || "Load") + " · " + cellText(lo, t.d) + "–" + cellText(hi, t.d) + (t.units ? " " + t.units : ""), 6, 5);
+    // changed cells, selection, and where the log is now
+    var mark = function (ks, color, rad) {
+      ctx.fillStyle = color;
+      ks.forEach(function (j) { ctx.beginPath(); ctx.arc(P[j][0], P[j][1], rad, 0, 6.3); ctx.fill(); });
+    };
+    if (t.p && !g.opts.live) mark(vals.map(function (v, j) { return Math.abs(v - t.p[j]) > 0.5 * Math.pow(10, -t.d) ? j : -1; }).filter(function (j) { return j >= 0; }), "#ff9f0a", 2.2);
+    mark(g.selected(), "#ffffff", 3.5);
+    if (g.pos) {
+      var fx = g.pos[0], fy = g.pos[1], cv0 = interpTable(t, function (j) { return vals[j]; }, fx, fy);
+      var top = proj(fx, fy, cv0), base = proj(fx, fy, lo);
+      ctx.strokeStyle = "rgba(57,230,255,.7)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(base[0], base[1]); ctx.lineTo(top[0], top[1]); ctx.stroke();
+      ctx.fillStyle = "#39e6ff"; ctx.beginPath(); ctx.arc(top[0], top[1], 5, 0, 6.3); ctx.fill();
+      ctx.strokeStyle = "#000"; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.textAlign = "right"; ctx.fillStyle = "#39e6ff"; ctx.fillText(cellText(cv0, t.d), W - 6, 5);
+    }
+  };
+  Surface.prototype.bind = function () {
+    var self = this, cv = this.cv, pts = {}, start = null, pinch = null;
+    cv.addEventListener("pointerdown", function (e) {
+      try { cv.setPointerCapture(e.pointerId); } catch (err) { /* older browsers */ }
+      pts[e.pointerId] = [e.clientX, e.clientY];
+      var ids = Object.keys(pts);
+      if (ids.length === 2) {
+        var a = pts[ids[0]], b = pts[ids[1]];
+        pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z: self.zoom }; start = null;
+      } else start = { x: e.clientX, y: e.clientY, yaw: self.yaw, pitch: self.pitch, moved: false };
+    });
+    cv.addEventListener("pointermove", function (e) {
+      if (!(e.pointerId in pts)) return;
+      pts[e.pointerId] = [e.clientX, e.clientY];
+      var ids = Object.keys(pts);
+      if (pinch && ids.length === 2) {
+        var a = pts[ids[0]], b = pts[ids[1]];
+        self.zoom = Math.max(0.5, Math.min(3, pinch.z * (Math.hypot(a[0] - b[0], a[1] - b[1]) || 1) / pinch.d));
+        self.draw(); return;
+      }
+      if (!start) return;
+      var dx = e.clientX - start.x, dy = e.clientY - start.y;
+      if (Math.abs(dx) + Math.abs(dy) > 4) start.moved = true;
+      if (!start.moved) return;
+      self.yaw = start.yaw + dx * 0.01;
+      self.pitch = Math.max(0.08, Math.min(1.5, start.pitch + dy * 0.008));
+      self.draw();
+    });
+    var up = function (e) {
+      var tap = start && !start.moved && Object.keys(pts).length === 1;
+      delete pts[e.pointerId];
+      if (Object.keys(pts).length < 2) pinch = null;
+      if (tap && e.type === "pointerup" && self.g.opts.editable && !self.g.opts.live) {
+        var r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, best = -1, bd = 26 * 26;
+        self.pts.forEach(function (p, k) { var d = (p[0] - x) * (p[0] - x) + (p[1] - y) * (p[1] - y); if (d < bd) { bd = d; best = k; } });
+        var g = self.g;
+        if (best >= 0) {
+          if ((e.shiftKey || g.rangeMode) && g.anchor != null) { g.select(g.anchor, best); g.rangeMode = false; }
+          else { g.anchor = best; g.select(best, best); }
+        } else g.clearSel();
+        self.draw();
+      }
+      if (!Object.keys(pts).length) start = null;
+    };
+    cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
+    cv.addEventListener("wheel", function (e) {
+      e.preventDefault();
+      self.zoom = Math.max(0.5, Math.min(3, self.zoom * Math.exp(-e.deltaY * 0.0015))); self.draw();
+    }, { passive: false });
+    cv.addEventListener("dblclick", function () { self.yaw = -0.62; self.pitch = 0.62; self.zoom = 1; self.draw(); });
+  };
   Grid.prototype.render = function () {
     var t = this.t, html = [];
     for (var r = t.rows - 1; r >= 0; r--) {
@@ -463,8 +724,13 @@
       td.style.background = bg;
       td.textContent = text;
       td.classList.toggle("vx-ed", !self.opts.live && edited(t, k));
+      // an edited copy: mark the cells that differ from the tune it was edited from
+      var was = t.p && !self.opts.live ? t.p[k] : null, diff = was != null && Math.abs(v - was) > 0.5 * Math.pow(10, -t.d);
+      td.classList.toggle("vx-ch", diff);
+      if (diff) td.title = "Was " + cellText(was, t.d) + " in the original"; else if (td.title) td.removeAttribute("title");
     });
     this.markSel();
+    if (this.s3) this.s3.draw();
   };
   Grid.prototype.flash = function (k) {
     var td = this.cells[k];
@@ -489,6 +755,7 @@
     var on = {};
     this.selected().forEach(function (k) { on[k] = 1; });
     this.cells.forEach(function (td, k) { td.classList.toggle("vx-sel", !!on[k]); });
+    if (this.s3) this.s3.draw();
   };
   Grid.prototype.bind = function () {
     var self = this, dragging = false;
@@ -546,6 +813,10 @@
   };
   Grid.prototype.cursor = function (fx, fy) {
     var dot = $(".lv-dot", this.el);
+    var np = fx === fx && fy === fy ? [fx, fy] : null;
+    if (this.s3 && this.is3d && (!np !== !this.pos || (np && (np[0] !== this.pos[0] || np[1] !== this.pos[1])))) { this.pos = np; this.s3.draw(); }
+    this.pos = np;
+    if (this.is3d) return;
     if (this.last != null && this.cells[this.last]) this.cells[this.last].classList.remove("cur");
     this.last = null;
     if (!(fx === fx) || !(fy === fy)) { dot.hidden = true; return; }
@@ -568,7 +839,7 @@
     if (what === "set") ks.forEach(function (k) { setValue(t, k, arg); });
     else if (what === "inc" || what === "dec") ks.forEach(function (k) { setValue(t, k, valueAt(t, k) + (what === "inc" ? step : -step)); });
     else if (what === "pct") ks.forEach(function (k) { setValue(t, k, valueAt(t, k) * (1 + arg / 100)); });
-    else if (what === "revert") ks.forEach(function (k) { setValue(t, k, t.z[k]); });
+    else if (what === "revert") ks.forEach(function (k) { setValue(t, k, t.p ? t.p[k] : t.z[k]); });
     else if (what === "interp") {
       var C = t.cols, v00 = valueAt(t, s[0] * C + s[1]), v01 = valueAt(t, s[0] * C + s[3]);
       var v10 = valueAt(t, s[2] * C + s[1]), v11 = valueAt(t, s[2] * C + s[3]);
@@ -595,9 +866,11 @@
     editsChanged(t);
   }
   function editsChanged(t) {
+    saveErr = "";
     saveEdits();
     allGrids().forEach(function (g) { if (!t || g.t === t) g.paint(); });
     renderSaveBars();
+    scheduleAuto();
   }
   function allGrids() {
     var out = tableSlots.map(function (s) { return s.grid; });
@@ -616,7 +889,7 @@
       '<button type="button" data-t="pct" data-arg="1" title="1% more">+1%</button>' +
       '<button type="button" data-t="interp" title="Fill between the corners of the selection (I)">Interp</button>' +
       '<button type="button" data-t="smooth" title="Smooth the selection (S)">Smooth</button>' +
-      '<button type="button" data-t="revert" title="Back to the tune\'s values">Revert</button>' +
+      '<button type="button" data-t="revert" title="Back to the original tune\'s values">Revert</button>' +
       '<button type="button" data-t="range" class="lv-touch" title="Tap two cells to select everything between">Range</button>' +
       "</div>";
   }
@@ -644,7 +917,7 @@
   function buildSlot(slot) {
     var t = slot.t;
     var opts = idx.tables.map(function (o, i) { return "<option value=" + i + (o === t ? " selected" : "") + ">" + esc(o.label) + "</option>"; }).join("");
-    slot.el.innerHTML = '<div class="lv-th"><select aria-label="Table">' + opts + '</select><span class="lv-tv mono"></span></div>' +
+    slot.el.innerHTML = '<div class="lv-th"><select aria-label="Table">' + opts + '</select><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button></div>' +
       '<div class="lv-grid"></div>' + toolbar() +
       '<p class="lv-tn">' + esc((t.yl || "Load") + (t.yu ? " (" + t.yu + ")" : "") + " ↑ · " + (t.xl || "RPM") + (t.xu ? " (" + t.xu + ")" : "") + " →") +
       (t.xc == null || t.yc == null ? " · no matching channel in this log, so no cursor" : "") + " · select cells to edit</p>";
@@ -676,38 +949,150 @@
     });
   }
 
-  /* ---------- saving edits as a new tune ---------- */
+  /* ---------- saving and sharing edits ----------
+     Edits save to the server as an edited copy of the tune, and the page's link switches to it, so the link
+     you send shows your changes. Saving again updates your copy in place (this browser keeps its key);
+     someone else editing your copy gets their own, so nobody overwrites anybody. Auto-save does it for you. */
+  var OWN_KEY = "msq.lv.own", saving = null, saveAgain = false, autoTimer = 0, saveErr = "", lastSaved = null;
+  var autoSave = (function () { try { return localStorage.getItem("msq.lv.autosave") !== "0"; } catch (e) { return true; } })();
+  function owned() { try { return JSON.parse(localStorage.getItem(OWN_KEY) || "{}") || {}; } catch (e) { return {}; } }
+  function remember(slug, k) {
+    var o = owned(), ks;
+    o[slug] = k; ks = Object.keys(o);
+    while (ks.length > 80) delete o[ks.shift()];
+    try { localStorage.setItem(OWN_KEY, JSON.stringify(o)); } catch (e) { /* storage unavailable */ }
+  }
+  function changedCells() {
+    var n = 0;
+    idx.tables.forEach(function (t) {
+      if (t.p) for (var k = 0; k < t.z.length; k++) if (Math.abs(valueAt(t, k) - t.p[k]) > 0.5 * Math.pow(10, -t.d)) n++;
+    });
+    return n;
+  }
   function renderSaveBars() {
-    var n = editCount(), tablesN = Object.keys(edits).length;
+    var n = editCount(), tablesN = Object.keys(edits).length, copy = idx && idx.tune && idx.tune.parent;
     $$(".lv-save").forEach(function (bar) {
-      bar.hidden = !n;
-      var label = $(".lv-save-n", bar);
-      if (label) label.textContent = plural(n, "changed cell") + (tablesN > 1 ? " in " + tablesN + " tables" : "");
+      bar.hidden = !TUNE || (!n && !copy && !lastSaved && !saveErr);
+      var label = $(".lv-save-n", bar), btn = $("[data-save-tune]", bar);
+      $("[data-save-discard]", bar).hidden = !n || !!saving;
+      $("[data-autosave]", bar).checked = autoSave;
+      label.classList.toggle("err", !!saveErr);
+      if (saveErr) label.textContent = "Not saved: " + saveErr;
+      else if (saving) label.textContent = "Saving…";
+      else if (n) label.textContent = plural(n, "unsaved change") + (tablesN > 1 ? " in " + tablesN + " tables" : "") + (autoSave ? " · saving…" : "");
+      else label.textContent = "✓ Saved" + (copy ? " · " + plural(changedCells(), "cell") + " changed from the original" : "");
+      btn.textContent = n ? "Save & share" : "Share";
+      btn.disabled = !!saving;
     });
   }
   function saveBar() {
     return '<div class="lv-save" hidden><span class="lv-save-n"></span><span class="st-grow"></span>' +
+      '<label class="check sm lv-auto" title="Save every change to your edited copy as you go, so your link always has the latest"><input type="checkbox" data-autosave><span>Auto-save</span></label>' +
       '<button class="btn sm" type="button" data-save-discard>Discard</button>' +
-      '<button class="btn sm primary" type="button" data-save-tune>Save as new tune</button></div>';
+      '<button class="btn sm primary" type="button" data-save-tune>Save &amp; share</button></div>';
   }
-  function saveTune(btn) {
-    if (!TUNE || !editCount()) return;
-    var label = btn.querySelector("span") || btn, old = label.textContent;
-    btn.disabled = true; label.textContent = "Saving…";
-    fetch("/t/" + TUNE + "/save", {
+  function scheduleAuto(ms) {
+    clearTimeout(autoTimer);
+    if (!autoSave || !TUNE || !editCount() || ve.running) return;
+    autoTimer = setTimeout(function () { pushEdits().catch(function () { /* shown in the bar */ }); }, ms == null ? 1500 : ms);
+  }
+  function pushEdits() {
+    if (!TUNE) return Promise.reject(new Error("no tune"));
+    if (saving) { saveAgain = true; return saving; }
+    if (!editCount()) return Promise.resolve(lastSaved);
+    clearTimeout(autoTimer);
+    var sent = JSON.parse(JSON.stringify(edits));
+    saveErr = "";
+    saving = fetch("/t/" + TUNE + "/save", {
       method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({ changes: edits })
-    }).then(function (r) { return r.json().then(function (j) { return [r.ok, j]; }); }).then(function (res) {
-      btn.disabled = false; label.textContent = old;
-      if (!res[0] || !res[1].slug) { alert(res[1].error || "That didn't save. Try again."); return; }
-      var slug = res[1].slug;
-      edits = {}; editsChanged();
-      var dlg = $d('[data-dlg="saved"]');
-      $d("[data-saved-download]").href = "/t/" + slug + ".msq";
-      $d("[data-saved-open]").href = "/t/" + slug;
-      $d("[data-saved-continue]").href = urlWithTune(slug);
-      dlg.hidden = false;
-    }, function () { btn.disabled = false; label.textContent = old; alert("That didn't save. Check your connection and try again."); });
+      body: JSON.stringify({ changes: sent, key: owned()[TUNE] || "" })
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) { return [r.ok, j]; });
+    }, function () { return [false, { error: "check your connection." }]; }).then(function (res) {
+      saving = null;
+      if (!res[0] || !res[1].slug) {
+        saveErr = (res[1] && res[1].error) || "try again.";
+        renderSaveBars();
+        throw new Error(saveErr);
+      }
+      applySaved(sent, res[1]);
+      if (saveAgain) { saveAgain = false; scheduleAuto(300); }
+      return res[1];
+    });
+    renderSaveBars();
+    return saving;
+  }
+  function applySaved(sent, j) {
+    if (j.key) remember(j.slug, j.key);
+    var fresh = j.slug !== TUNE;
+    idx.tables.forEach(function (t) {
+      var e = sent[t.name];
+      if (fresh) t.p = e ? t.z.slice() : undefined;  // a new copy: what it was edited from is the tune we were on
+      if (!e) return;
+      for (var k in e) t.z[k] = e[k];
+      var now = edits[t.name];  // keep anything edited while this was saving
+      if (now) { for (k in e) if (now[k] === e[k]) delete now[k]; if (!Object.keys(now).length) delete edits[t.name]; }
+    });
+    if (fresh) {
+      try { localStorage.removeItem(EDIT_KEY); } catch (e) { /* ignore */ }
+      idx.tune.parent = { slug: TUNE, label: idx.tune.label };
+      TUNE = j.slug; EDIT_KEY = "msq.lv.edits:" + TUNE; idx.tune.slug = TUNE; root.dataset.tune = TUNE;
+      try { history.replaceState(null, "", urlWithTune(TUNE)); } catch (e) { /* sandboxed */ }
+      query = location.search;
+      $$(".lv-back").forEach(function (a) { a.href = "/t/" + TUNE; });
+    }
+    if (j.file) idx.tune.file = j.file;
+    lastSaved = j;
+    saveEdits();
+    allGrids().forEach(function (g) { g.paint(); });
+    renderSaveBars();
+  }
+  function copyText(text, label) {
+    var old = label.textContent;
+    var ok = function () { label.textContent = "Copied"; setTimeout(function () { label.textContent = old; }, 1600); };
+    var fallback = function () {
+      var ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); ok(); } catch (err) { window.prompt("Copy this link", text); }
+      document.body.removeChild(ta);
+    };
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(ok, fallback);
+    else fallback();
+  }
+  var shareFile = null;
+  function openShare() {
+    saveNow();
+    var url = location.href, dlg = $d('[data-dlg="saved"]'), copy = idx.tune && idx.tune.parent;
+    $d("[data-saved-link]").value = url;
+    $d("[data-saved-what]").textContent = copy
+      ? "Whoever opens this link sees this log with your edited tune: " + plural(changedCells(), "cell") +
+        " changed from the original, marked in orange. It keeps up as you edit and save. If they change it, they get their own copy to send back, so yours isn't overwritten."
+      : "Whoever opens this link sees this log, this tune and this exact moment.";
+    var dl = $d("[data-saved-download]"), file = (idx.tune && idx.tune.file) || TUNE + ".msq";
+    dl.href = "/t/" + TUNE + ".msq"; dl.setAttribute("download", file);
+    dl.hidden = !TUNE;
+    $d("[data-saved-open]").href = "/t/" + TUNE;
+    $d("[data-saved-open]").hidden = !TUNE;
+    $d("[data-saved-share]").hidden = !navigator.share;
+    var fb = $d("[data-saved-file]");
+    fb.hidden = true; shareFile = null;
+    // Sending the file itself (to Discord, Messages…) needs it in hand before the tap, so fetch it now.
+    if (TUNE && navigator.canShare && window.File) {
+      try {
+        if (navigator.canShare({ files: [new File([""], file, { type: "application/octet-stream" })] })) {
+          fetch("/t/" + TUNE + ".msq").then(function (r) { return r.blob(); }).then(function (b) {
+            shareFile = new File([b], file, { type: "application/octet-stream" }); fb.hidden = false;
+          }).catch(function () { /* the download link still works */ });
+        }
+      } catch (e) { /* not supported */ }
+    }
+    dlg.hidden = false;
+  }
+  function saveAndShare(btn) {
+    if (!editCount()) { openShare(); return; }
+    btn.disabled = true;
+    pushEdits().then(function () { btn.disabled = false; openShare(); }, function () { btn.disabled = false; });
   }
   function urlWithTune(slug) {
     var params = new URLSearchParams(location.search);
@@ -753,7 +1138,7 @@
         '<div class="lv-ve-bar"><i></i></div>' +
       "</div>" +
       '<div class="lv-ve-warn" hidden></div>' +
-      '<div class="lv-ve-main"><div class="lv-ve-gridbox"><div class="lv-th"><b>' + esc(t.label) + '</b><span class="lv-tv mono"></span></div><div class="lv-grid"></div>' + toolbar() +
+      '<div class="lv-ve-main"><div class="lv-ve-gridbox"><div class="lv-th"><b>' + esc(t.label) + '</b><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button></div><div class="lv-grid"></div>' + toolbar() +
         '<p class="lv-tn">' + esc((t.yl || "Load") + (t.yu ? " (" + t.yu + ")" : "") + " ↑ · " + (t.xl || "RPM") + " →") + " · after a run, select cells to adjust them</p></div>" +
         '<div class="lv-ve-side">' +
           '<div class="lv-ve-why"></div>' +
@@ -947,7 +1332,7 @@
         (other ? " from this tune. Against the VE the ECU actually ran: " : ": ") + richer + " richer, " + leaner + " leaner, " +
         avgP.toFixed(1) + "% on average, biggest " + (pcts[bi] > 0 ? "+" : "") + pcts[bi].toFixed(1) + "% at " +
         binText(t.x[big.i % t.cols]) + " rpm / " + binText(t.y[Math.floor(big.i / t.cols)]) + (t.yu ? " " + t.yu : "") +
-        ". Save it as a new tune, or adjust cells first.";
+        (autoSave ? ". It's saved to your link: adjust any cell, or Share it." : ". Adjust cells if you like, then Save & share.");
     }
     var warn = $(".lv-ve-warn");
     if (res.mismatch != null && res.mismatch > 4) {
@@ -1157,9 +1542,20 @@
       pop.style.top = Math.max(8, Math.min(window.innerHeight - 380, r.bottom + 4)) + "px";
     } else { pop.style.left = pop.style.top = ""; }
     popIn.value = "";
+    pop.querySelector(".lv-pop-title").textContent = allowNone ? "Choose a channel for this graph" : "Choose a channel";
     var render = function () {
       var q = popIn.value.trim().toLowerCase().split(/\s+/).filter(Boolean), html = [], flat = [];
       if (allowNone && !q.length) html.push('<li data-c="-1" class="none">None (remove)</li>');
+      if (!q.length) {  // the channels that matter for tuning, by plain name, before the full list
+        var sug = [], seenS = {};
+        SUGGEST.forEach(function (r) {
+          var c = channelFor(r[0]);
+          if (c < 0 || seenS[c]) return;
+          seenS[c] = 1;
+          sug.push('<li data-c="' + c + '"' + (c === current ? ' class="on"' : "") + ">" + esc(r[1]) + " <small>" + esc(idx.channels[c].n) + "</small></li>");
+        });
+        if (sug.length) html.push('<li class="lv-pop-h">Suggested for tuning</li>' + sug.join("") + '<li class="lv-pop-h">All channels</li>');
+      }
       idx.channels.forEach(function (m, i) {
         var name = m.n.toLowerCase();
         if (m.lo == null && i !== current) return;  // nothing was logged on it
@@ -1242,7 +1638,7 @@
       }
     }
     if (!chosen) {
-      chosen = DEFAULTS.map(function (row) { return pad(row.map(channelFor).filter(function (c) { return c >= 0; })); });
+      chosen = DEFAULTS.map(function (row) { return pad(row.map(layoutChannel).filter(function (c) { return c >= 0; })); });
       if (!chosen.some(function (row) { return row[0] >= 0; })) {  // a log whose channels we don't recognise: show the first few
         var all = [];
         idx.channels.forEach(function (m, i) { if (m.lo != null && m.lo !== m.hi && i !== (idx.roles || {}).time) all.push(i); });
@@ -1303,7 +1699,22 @@
     b = e.target.closest("[data-ve]");
     if (b) { if (b.dataset.ve === "run") runVE(); else ve.running = false; return; }
     b = e.target.closest("[data-save-tune]");
-    if (b) { saveTune(b); return; }
+    if (b) { saveAndShare(b); return; }
+    b = e.target.closest("[data-3d]");
+    if (b) {
+      var box = b.closest(".lv-table, .lv-ve-gridbox"), gr = null;
+      tableSlots.forEach(function (s) { if (s.el === box) gr = s.grid; });
+      if (!gr && ve.grid && box && box.contains(ve.grid.el)) gr = ve.grid;
+      if (gr) {
+        var on = !gr.is3d;
+        allGrids().concat(ve.grid ? [ve.grid] : []).forEach(function (g) { g.set3d(on); });
+        try { localStorage.setItem("msq.lv.3d", on ? "1" : "0"); } catch (err) { /* ignore */ }
+        invalidate();
+      }
+      return;
+    }
+    b = e.target.closest("[data-lv-opts]");
+    if (b) { openOpts(); return; }
     b = e.target.closest("[data-save-discard]");
     if (b) {
       if (confirm("Discard " + plural(editCount(), "changed cell") + "?")) { edits = {}; editsChanged(); }
@@ -1323,6 +1734,7 @@
     b = e.target.closest(".lv-g[data-w]");
     if (b) { watch = watch.filter(function (c) { return c !== +b.dataset.c; }); invalidate(); saveLayout(); return; }
     b = e.target.closest("[data-lv-share]");
+    if (b && editCount() && TUNE) { saveAndShare(b); return; }
     if (b) {
       saveNow();
       var label = b.querySelector("span"), old = label.textContent, url = location.href;
@@ -1346,12 +1758,67 @@
     if (e.target === this || e.target.closest("[data-lv-help-close]")) this.hidden = true;
   });
   $("[data-lv-speed]").addEventListener("change", function () { speed = +this.value || 1; invalidate(); });
+  function applyPreset(name) {
+    var pr = PRESETS[name];
+    if (!pr) return;
+    var pad = function (a) { a = a.slice(0, SLOTS); while (a.length < SLOTS) a.push(-1); return a; };
+    var rows = pr.p.map(function (row) { return pad(row.map(layoutChannel).filter(function (c) { return c >= 0; })); })
+      .filter(function (row) { return row[0] >= 0; });
+    while (rows.length < MAX_PANES) rows.push(pad([]));
+    panes = rows.slice(0, MAX_PANES).map(function (row) { return { ch: row }; });
+    paneCount = Math.min(pr.n, window.innerWidth < 760 ? 2 : pr.n);
+    buildPanes();
+    panes.forEach(function (p, i) { if (i < paneCount) p.ch.forEach(load); });
+    invalidate(); saveSoon(); saveLayout();
+  }
+  $("[data-lv-preset]").addEventListener("change", function () {
+    if (this.value) applyPreset(this.value);
+    this.value = "";
+  });
   $("[data-lv-count]").addEventListener("change", function () {
     paneCount = +this.value;
     panes.forEach(function (p, i) { p.el.hidden = i >= paneCount; p.ch.forEach(load); });
     invalidate(); saveSoon(); saveLayout();
   });
   $("[data-sc-range]").addEventListener("change", function () { scatterDirty = true; invalidate(); });
+  root.addEventListener("change", function (e) {
+    var cb = e.target.closest("[data-autosave]");
+    if (!cb) return;
+    autoSave = cb.checked;
+    try { localStorage.setItem("msq.lv.autosave", autoSave ? "1" : "0"); } catch (err) { /* ignore */ }
+    renderSaveBars(); scheduleAuto(200);
+  });
+
+  /* ---------- the share dialog and the display options ---------- */
+  (function () {
+    var dlg = $d('[data-dlg="saved"]');
+    dlg.addEventListener("click", function (e) {
+      var url = $d("[data-saved-link]").value;
+      if (e.target.closest("[data-saved-copy]")) copyText(url, e.target.closest("[data-saved-copy]").querySelector("span") || e.target);
+      else if (e.target.closest("[data-saved-share]")) navigator.share({ title: root.dataset.name + " · edited tune", url: url }).catch(function () { /* cancelled */ });
+      else if (e.target.closest("[data-saved-file]") && shareFile) navigator.share({ files: [shareFile], title: shareFile.name }).catch(function () { /* cancelled */ });
+    });
+    $d("[data-saved-link]").addEventListener("focus", function () { this.select(); });
+  })();
+  function openOpts() {
+    var dlg = $d('[data-dlg="opts"]');
+    $$("[data-opt]", dlg).forEach(function (el) {
+      var k = el.dataset.opt;
+      if (el.type === "checkbox") el.checked = !!opt[k]; else el.value = String(opt[k]);
+    });
+    dlg.hidden = false;
+  }
+  $d('[data-dlg="opts"]').addEventListener("change", function (e) {
+    var el = e.target.closest("[data-opt]");
+    if (!el) return;
+    var k = el.dataset.opt;
+    opt[k] = el.type === "checkbox" ? el.checked : typeof OPT_DEF[k] === "number" ? +el.value : el.value;
+    saveOpts(); invalidate();
+  });
+  $d("[data-opt-reset]").addEventListener("click", function () {
+    for (var k in OPT_DEF) opt[k] = OPT_DEF[k];
+    saveOpts(); openOpts(); invalidate();
+  });
   root.addEventListener("change", function (e) {
     var sel = e.target.closest(".lv-th select");
     if (!sel) return;
@@ -1429,6 +1896,7 @@
   ]).then(function (res) {
     idx = res[0]; T = res[1]; N = T.length;
     if (N < 2) return fail("This log has no records to show.");
+    addVirtual();
     if (idx.tune && idx.tune.stoich) stoich = idx.tune.stoich;
     initialLayout();
     buildPanes();

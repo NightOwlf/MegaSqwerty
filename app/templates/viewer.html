@@ -40,11 +40,15 @@
     <div class="lv-actions">
       <button class="btn sm" type="button" data-lv-tune title="Choose the tune to read this log with">{{ icon('folder') }}<span>{{ 'Change tune' if tune_slug else 'Add tune' }}</span></button>
       {% if summary %}<a class="btn sm" href="/t/{{ tune_slug }}/log/{{ log_slug }}" title="What this log shows about the tune"><span class="led {{ led[summary.tone] }}"></span><span>Report: {{ summary.short }}</span></a>{% endif %}
+      <label class="lv-sel lv-preset" title="Show a ready-made set of channels">Layout
+        <select data-lv-preset><option value="">Choose…</option><option value="tuning">Tuning overview</option><option value="fuel">Fuel / VE</option><option value="afr">AFR &amp; correction</option><option value="boost">Boost</option><option value="spark">Ignition &amp; knock</option><option value="warm">Warm-up &amp; idle</option></select>
+      </label>
       <label class="lv-sel" title="How many graphs to stack">Graphs
         <select data-lv-count><option>1</option><option>2</option><option>3</option><option>4</option></select>
       </label>
       <button class="btn sm primary" type="button" data-lv-share title="Copy a link that opens at this exact moment, with these channels">{{ icon('link') }}<span>Copy link</span></button>
       <a class="btn sm" href="/l/{{ log_slug }}/download" title="Download the original log file">{{ icon('download') }}<span class="lv-wide">Download</span></a>
+      <button class="btn sm" type="button" data-lv-opts title="Display options" aria-label="Display options">⚙</button>
       <button class="btn sm" type="button" data-lv-help title="Keyboard shortcuts and help">?</button>
     </div>
   </div>
@@ -105,6 +109,7 @@
 </div>
 
 <div class="lv-pop" hidden>
+  <p class="lv-pop-title"></p>
   <input type="search" placeholder="Search channels…" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Search channels">
   <ul></ul>
 </div>
@@ -135,30 +140,50 @@
 </div>
 <div class="lv-dlg" data-dlg="saved" hidden>
   <div class="lv-dlg-in">
-    <h2>Saved as a new tune</h2>
-    <p class="dim">Your changes are in a new tune with its own link. The tune you started from is unchanged.</p>
+    <h2>Share your changes</h2>
+    <p class="dim" data-saved-what></p>
+    <label class="field-row lv-linkrow"><span>Link</span><input type="text" readonly data-saved-link aria-label="Link to share"></label>
     <div class="lv-dlg-btns lv-dlg-col">
-      <a class="btn primary big" data-saved-download href="#">{{ icon('download') }}<span>Download the .msq</span></a>
-      <a class="btn big" data-saved-open href="#">{{ icon('grid') }}<span>Open the new tune</span></a>
-      <a class="btn big" data-saved-continue href="#">{{ icon('curve') }}<span>Keep going with the new tune</span></a>
+      <button class="btn primary big" type="button" data-saved-copy>{{ icon('copy') }}<span>Copy link</span></button>
+      <button class="btn big" type="button" data-saved-share hidden>{{ icon('share') }}<span>Send link…</span></button>
+      <button class="btn big" type="button" data-saved-file hidden>{{ icon('share') }}<span>Send the .msq file…</span></button>
+      <a class="btn big" data-saved-download href="#" download>{{ icon('download') }}<span>Download the .msq</span></a>
+      <a class="btn big" data-saved-open href="#">{{ icon('grid') }}<span>Open the tune page</span></a>
     </div>
-    <p class="fine">Load the .msq in TunerStudio, check it, then burn it. Log again afterwards: one pass gets close, the second gets it right.</p>
+    <p class="fine">To put it on the car: load the .msq in TunerStudio, check it, then burn it. Log again afterwards; one pass gets close, the second gets it right.</p>
     <button class="btn" type="button" data-dlg-close>Close</button>
+  </div>
+</div>
+<div class="lv-dlg" data-dlg="opts" hidden>
+  <div class="lv-dlg-in">
+    <h2>Display options</h2>
+    <div class="lv-optgrid">
+      <label class="lv-opt"><span>▲ ▼ beside each value</span><select data-opt="range"><option value="view">Highest &amp; lowest on screen</option><option value="log">Highest &amp; lowest in the whole log</option></select></label>
+      <label class="lv-opt"><span>Graph scale</span><select data-opt="scale"><option value="log">Fixed to the whole log</option><option value="view">Fit what's on screen</option></select></label>
+      <label class="lv-opt"><span>Line thickness</span><select data-opt="line"><option value="0.75">Thin</option><option value="1.25">Normal</option><option value="2">Thick</option></select></label>
+      <label class="lv-opt"><span>Text size</span><select data-opt="text"><option value="0.85">Small</option><option value="1">Normal</option><option value="1.25">Large</option></select></label>
+      <label class="check sm"><input type="checkbox" data-opt="cursorVals"><span>Values beside the cursor</span></label>
+      <label class="check sm"><input type="checkbox" data-opt="peaks"><span>Mark each channel's peak on screen</span></label>
+    </div>
+    <div class="lv-dlg-btns"><button class="btn" type="button" data-opt-reset>Reset</button><span class="st-grow"></span><button class="btn primary" type="button" data-dlg-close>Done</button></div>
   </div>
 </div>
 <div class="lv-help" hidden>
   <div class="lv-help-in">
     <h2>Using the log viewer</h2>
     <dl>
-      <dt>Click or drag on a graph</dt><dd>Move the cursor. Every value at that moment shows beside it and in the strip below.</dd>
+      <dt>Click or drag on a graph</dt><dd>Move the cursor. The values at the left edge follow it, with the highest (▲) and lowest (▼) beside each. On a phone, drag sideways to move through the log and up or down to scroll the page.</dd>
       <dt>Scroll wheel / pinch</dt><dd>Zoom in and out around the pointer. Shift + wheel, or a sideways swipe, pans.</dd>
       <dt>Drag the strip under the graphs</dt><dd>Move through the log. Drag across empty space to jump.</dd>
-      <dt>Click a channel name</dt><dd>Swap it for any other channel, or remove it. Up to four per graph.</dd>
+      <dt>Tap a channel name</dt><dd>The coloured names at the top right of each graph: swap it for any other channel (the ones that matter for tuning are listed first), or remove it. Tap + to add one; up to four per graph. <b>Layout</b> sets up all the graphs at once for fuel, AFR, boost, ignition or warm-up.</dd>
       <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Step one record. Hold Shift for ten.</dd>
       <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Zoom in and out. <kbd>F</kbd> shows the whole log.</dd>
       <dt><kbd>Space</kbd></dt><dd>Play and pause. <kbd>Home</kbd> and <kbd>End</kbd> jump to the ends.</dd>
       <dt>VE Analyze</dt><dd>Plays through the log, works out what each VE cell should be from the wideband, and shows the cells changing as it goes. Then save the result as a new tune.</dd>
-      <dt>Edit a table</dt><dd>Tap or drag across cells, then type a value or use the buttons (+, −, ×%, interpolate, smooth). Save as a new tune when you're done.</dd>
+      <dt>Edit a table</dt><dd>Tap or drag across cells, then type a value or use the buttons (+, −, ±1%, interpolate, smooth). With Auto-save on, every change goes into your own edited copy of the tune and the page's link switches to it.</dd>
+      <dt>Remote tuning</dt><dd>Edit, then <b>Share</b>: whoever opens your link sees the log with your edits, the changed cells marked in orange. If they edit it, they get their own copy to send back. The original tune is never changed.</dd>
+      <dt>3D</dt><dd>Shows a table as a surface. Drag to turn it, pinch or scroll to zoom, double-click to reset, tap a point to select that cell.</dd>
+      <dt>⚙ Display options</dt><dd>The highest and lowest on screen or in the whole log, the graph scale, line and text size, and peak markers.</dd>
       <dt>Copy link</dt><dd>The link opens at this exact moment with the same channels and zoom, so a friend sees what you see.</dd>
     </dl>
     <button class="btn primary" type="button" data-lv-help-close>Got it</button>

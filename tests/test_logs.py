@@ -552,6 +552,35 @@ def test_any_tune_can_be_chosen_for_a_log_in_the_viewer(client):
     assert client.get(f"{own.headers['location']}/index.json?tune=none").json()["tune"] is None
 
 
+def test_edits_shared_from_the_viewer_reach_whoever_opens_the_link(client):
+    """Remote tuning: edit in the viewer, send the link back, the other person sees exactly what changed."""
+    slug = upload_tune(client, sp(load=LOAD_BOOST, boostLimit=170))
+    url = client.post("/logs", files={"file": ("drive.msl", msl(drive()), "text/plain")}).headers["location"]
+    ve = next(t for t in client.get(f"{url}/index.json?tune={slug}").json()["tables"] if t["id"] == "ve")
+    first = client.post(f"/t/{slug}/save", json={"changes": {"veTable": {"3": ve["z"][3] + 5}}}).json()
+    copy, key = first["slug"], first["key"]
+    assert copy != slug and key and first["updated"] is False and first["file"].endswith(f"{copy}.msq")
+
+    # the person who made it saves again: same link, now with both edits
+    again = client.post(f"/t/{copy}/save", json={"changes": {"veTable": {"7": ve["z"][7] - 4}}, "key": key}).json()
+    assert again["slug"] == copy and again["updated"] is True
+    index = client.get(f"{url}/index.json?tune={copy}").json()
+    assert index["tune"]["parent"]["slug"] == slug and index["tune"]["changed"] == 2
+    t = next(t for t in index["tables"] if t["id"] == "ve")
+    assert t["p"] == ve["z"] and t["z"][3] == pytest.approx(ve["z"][3] + 5) and t["z"][7] == pytest.approx(ve["z"][7] - 4)
+    assert not any("p" in x for x in index["tables"] if x["id"] != "ve")
+
+    # someone else (no key, or a wrong one) gets their own copy; the original upload is never overwritten
+    theirs = client.post(f"/t/{copy}/save", json={"changes": {"veTable": {"0": 50}}, "key": "wrong"}).json()
+    assert theirs["slug"] not in (copy, slug) and theirs["updated"] is False
+    orig_key = client.post(f"/t/{slug}/save", json={"changes": {"veTable": {"0": 51}}, "key": key}).json()
+    assert orig_key["slug"] != slug
+    assert client.get(f"{url}/index.json?tune={slug}").json()["tune"]["parent"] is None
+
+    dl = client.get(f"/t/{copy}.msq")
+    assert dl.headers["content-type"] == "application/octet-stream" and f'{copy}.msq"' in dl.headers["content-disposition"]
+
+
 def test_a_tune_can_be_uploaded_from_the_viewer_without_leaving_it(client, fx):
     r = client.post("/upload", headers={"X-Upload": "1"}, files={"file": ("t.msq", fx("ms3_basic.msq"), "application/xml")})
     assert r.status_code == 200 and re.fullmatch(r"[A-Za-z0-9]{10}", r.json()["slug"])

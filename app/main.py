@@ -290,6 +290,12 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         desc = " · ".join(bits) or "TunerStudio .msq tune"
         return title, f"{desc}. Signature: {doc.signature or 'none'}"[:300]
 
+    def msq_filename(doc: TuneDoc | None, slug: str) -> str:
+        """A readable name for the downloads folder; the slug keeps copies of the same tune apart."""
+        label = re.sub(r"<[^>]*>", " ", views.tune_label(doc) if doc else "")  # some comments carry HTML
+        base = re.sub(r"[^A-Za-z0-9._-]+", "-", label).strip("-._")[:60].strip("-._")
+        return f"{base}-{slug}.msq" if base else f"{slug}.msq"
+
     def edited_from(slug: str) -> dict | None:
         meta = store.get_meta(slug)
         parent = meta["parent"] if meta is not None else None
@@ -364,12 +370,10 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         raw = store.read_raw(slug)
         if raw is None:
             raise HTTPException(404)
-        # A readable name for the downloads folder; the slug keeps copies of the same tune apart.
-        doc = store.get_doc(slug)
-        base = re.sub(r"[^A-Za-z0-9._-]+", "-", views.tune_label(doc) if doc else "").strip("-._")[:60]
-        filename = f"{base}-{slug}.msq" if base else f"{slug}.msq"
-        return Response(raw, media_type="application/xml",
-                        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+        # octet-stream, not XML: phones keep the .msq name (iOS would otherwise save it as .xml or show it as text)
+        return Response(raw, media_type="application/octet-stream",
+                        headers={"Content-Disposition": f'attachment; filename="{msq_filename(store.get_doc(slug), slug)}"',
+                                 "Cache-Control": "no-cache"})
 
     @app.delete("/t/{slug}")
     def tune_delete(request: Request, slug: str, key: str = ""):
@@ -417,11 +421,25 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             new_raw, changed = await run_in_threadpool(editmod.apply_changes, raw, changes)
         except editmod.EditError as e:
             return fail(str(e))
+        # Saving again to an edited copy you made (you hold its key): update it in place, so the link you
+        # already sent shows the latest. Uploaded originals are never overwritten, and nobody else's copy is.
+        own = str(payload.get("key") or "").strip() if isinstance(payload, dict) else ""
+        meta = store.get_meta(slug)
+        if own and meta is not None and meta["parent"] and store.check_delete_key(slug, own):
+            try:
+                doc = await run_in_threadpool(parse_msq, new_raw)
+            except MsqError as e:
+                return fail(str(e))
+            await run_in_threadpool(store.replace_tune, slug, new_raw, doc)
+            log.info("updated edited tune %s in place (%d values)", slug, changed)
+            return JSONResponse({"url": f"/t/{slug}", "slug": slug, "changed": changed, "key": own,
+                                 "updated": True, "file": msq_filename(doc, slug)})
         new_slug, key, err, status = await store_upload(request, new_raw, parent=slug)
         if err:
             return fail(err, status)
         log.info("saved edited tune %s from %s (%d values)", new_slug, slug, changed)
-        resp = JSONResponse({"url": f"/t/{new_slug}", "slug": new_slug, "changed": changed})
+        resp = JSONResponse({"url": f"/t/{new_slug}", "slug": new_slug, "changed": changed, "key": key,
+                             "updated": False, "file": msq_filename(store.get_doc(new_slug), new_slug)})
         set_key_cookie(resp, request, new_slug, key)
         return resp
 
@@ -894,7 +912,21 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             tables = logsmod.viewer_tables(tviews, index, lambda z: meta_digits(tmap, z))
             idle = doc.get("useSeparateVeForIdle")
             tune = {"slug": tune_slug, "label": views.tune_label(doc), "stoich": stoich_of(doc),
+                    "file": msq_filename(doc, tune_slug), "parent": None, "changed": 0,
                     "idle_ve": bool(idle and idle.values and str(idle.values[0]).strip('"').lower() == "true")}
+            # An edited copy: send the values it was edited from, so whoever opens the link sees what changed.
+            src = edited_from(tune_slug)
+            pdoc = store.get_doc(src["slug"]) if src and src["exists"] else None
+            if pdoc is not None:
+                tune["parent"] = {"slug": src["slug"], "label": src["label"]}
+                for t in tables:
+                    pc = pdoc.get(t["name"])
+                    pz = list(pc.values) if pc is not None and pc.values is not None else []
+                    if len(pz) == len(t["z"]) and all(isinstance(v, float) for v in pz):
+                        diff = sum(1 for a, b in zip(pz, t["z"]) if abs(a - b) > 1e-9)
+                        if diff:
+                            t["p"] = pz
+                            tune["changed"] += diff
         stoich = tune["stoich"] if tune else 14.7
         lam = {r: (1.0 if logsmod.meta_is_lambda(channels[roles[r]]) else stoich)
                for r in ("lambda", "lambda_target") if r in roles}

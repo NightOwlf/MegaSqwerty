@@ -159,6 +159,21 @@ class Store:
             return slug, delete_key
         raise RuntimeError("could not allocate slug")
 
+    def replace_tune(self, slug: str, raw: bytes, doc: TuneDoc) -> None:
+        """Overwrite an edited copy in place (its owner saving again), so its link shows the latest edits."""
+        path = self.raw_path(slug)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_bytes(raw)
+        os.replace(tmp, path)
+        with self.conn() as c:
+            c.execute(
+                "UPDATE tunes SET sha256=?, size=?, signature=?, family=?, parsed_json=?, last_viewed_at=? WHERE slug=?",
+                (hashlib.sha256(raw).hexdigest(), len(raw), doc.signature, doc.family,
+                 json.dumps(doc.to_dict(), separators=(",", ":")), int(time.time()), slug),
+            )
+        with self._cache_lock:
+            self._cache.pop(slug, None)
+
     def get_meta(self, slug: str) -> sqlite3.Row | None:
         if not SLUG_RE.match(slug or ""):
             return None
