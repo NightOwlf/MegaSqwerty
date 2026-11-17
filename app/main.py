@@ -42,6 +42,13 @@ class _BelowWarning(logging.Filter):
         return record.levelno < logging.WARNING
 
 
+class _QuietPolls(logging.Filter):
+    """Drop the access-log line for each live-update check (they'd be most of the log)."""
+    def filter(self, record):
+        args = record.args if isinstance(record.args, tuple) else ()
+        return not (len(args) >= 3 and isinstance(args[2], str) and args[2].endswith("/rev"))
+
+
 def split_log_streams(*names: str) -> None:
     """Send INFO to stdout and WARNING+ to stderr. Railway shows everything on stderr as an error, and uvicorn
     writes its normal startup and request lines there."""
@@ -178,6 +185,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
     @asynccontextmanager
     async def lifespan(app):
         split_log_streams("", "uvicorn", "uvicorn.error", "uvicorn.access")
+        logging.getLogger("uvicorn.access").addFilter(_QuietPolls())
         store.init()
         task = asyncio.create_task(purge_loop())
         try:
@@ -1019,6 +1027,8 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         stoich = tune["stoich"] if tune else 14.7
         lam = {r: (1.0 if logsmod.meta_is_lambda(channels[roles[r]]) else stoich)
                for r in ("lambda", "lambda_target") if r in roles}
+        if request.query_params.get("lite"):  # a live update: just the tune's tables, not the log's channels
+            return JSONResponse({"tables": tables, "tune": tune}, headers={"Cache-Control": "private, no-cache"})
         return JSONResponse({
             "rows": index["rows"], "seconds": index.get("seconds"), "title": index.get("title", ""),
             "note": index.get("note", ""), "truncated": index.get("truncated", False),

@@ -51,6 +51,7 @@ class Store:
         self._cache: OrderedDict[str, TuneDoc] = OrderedDict()
         self._cache_lock = threading.Lock()
         self._index_cache: OrderedDict[str, tuple] = OrderedDict()
+        self._rev_cache: dict[str, str] = {}
 
     # ------------------------------------------------------------ plumbing
     @property
@@ -189,14 +190,22 @@ class Store:
         return hmac.compare_digest(row["delete_key_hash"], h) or bool(row["edit_key_hash"]) and hmac.compare_digest(row["edit_key_hash"], h)
 
     def rev(self, slug: str) -> str | None:
-        """Changes whenever the tune's values or notes change: what open pages poll to stay current."""
+        """Changes whenever the tune's values or notes change: what open pages poll to stay current. Kept in
+        memory (one process), so a poll costs no disk read."""
         if not SLUG_RE.match(slug or ""):
             return None
+        hit = self._rev_cache.get(slug)
+        if hit is not None:
+            return hit
         with self.conn() as c:
             row = c.execute("SELECT sha256, notes FROM tunes WHERE slug=?", (slug,)).fetchone()
         if not row:
             return None
-        return row["sha256"][:16] + hashlib.sha256((row["notes"] or "").encode()).hexdigest()[:8]
+        rev = row["sha256"][:16] + hashlib.sha256((row["notes"] or "").encode()).hexdigest()[:8]
+        if len(self._rev_cache) > 2000:
+            self._rev_cache.clear()
+        self._rev_cache[slug] = rev
+        return rev
 
     def notes(self, slug: str) -> str:
         with self.conn() as c:
@@ -206,6 +215,7 @@ class Store:
     def set_notes(self, slug: str, text: str) -> None:
         with self.conn() as c:
             c.execute("UPDATE tunes SET notes=? WHERE slug=?", (text, slug))
+        self._rev_cache.pop(slug, None)
 
     def replace_tune(self, slug: str, raw: bytes, doc: TuneDoc) -> None:
         """Overwrite an edited copy in place (its owner saving again), so its link shows the latest edits."""
@@ -221,6 +231,7 @@ class Store:
             )
         with self._cache_lock:
             self._cache.pop(slug, None)
+        self._rev_cache.pop(slug, None)
 
     def get_meta(self, slug: str) -> sqlite3.Row | None:
         if not SLUG_RE.match(slug or ""):
@@ -271,6 +282,7 @@ class Store:
         return bool(row) and hmac.compare_digest(row["delete_key_hash"], self._hash_key(key))
 
     def delete_tune(self, slug: str) -> None:
+        self._rev_cache.pop(slug, None)
         with self.conn() as c:
             gone = [r["slug"] for r in c.execute("SELECT slug FROM logs WHERE tune_slug=?", (slug,))]
             c.execute("DELETE FROM tunes WHERE slug=?", (slug,))

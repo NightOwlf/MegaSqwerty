@@ -1259,6 +1259,7 @@
     }
     if (j.file) idx.tune.file = j.file;
     lastSaved = j;
+    if (typeof schedulePoll === "function") { lastChange = Date.now(); schedulePoll(); }
     compareSoon();
     renderNotes();
     syncSoon(0);  // pick up anything someone else saved meanwhile
@@ -2373,7 +2374,8 @@
     var done = function () { syncing = false; };
     fetch("/t/" + TUNE + "/rev", { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
       if (!j || j.rev === idx.tune.rev) return done();
-      return fetch(base + "/index.json?tune=" + TUNE, { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (fresh) {
+      lastChange = Date.now(); schedulePoll();  // edits are flying: check often for a while
+      return fetch(base + "/index.json?tune=" + TUNE + "&lite=1", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (fresh) {
         done();
         if (!fresh.tune || fresh.tune.slug !== TUNE) return;
         var moved = 0, flashes = {};
@@ -2398,8 +2400,33 @@
       });
     }).catch(done);
   }
-  setInterval(function () { sync(false); }, 3000);
-  document.addEventListener("visibilitychange", function () { if (!document.hidden) sync(true); });
+  /* How often to check, so the server only works while people are: every 3 s while edits are flying (a change
+     here or from someone else in the last 2 minutes), every 8 s while someone is using the page, every 30 s
+     for a while after, and not at all once the page has sat untouched for 10 minutes or is hidden. Touching
+     the page again checks at once. (With nothing checking, Railway can put the server to sleep.) */
+  var lastUse = Date.now(), lastChange = 0, pollT = 0, polling = false;
+  function pollDelay() {
+    var now = Date.now(), use = now - lastUse, change = now - lastChange;
+    if (document.hidden || (use > 600000 && change > 600000)) return 0;
+    if (change < 120000) return 3000;
+    if (use < 120000) return 8000;
+    return 30000;
+  }
+  function schedulePoll() {
+    clearTimeout(pollT);
+    var d = pollDelay();
+    polling = d > 0;
+    if (polling) pollT = setTimeout(function () { sync(false); schedulePoll(); }, d);
+  }
+  function woke() {
+    var idle = !polling;
+    lastUse = Date.now();
+    if (idle && !document.hidden) { sync(true); schedulePoll(); }
+  }
+  ["pointerdown", "keydown", "touchstart", "wheel"].forEach(function (ev) { document.addEventListener(ev, woke, { passive: true, capture: true }); });
+  window.addEventListener("scroll", function () { if (!polling) woke(); else lastUse = Date.now(); }, { passive: true });
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) { lastUse = Date.now(); sync(true); } schedulePoll(); });
+  schedulePoll();
 
   var toastBox = null, toastT = 0;
   function toast(msg) {

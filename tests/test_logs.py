@@ -649,3 +649,22 @@ def test_restore_puts_links_back_where_they_were(client, fx):
                          headers={"Authorization": "Bearer wrong"})
         assert no.status_code == 404  # without the real token it doesn't exist
     assert client.get("/t/AbCdEfGhIj.json").status_code == 404
+
+
+def test_live_checks_are_cheap(client):
+    """What an open page polls is answered from memory and stays current; live updates fetch only the tables."""
+    slug = upload_tune(client, sp(load=LOAD_BOOST, boostLimit=170))
+    copy = client.post(f"/t/{slug}/save", json={"fork": True}).json()["slug"]
+    url = client.post("/logs", files={"file": ("d.msl", msl(drive()), "text/plain")}).headers["location"]
+    r0 = client.get(f"/t/{copy}/rev").json()["rev"]
+    assert client.get(f"/t/{copy}/rev").json()["rev"] == r0               # cached, unchanged
+    client.post(f"/t/{copy}/save", json={"changes": {"veTable": {"2": 61.1}}})
+    r1 = client.get(f"/t/{copy}/rev").json()["rev"]
+    client.post(f"/t/{copy}/notes", json={"notes": "x"})
+    r2 = client.get(f"/t/{copy}/rev").json()["rev"]
+    assert len({r0, r1, r2}) == 3                                         # every change shows at once
+    lite = client.get(f"{url}/index.json?tune={copy}&lite=1").json()
+    assert set(lite) == {"tables", "tune"} and lite["tune"]["rev"] == r2
+    full = client.get(f"{url}/index.json?tune={copy}").json()
+    assert "channels" in full and len(client.get(f"{url}/index.json?tune={copy}&lite=1").content) < len(
+        client.get(f"{url}/index.json?tune={copy}").content)
