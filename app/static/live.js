@@ -271,14 +271,22 @@
   function connectEcu(sim, port) {
     if (!layout || connecting || running) return Promise.resolve();
     connecting = true; ecuOff = false;
-    var app = appTune();
-    // the simulated ECU starts from the project's tune (after a reload, the session's tune copy)
-    var tuneSlug = state.tune || (sess && sess.tune);
-    var msqText = carFiles && carFiles.msqText ? Promise.resolve(carFiles.msqText)
-      : carFiles && carFiles.last ? Promise.resolve(carFiles.last.msq || "")
-      : tuneSlug ? fetch("/t/" + tuneSlug + ".msq").then(function (r) { return r.ok ? r.text() : ""; }, function () { return ""; }) : Promise.resolve("");
-    var p = sim ? msqText.then(function (t) { return ECU.simPipe(layout, t ? ECU.pageFromMsq(layout, t) : null); })
-                : port ? ECU.openPort(port) : ECU.connectSerial();
+    // the remembered project is read first (a click just after the page loads mustn't start from nothing)
+    var ready = ROLE === "car" && projectP ? projectP.then(function (pr) { if (pr && !carFiles) carFiles = { last: pr }; }) : Promise.resolve();
+    var app = ready.then(appTune);
+    // the simulated ECU starts from the project's tune (after a reload, the session's tune copy); never from nothing:
+    // an all-zero tune would be taken for the ECU's and end up in the session's tune
+    var msqText = ready.then(function () {
+      var tuneSlug = state.tune || (sess && sess.tune);
+      var have = carFiles && (carFiles.msqText || (carFiles.last && carFiles.last.msq));
+      return have ? have : tuneSlug ? fetch("/t/" + tuneSlug + ".msq").then(function (r) { return r.ok ? r.text() : ""; }, function () { return ""; }) : "";
+    });
+    var p = sim ? msqText.then(function (t) {
+      var page = t ? ECU.pageFromMsq(layout, t) : null;
+      if (!page || TuneDiff.blank(ECU.decodeConstants(layout, page, (layout.comms.endianness || "little") !== "big"), layout))
+        throw new Error("the simulated ECU needs the project's tune: choose the project folder (with its CurrentTune.msq) first.");
+      return ECU.simPipe(layout, page);
+    }) : port ? ECU.openPort(port) : ECU.connectSerial();
     $(".lt-status").textContent = sim ? "Starting the simulated ECU…" : port ? "ECU found: connecting…" : "Choose the ECU's USB port in the box Chrome shows…";
     return p.then(function (pp) {
       pipe = pp;
@@ -753,7 +761,7 @@
       fmt(showT(v.hi, c.units), d) + (c.units ? " " + esc(showU(c.units)) : "") + '</span><span class="lt-dkey-n"><b class="lt-red">12.3</b> differs · <b class="lt-ring">12.3</b> will be used</span></div>';
   }
   var lastDiff = null;
-  var KINDS = { table: "table", curve: "curve", axis: "axis bins", setting: "setting" };
+  var KINDS = { table: "table", curve: "curve", axis: "axis bins", setting: "setting", wiring: "wiring / sensor setting: shown, not written from here" };
   function compareTune(text, fname, asked) {
     var d = TuneDiff.diff(layout, tables, TuneDiff.msqValues(text, layout)), box = $(".lt-diff");
     if (!d.length) { tuneSrc("ECU tune: the same as " + fname + "."); if (asked) toast("The ECU already has " + fname + "."); return; }
@@ -772,12 +780,12 @@
       " (" + nv + " value" + (nv === 1 ? "" : "s") + "). The engine runs what's in the ECU. Take each from the ECU or from this app (written to the ECU, then burned); in a table, tap a red cell to take just that one from the side you tap.</p>" +
       '<div class="lt-row"><button class="btn sm" type="button" data-diff-all="ecu">All: keep the ECU\'s</button><button class="btn sm" type="button" data-diff-all="app">All: use ' + esc(fname) + "'s</button></div>" +
       '<ul class="lt-dl2">' + d.map(function (x, k) {
-        var c = layout.constants[x.name] || {}, canApp = c.kind !== "string", one = x.cells.length === 1 && ECU.count(c) === 1;
+        var c = layout.constants[x.name] || {}, canApp = c.kind !== "string" && !x.ro, one = x.cells.length === 1 && ECU.count(c) === 1;
         var open = !!grids[k] && opened++ < 3;  // the first few tables open, as tables
         return '<li data-di="' + k + '"' + (open ? ' class="open"' : "") + '><div class="lt-di-h"><button type="button" class="lt-di-t" data-di-open' + (one ? " disabled" : "") + ">" + (one ? "" : '<span class="lt-chg-more">▸</span> ') + "<b>" + esc(title(x.name)) + "</b> " +
           '<small class="dim">' + esc(KINDS[x.kind] || x.kind) + (one ? ": ECU " + diffVal(c, x.cells[0].ecu) + " · app " + diffVal(c, x.cells[0].app) : " · " + x.cells.length + " value" + (x.cells.length === 1 ? "" : "s") + " differ") + '</small> <small class="lt-di-mix"></small></button>' +
           '<span class="lt-seg" role="radiogroup" aria-label="Use"><label><input type="radio" name="dk' + k + '" value="ecu" checked><span>ECU\'s</span></label>' +
-          "<label" + (canApp ? "" : ' title="A text setting: change it in TunerStudio"') + '><input type="radio" name="dk' + k + '" value="app"' + (canApp ? "" : " disabled") + "><span>App's</span></label></span></div>" +
+          "<label" + (canApp ? "" : ' title="Change it in Settings, at the car (wiring, sensor and text settings are not written from here)"') + '><input type="radio" name="dk' + k + '" value="app"' + (canApp ? "" : " disabled") + "><span>App's</span></label></span></div>" +
           '<div class="lt-di-body"' + (open ? "" : " hidden") + "></div></li>";
       }).join("") + "</ul>" +
       '<div class="lt-row"><small class="dim" data-diff-sum></small><span class="st-grow"></span><button class="btn primary" type="button" data-diff-go></button></div>' +
@@ -804,7 +812,7 @@
     }
     function setAll(k, side) {
       var c = layout.constants[d[k].name] || {};
-      if (side === "app" && c.kind === "string") return;
+      if (side === "app" && (c.kind === "string" || d[k].ro)) return;
       picks[k] = {};
       if (side === "app") d[k].cells.forEach(function (cl) { picks[k][cl.i] = true; });
       mark(k);
@@ -826,7 +834,7 @@
       var td = e.target.closest(".lt-dgt td.chg");
       if (td) {  // one cell, from the side tapped
         var k = +td.closest("[data-di]").dataset.di, i = +td.dataset.k;
-        if (td.dataset.side === "app") { if ((layout.constants[d[k].name] || {}).kind !== "string") picks[k][i] = true; } else delete picks[k][i];
+        if (td.dataset.side === "app") { if ((layout.constants[d[k].name] || {}).kind !== "string" && !d[k].ro) picks[k][i] = true; } else delete picks[k][i];
         mark(k); sum(); return;
       }
       var op = e.target.closest("[data-di-open]");

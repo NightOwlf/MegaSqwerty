@@ -96,3 +96,19 @@ test("per-cell picks: only the cells taken from the app are written", () => {
   assert.deepStrictEqual(TD.chosen(items, [{ 4: true }, {}]), [{ name: "veTable", kind: "table", cells: [{ i: 4, ecu: 1, app: 3 }] }]);
   assert.deepStrictEqual(TD.chosen(items, [{}, { 0: true }]).map((x) => x.name), ["rpmHardLimit"]);
 });
+
+test("wiring and sensor settings (dialogs only) are shown but never written", () => {
+  const L = JSON.parse(JSON.stringify(layout));
+  L.constants.triggerType = { kind: "scalar", type: "U08", offset: 40, scale: 1, digits: 0, dlg: true };
+  const d = TD.diff(L, Object.assign({ triggerType: [3] }, ecu), { triggerType: [7], veTable: [50, 51, 52, 60, 64.5, 62] });
+  assert.deepStrictEqual(d.map((x) => [x.name, x.kind, !!x.ro]), [["veTable", "table", false], ["triggerType", "wiring", true]]);
+  const all = d.map((x) => { const p = {}; x.cells.forEach((c) => { p[c.i] = true; }); return p; });  // "all from the app"
+  assert.deepStrictEqual(TD.chosen(d, all).map((x) => x.name), ["veTable"]);
+  assert.deepStrictEqual(TD.writes(d, 128).map((w) => w.name), ["veTable"]);
+});
+
+test("an all-zero tune is blank", () => {
+  assert.strictEqual(TD.blank({ veTable: [0, 0, 0], rpmHardLimit: [0], injMode: [1] }, layout), true);
+  assert.strictEqual(TD.blank({ veTable: [0, 0, 50] }, layout), false);
+  assert.strictEqual(TD.blank({}, layout), false);
+});

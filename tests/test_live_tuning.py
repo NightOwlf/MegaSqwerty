@@ -538,3 +538,16 @@ def test_the_car_hears_when_a_change_is_in_the_tune(client, fx):
         assert m["tune"] == s["tune"] and m["table"] == "veTable" and m["rev"]
     z = parse_msq(client.get(f"/t/{s['tune']}.msq").content).get("veTable").values
     assert z[3] == pytest.approx(61.5)
+
+
+def test_a_blank_ecu_read_never_becomes_the_tune(client, fx):
+    """A simulated ECU started without its tune reads all zeros: that's never synced into the session's tune."""
+    s = start(client, fx)
+    before = client.get(f"/t/{s['tune']}.msq").content
+    with client.websocket_connect(f"/live/{s['id']}/ws?k={s['car_key']}") as cw:
+        cw.receive_json()
+        cw.send_json({"t": "tables", "tables": {"veTable": [0.0] * 256, "rpmHardLimit": [0], "injector_flow": [0.0]}})
+        cw.send_json({"t": "state", "ecu": True})
+        while cw.receive_json()["t"] != "state":
+            pass
+    assert client.get(f"/t/{s['tune']}.msq").content == before

@@ -65,9 +65,10 @@
       if (!c || !have || have.length !== app.length || sh[name] || /firmware|version|signature/i.test(name)) return;
       var tol = tolerance(c), cells = [];
       app.forEach(function (v, i) { if (!(Math.abs(v - have[i]) <= tol)) cells.push({ i: i, ecu: have[i], app: v }); });
-      if (cells.length) out.push({ name: name, kind: kindOf[name] || (c.kind === "array" ? "table" : "setting"), cells: cells });
+      // wiring, pins, trigger and sensor settings (in the layout only for the settings dialogs): shown, never written
+      if (cells.length) out.push(c.dlg ? { name: name, kind: "wiring", cells: cells, ro: true } : { name: name, kind: kindOf[name] || (c.kind === "array" ? "table" : "setting"), cells: cells });
     });
-    var rank = { table: 0, curve: 1, axis: 2, setting: 3 };
+    var rank = { table: 0, curve: 1, axis: 2, setting: 3, wiring: 4 };
     return out.sort(function (a, b) { return rank[a.kind] - rank[b.kind] || a.name.localeCompare(b.name); });
   }
 
@@ -86,6 +87,7 @@
   function writes(items, n) {
     var out = [];
     items.forEach(function (x) {
+      if (x.ro) return;
       for (var k = 0; k < x.cells.length; k += n || 128) {
         var part = {};
         x.cells.slice(k, k + (n || 128)).forEach(function (cl) { part[cl.i] = cl.app; });
@@ -116,14 +118,27 @@
   }
 
   /* What to write, from the driver's picks: picks[k] is {cellIndex: true} for the cells taken from the app.
-     -> items with only those cells (items with none left out). */
+     -> items with only those cells (items with none left out; read-only ones never). */
   function chosen(items, picks) {
     return items.map(function (x, k) {
+      if (x.ro) return { name: x.name, kind: x.kind, cells: [] };
       var p = picks[k] || {};
       return { name: x.name, kind: x.kind, cells: x.cells.filter(function (c) { return p[c.i]; }) };
     }).filter(function (x) { return x.cells.length; });
   }
 
-  return { msqValues: msqValues, sharedMem: sharedMem, diff: diff, cellAt: cellAt, writes: writes, tolerance: tolerance,
+  /* A tune that is all zeros (a simulated ECU started without its tune, a blank page): never something to keep. */
+  function blank(tables, layout) {
+    var seen = 0;
+    for (var name in tables) {
+      var c = layout && layout.constants[name];
+      if (c && c.kind === "bits") continue;
+      var v = tables[name] || [];
+      for (var i = 0; i < v.length; i++) { if (v[i] !== 0 && v[i] === v[i]) return false; seen++; }
+    }
+    return seen > 0;
+  }
+
+  return { blank: blank, msqValues: msqValues, sharedMem: sharedMem, diff: diff, cellAt: cellAt, writes: writes, tolerance: tolerance,
            gridOf: gridOf, versions: versions, chosen: chosen };
 });

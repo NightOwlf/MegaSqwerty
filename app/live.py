@@ -61,6 +61,18 @@ def _roles(outputs: dict) -> dict:
     return out
 
 
+def _blank(tables: dict) -> bool:
+    """Every value zero: a blank page (a simulated ECU started without its tune), not a real tune."""
+    seen = False
+    for vals in tables.values():
+        for v in vals if isinstance(vals, list) else []:
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                if v != 0:
+                    return False
+                seen = True
+    return seen
+
+
 class Session:
     def __init__(self, sid: str, car_key: str, view_key: str, layout: dict, tune: str, original: str):
         self.id, self.car_key, self.view_key = sid, car_key, view_key
@@ -436,8 +448,8 @@ def register(app, store, templates, deps) -> None:
 
     def sync_copy(s: Session, tables: dict) -> None:
         """Make the session's tune copy hold what the ECU read back (only what differs, one backup first)."""
-        if not s.tune or not tables:
-            return
+        if not s.tune or not tables or _blank(tables):
+            return  # an ECU (or simulator) with nothing in it is never the tune to keep
         doc = store.get_doc(s.tune)
         if doc is None:
             return
