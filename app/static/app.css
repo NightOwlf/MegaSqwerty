@@ -1682,7 +1682,24 @@ li.open .lt-chg-more { transform: rotate(90deg); }
 .lt-modal-in p { margin: 0; }
 .lt-dlist { margin: 0; padding-left: 18px; max-height: 40vh; overflow-y: auto; }
 /* the difference report: ECU against the app's tune, one row per table or setting, ECU's / App's per row */
-.lt-modal-in.lt-diffbox { width: min(720px, 100%); }
+.lt-modal-in.lt-diffbox { width: min(1240px, 100%); max-height: 92vh; }
+.lt-di-body { padding: 6px 0 2px 14px; }
+.lt-di-mix { color: #0018a8; font-weight: 700; }
+.lt-dgs { display: flex; flex-wrap: wrap; gap: 12px; }
+.lt-dg { flex: 1 1 380px; min-width: 0; margin: 0; overflow-x: auto; }
+.lt-dg figcaption { margin-bottom: 3px; font-weight: 700; }
+.lt-dgt { width: 100%; border-collapse: collapse; table-layout: fixed; font: 10.5px var(--mono); color: #000; }
+.lt-dgt td, .lt-dgt th { padding: 2px 1px; border: 1px solid rgba(0, 0, 0, .18); text-align: center; white-space: nowrap; overflow: hidden; }
+.lt-dgt th { background: #d8d8d8; font-weight: 600; color: #333; }
+.lt-dgt tr > th:first-child { width: 34px; }
+.lt-dgt td.chg { color: #d00000; font-weight: 800; cursor: pointer; }
+.lt-dgt td.chg.pick { box-shadow: inset 0 0 0 2px #0018a8; }
+.lt-dgt td.chg:hover { outline: 2px solid #000; outline-offset: -2px; }
+.lt-dkey { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; }
+.lt-dkey i { display: inline-block; width: 160px; height: 10px; border: 1px solid #888; }
+.lt-dkey-n { margin-left: 8px; color: #444; }
+.lt-dkey .lt-red { color: #d00000; font: 800 11px var(--mono); }
+.lt-dkey .lt-ring { padding: 0 3px; box-shadow: inset 0 0 0 2px #0018a8; font: 800 11px var(--mono); color: #d00000; }
 .lt-dl2 { margin: 0; padding: 0; list-style: none; max-height: 52vh; overflow-y: auto; border: 1px solid #a8a8a8; background: #fff; }
 .lt-dl2 > li { padding: 5px 8px; border-bottom: 1px solid #ddd; }
 .lt-dl2 > li:last-child { border-bottom: 0; }
@@ -1702,6 +1719,9 @@ li.open .lt-chg-more { transform: rotate(90deg); }
 .lt-dl2 .lt-chg-t { margin: 4px 0 2px 14px; color: #000; }
 .lt-dl2 .lt-chg-t th { color: #555; }
 .lt-tunesrc .btn { margin-left: 6px; vertical-align: middle; }
+.lt-projsave { margin: 8px 0 0; font-size: 13px; }
+.lt-pf-ok b { font-family: var(--mono); }
+.lt-pf-err { color: #e0503c; font-weight: 600; }
 .lt.ecu-known [data-connect] { font-size: 12.5px; }
 /* the app's two main tabs: Live tuning (the ECU) and the Log viewer, each in its own browser tab */
 .menu a.menu-tab { font-weight: 600; }

@@ -415,23 +415,24 @@ def register(app, store, templates, deps) -> None:
         return bool(re.match(r"^[A-Za-z0-9]{10}$", slug or ""))
 
     # ---------------------------------------------------------------- the relay
-    def apply_to_copy(s: Session, table: str, cells: dict, label: str | None = None) -> None:
-        """Keep the session's tune copy in step with what the ECU now holds (cells: {index: value})."""
+    def apply_to_copy(s: Session, table: str, cells: dict, label: str | None = None) -> bool:
+        """Keep the session's tune copy in step with what the ECU now holds (cells: {index: value}). -> saved?"""
         if not s.tune or not cells:
-            return
+            return False
         raw = store.read_raw(s.tune)
         if raw is None:
-            return
+            return False
         try:
             new_raw, _ = editmod.apply_changes(raw, {table: {str(k): v for k, v in cells.items()}})
             doc = parse_msq(new_raw)
         except (editmod.EditError, MsqError):
-            return  # a constant the tune file doesn't have, or can't hold: the ECU still has it
+            return False  # a constant the tune file doesn't have, or can't hold: the ECU still has it
         if label:
             store.add_version(s.tune, raw, label)
         elif time.time() - store.last_version_at(s.tune) > 600:
             store.add_version(s.tune, raw, "Auto-save")
         store.replace_tune(s.tune, new_raw, doc)
+        return True
 
     def sync_copy(s: Session, tables: dict) -> None:
         """Make the session's tune copy hold what the ECU read back (only what differs, one backup first)."""
@@ -590,8 +591,10 @@ def register(app, store, templates, deps) -> None:
                                  "at": int(time.time()), "note": msg.get("note", "")}
                         s.changes.append(entry)
                         del s.changes[:-200]
-                        await run_in_threadpool(apply_to_copy, s, table, cells)  # the copy first: then it's current
+                        saved = await run_in_threadpool(apply_to_copy, s, table, cells)  # the copy first: then it's current
                         await to_viewers(s, dict(entry, t="applied"))
+                        if saved:  # the car page writes it into the TunerStudio project's tune file too
+                            await send(s.car, {"t": "saved", "tune": s.tune, "rev": store.rev(s.tune), "table": table})
                     elif t in ("rejected", "burned", "undone", "notice"):
                         if t == "burned":
                             s.state["needBurn"] = False

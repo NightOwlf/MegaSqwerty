@@ -162,6 +162,7 @@
       frames++; pushFrame(Date.now() / 1000, chList, v); drawLive();
       emit("frame", Date.now() / 1000, chList, v);
     }
+    else if (m.t === "saved" && ROLE === "car") pfSoon();  // the session's tune holds a change: the project's file too
     else if (m.t === "want" && ROLE === "car") { wanted = {}; (m.n || []).forEach(function (n) { wanted[n] = 1; }); }
     else if (m.t === "pong") { rtt = Date.now() - (m.at || Date.now()); pill(); }
     else if (m.t === "tables" && ROLE === "view") {
@@ -211,6 +212,7 @@
       $(".lt-status").textContent = running ? "Session reconnected. ECU connected: " + (state.ecuSignature || "")
         : "Not connected. Plug the ECU in (TunerStudio must be closed: only one program can use the ECU's USB port).";
       if (!running) autoEcu();
+      pfLoad();
     });
   }
   var carFiles = null;
@@ -714,8 +716,9 @@
      handles are written; wiring, sensor and protection settings stay as the ECU has them. */
   function tuneSrc(text) { var el = $(".lt-tunesrc"); if (el) el.textContent = text; }
   /* The difference report, TunerStudio's way: every setting and table cell where the ECU's burned tune and the
-     app's copy differ, both values side by side, and per item (or all at once) keep the ECU's or write the app's
-     into the ECU (then it's burned). Until the driver picks, the ECU's stays: the engine runs what's in it. */
+     app's copy differ. A table is shown as the table itself, the ECU's and the app's side by side in the usual
+     heat colours (one scale for both, its key below), the differing cells' numbers in red: take the whole table
+     from either, or tap cells to take just those. Until the driver picks, the ECU's stays: the engine runs it. */
   function optLabel(c, v) { var o = (c.options || [])[Math.round(v)]; return o != null ? String(o).replace(/^"|"$/g, "") : String(v); }
   function diffVal(c, v) { return c.kind === "bits" ? esc(optLabel(c, v)) : fmt(showT(v, c.units), c.digits == null ? 2 : c.digits) + (c.units ? " " + esc(showU(c.units)) : ""); }
   function diffWhere(name, i) {
@@ -725,80 +728,131 @@
     if (!parts.length) return ECU.count(c) > 1 ? "row " + (at.row + 1) + (c.cols > 1 ? ", col " + (at.col + 1) : "") : "value";
     return parts.join(" · ");
   }
+  // one version of a table as its grid: heat colours, the differing cells in red, those taken from this side ringed
+  function diffGrid(x, g, vals, v, side, pick) {
+    var c = layout.constants[x.name] || {}, d = c.digits == null ? 1 : c.digits, chg = {}, h = [];
+    x.cells.forEach(function (cl) { chg[cl.i] = 1; });
+    var xu = (layout.constants[g.xName] || {}).units, yu = g.yName ? (layout.constants[g.yName] || {}).units : "";
+    for (var r = g.rows - 1; r >= 0; r--) {
+      h.push("<tr><th>" + (g.yName ? bin(showT(tables[g.yName][r], yu)) : "") + "</th>");
+      for (var cc = 0; cc < g.cols; cc++) {
+        var k = r * g.cols + cc, val = vals[k], mine = chg[k] && (side === "app") === !!pick[k];
+        h.push('<td data-k="' + k + '" data-side="' + side + '" class="' + (chg[k] ? "chg" : "") + (mine ? " pick" : "") + '" style="background:' +
+          heat(v.hi > v.lo ? (val - v.lo) / (v.hi - v.lo) : 0.5) + '"' + (chg[k] ? ' title="' + esc(diffWhere(x.name, k)) + ": ECU " + esc(String(fmt(v.ecu[k], d))) + ", app " + esc(String(fmt(v.app[k], d))) + '"' : "") +
+          ">" + cell(showT(val, c.units), d) + "</td>");
+      }
+      h.push("</tr>");
+    }
+    h.push('<tr class="ax"><th>' + esc(showU(yu || "")) + "</th>" + tables[g.xName].map(function (b) { return "<th>" + bin(showT(b, xu)) + "</th>"; }).join("") + "</tr>");
+    return '<figure class="lt-dg"><figcaption>' + (side === "ecu" ? "In the ECU (burned)" : "This app's tune") + '</figcaption><table class="lt-dgt"><tbody>' + h.join("") + "</tbody></table></figure>";
+  }
+  function diffKey(x, v) {  // the colour map: what each colour means in this table
+    var c = layout.constants[x.name] || {}, d = c.digits == null ? 1 : c.digits;
+    var stops = [0, 0.2, 0.4, 0.6, 0.8, 1].map(function (f) { return heat(f) + " " + f * 100 + "%"; }).join(",");
+    return '<div class="lt-dkey"><span class="mono">' + fmt(showT(v.lo, c.units), d) + '</span><i style="background:linear-gradient(90deg,' + stops + ')"></i><span class="mono">' +
+      fmt(showT(v.hi, c.units), d) + (c.units ? " " + esc(showU(c.units)) : "") + '</span><span class="lt-dkey-n"><b class="lt-red">12.3</b> differs · <b class="lt-ring">12.3</b> will be used</span></div>';
+  }
   var lastDiff = null;
   var KINDS = { table: "table", curve: "curve", axis: "axis bins", setting: "setting" };
   function compareTune(text, fname, asked) {
     var d = TuneDiff.diff(layout, tables, TuneDiff.msqValues(text, layout)), box = $(".lt-diff");
     if (!d.length) { tuneSrc("ECU tune: the same as " + fname + "."); if (asked) toast("The ECU already has " + fname + "."); return; }
-    var nv = d.reduce(function (s, x) { return s + x.cells.length; }, 0), choice = d.map(function () { return "ecu"; });
+    var nv = d.reduce(function (s, x) { return s + x.cells.length; }, 0);
+    var picks = d.map(function () { return {}; });  // per item: the cells taken from the app
+    var grids = d.map(function (x) { return TuneDiff.gridOf(layout, x.name, tables); });
     tuneSrc("ECU tune: different from " + fname + " in " + d.length + " place" + (d.length === 1 ? "" : "s") + " (the ECU's is running). ");
     lastDiff = { text: text, fname: fname };
     var ts = $(".lt-tunesrc"); if (ts) ts.insertAdjacentHTML("beforeend", '<button class="btn sm" type="button" data-diff-again>Difference report</button>');
     box.hidden = false;
     var inner = $(".lt-modal-in", box);
     inner.classList.add("lt-diffbox");
+    var opened = 0;
     inner.innerHTML = '<div class="lt-row"><b>Difference report: the ECU and ' + esc(fname) + '</b><span class="st-grow"></span><button class="btn sm" type="button" data-diff-close>Decide later</button></div>' +
       "<p>What's burned in the ECU and <b>" + esc(fname) + "</b> differ in " + d.length + " table" + (d.length === 1 ? "" : "s") + " or setting" + (d.length === 1 ? "" : "s") +
-      " (" + nv + " value" + (nv === 1 ? "" : "s") + "). The engine runs what's in the ECU. For each, keep the ECU's, or write this app's into the ECU (it's burned after).</p>" +
-      '<div class="lt-row"><button class="btn sm" type="button" data-diff-all="ecu">All: keep the ECU\'s</button><button class="btn sm" type="button" data-diff-all="app">All: write ' + esc(fname) + "'s</button></div>" +
+      " (" + nv + " value" + (nv === 1 ? "" : "s") + "). The engine runs what's in the ECU. Take each from the ECU or from this app (written to the ECU, then burned); in a table, tap a red cell to take just that one from the side you tap.</p>" +
+      '<div class="lt-row"><button class="btn sm" type="button" data-diff-all="ecu">All: keep the ECU\'s</button><button class="btn sm" type="button" data-diff-all="app">All: use ' + esc(fname) + "'s</button></div>" +
       '<ul class="lt-dl2">' + d.map(function (x, k) {
-        var c = layout.constants[x.name] || {}, canApp = c.kind !== "bits";
-        var one = x.cells.length === 1 && ECU.count(c) === 1;
-        return '<li data-di="' + k + '"><div class="lt-di-h"><button type="button" class="lt-di-t" data-di-open' + (one ? " disabled" : "") + ">" + (one ? "" : '<span class="lt-chg-more">▸</span> ') + "<b>" + esc(title(x.name)) + "</b> " +
-          '<small class="dim">' + esc(KINDS[x.kind] || x.kind) + (one ? ": ECU " + diffVal(c, x.cells[0].ecu) + " · app " + diffVal(c, x.cells[0].app) : " · " + x.cells.length + " value" + (x.cells.length === 1 ? "" : "s")) + "</small></button>" +
-          '<span class="lt-seg" role="radiogroup"><label><input type="radio" name="dk' + k + '" value="ecu" checked><span>ECU\'s</span></label>' +
-          "<label" + (canApp ? "" : ' title="An option setting: change it in TunerStudio"') + '><input type="radio" name="dk' + k + '" value="app"' + (canApp ? "" : " disabled") + "><span>App's</span></label></span></div></li>";
+        var c = layout.constants[x.name] || {}, canApp = c.kind !== "string", one = x.cells.length === 1 && ECU.count(c) === 1;
+        var open = !!grids[k] && opened++ < 3;  // the first few tables open, as tables
+        return '<li data-di="' + k + '"' + (open ? ' class="open"' : "") + '><div class="lt-di-h"><button type="button" class="lt-di-t" data-di-open' + (one ? " disabled" : "") + ">" + (one ? "" : '<span class="lt-chg-more">▸</span> ') + "<b>" + esc(title(x.name)) + "</b> " +
+          '<small class="dim">' + esc(KINDS[x.kind] || x.kind) + (one ? ": ECU " + diffVal(c, x.cells[0].ecu) + " · app " + diffVal(c, x.cells[0].app) : " · " + x.cells.length + " value" + (x.cells.length === 1 ? "" : "s") + " differ") + '</small> <small class="lt-di-mix"></small></button>' +
+          '<span class="lt-seg" role="radiogroup" aria-label="Use"><label><input type="radio" name="dk' + k + '" value="ecu" checked><span>ECU\'s</span></label>' +
+          "<label" + (canApp ? "" : ' title="A text setting: change it in TunerStudio"') + '><input type="radio" name="dk' + k + '" value="app"' + (canApp ? "" : " disabled") + "><span>App's</span></label></span></div>" +
+          '<div class="lt-di-body"' + (open ? "" : " hidden") + "></div></li>";
       }).join("") + "</ul>" +
       '<div class="lt-row"><small class="dim" data-diff-sum></small><span class="st-grow"></span><button class="btn primary" type="button" data-diff-go></button></div>' +
       '<p class="fine">Writing goes to the ECU\'s working memory, then it\'s burned so it stays when the key goes off. What you keep from the ECU becomes this app\'s tune too.</p>';
-    function sum() {
-      var n = choice.filter(function (v) { return v === "app"; }).length;
-      $("[data-diff-sum]", inner).textContent = n ? n + " to write, " + (d.length - n) + " kept from the ECU" : "Keeping everything as the ECU has it";
-      $("[data-diff-go]", inner).textContent = n ? "Write " + n + " to the ECU and burn" : "Keep the ECU's tune";
+    function body(k) {
+      var li = $('[data-di="' + k + '"]', inner), el = li && li.querySelector(".lt-di-body"), x = d[k], g = grids[k], c = layout.constants[x.name] || {};
+      if (!el) return;
+      if (g && tables[x.name]) {
+        var v = TuneDiff.versions(tables[x.name], x);
+        el.innerHTML = '<div class="lt-dgs">' + diffGrid(x, g, v.ecu, v, "ecu", picks[k]) + diffGrid(x, g, v.app, v, "app", picks[k]) + "</div>" + diffKey(x, v);
+      } else {
+        el.innerHTML = '<table class="lt-chg-t"><thead><tr><th>Cell</th><th>ECU</th><th>App</th></tr></thead><tbody>' + x.cells.slice(0, 400).map(function (cl) {
+          return "<tr><td>" + diffWhere(x.name, cl.i) + "</td><td>" + diffVal(c, cl.ecu) + "</td><td><b>" + diffVal(c, cl.app) + "</b></td></tr>";
+        }).join("") + (x.cells.length > 400 ? '<tr><td colspan="3" class="dim">and ' + (x.cells.length - 400) + " more</td></tr>" : "") + "</tbody></table>";
+      }
     }
+    function mark(k) {  // the item's ECU's / App's / mixed state, from its picks
+      var li = $('[data-di="' + k + '"]', inner), n = Object.keys(picks[k]).length, all = d[k].cells.length;
+      li.querySelector('input[value="ecu"]').checked = n === 0;
+      li.querySelector('input[value="app"]').checked = n === all;
+      li.querySelector(".lt-di-mix").textContent = n && n < all ? n + " of " + all + " from the app" : "";
+      var b = li.querySelector(".lt-di-body");
+      if (b && !b.hidden && grids[k]) body(k);
+    }
+    function setAll(k, side) {
+      var c = layout.constants[d[k].name] || {};
+      if (side === "app" && c.kind === "string") return;
+      picks[k] = {};
+      if (side === "app") d[k].cells.forEach(function (cl) { picks[k][cl.i] = true; });
+      mark(k);
+    }
+    function sum() {
+      var items = TuneDiff.chosen(d, picks), n = items.reduce(function (s, x) { return s + x.cells.length; }, 0);
+      $("[data-diff-sum]", inner).textContent = n ? n + " value" + (n === 1 ? "" : "s") + " in " + items.length + " table" + (items.length === 1 ? "" : "s") + "/setting" + (items.length === 1 ? "" : "s") + " from the app, the rest kept from the ECU" : "Keeping everything as the ECU has it";
+      $("[data-diff-go]", inner).textContent = n ? "Write " + n + " value" + (n === 1 ? "" : "s") + " to the ECU and burn" : "Keep the ECU's tune";
+    }
+    d.forEach(function (x, k) { if (grids[k]) { var b = $('[data-di="' + k + '"] .lt-di-body', inner); if (b && !b.hidden) body(k); } });
     sum();
     box.onchange = function (e) {
       var li = e.target.closest("[data-di]");
-      if (li && e.target.type === "radio") { choice[+li.dataset.di] = e.target.value; sum(); }
+      if (li && e.target.type === "radio") { setAll(+li.dataset.di, e.target.value); sum(); }
     };
     box.onclick = function (e) {
       var all = e.target.closest("[data-diff-all]");
-      if (all) {
-        $$("[data-di]", inner).forEach(function (li) {
-          var r = li.querySelector('input[value="' + all.dataset.diffAll + '"]');
-          if (r && !r.disabled) { r.checked = true; choice[+li.dataset.di] = r.value; }
-        });
-        sum(); return;
+      if (all) { d.forEach(function (x, k) { setAll(k, all.dataset.diffAll); }); sum(); return; }
+      var td = e.target.closest(".lt-dgt td.chg");
+      if (td) {  // one cell, from the side tapped
+        var k = +td.closest("[data-di]").dataset.di, i = +td.dataset.k;
+        if (td.dataset.side === "app") { if ((layout.constants[d[k].name] || {}).kind !== "string") picks[k][i] = true; } else delete picks[k][i];
+        mark(k); sum(); return;
       }
       var op = e.target.closest("[data-di-open]");
       if (op) {
-        var li = op.closest("[data-di]"), x = d[+li.dataset.di], c = layout.constants[x.name] || {}, tb = li.querySelector("table");
-        if (!tb) {
-          tb = document.createElement("table"); tb.className = "lt-chg-t";
-          tb.innerHTML = "<thead><tr><th>Cell</th><th>ECU</th><th>App</th></tr></thead><tbody>" + x.cells.slice(0, 400).map(function (cl) {
-            return "<tr><td>" + diffWhere(x.name, cl.i) + "</td><td>" + diffVal(c, cl.ecu) + "</td><td><b>" + diffVal(c, cl.app) + "</b></td></tr>";
-          }).join("") + (x.cells.length > 400 ? '<tr><td colspan="3" class="dim">and ' + (x.cells.length - 400) + " more</td></tr>" : "") + "</tbody>";
-          li.appendChild(tb); tb.hidden = true;
-        }
-        tb.hidden = !tb.hidden; li.classList.toggle("open", !tb.hidden);
+        var li = op.closest("[data-di]"), b = li.querySelector(".lt-di-body");
+        if (!b.innerHTML) body(+li.dataset.di);
+        b.hidden = !b.hidden; li.classList.toggle("open", !b.hidden);
         return;
       }
       if (e.target.closest("[data-diff-close]") || e.target === box) { box.hidden = true; return; }
       if (e.target.closest("[data-diff-go]")) {
         box.hidden = true;
-        loadTune(d.filter(function (x, k) { return choice[k] === "app"; }), fname, d.length);
+        loadTune(TuneDiff.chosen(d, picks), fname, d.length);
       }
     };
   }
   function loadTune(items, fname, total) {
     if (!items.length) { tuneSrc("ECU tune: kept as the ECU has it (this app's copy follows it)."); return; }
     if (!running) { toast("Connect the ECU first.", true); return; }
-    tuneSrc("Writing " + items.length + " from " + fname + " to the ECU…");
+    var n = items.reduce(function (s, x) { return s + x.cells.length; }, 0);
+    tuneSrc("Writing " + n + " value" + (n === 1 ? "" : "s") + " from " + fname + " to the ECU…");
     TuneDiff.writes(items, 128).forEach(function (w) { queue.push({ kind: "set", m: { table: w.name, cells: w.cells, note: "load" }, by: "driver" }); });
     queue.push({ kind: "burn", m: { auto: true } });
     queue.push({ kind: "done", fn: function () {
-      tuneSrc("ECU tune: " + items.length + " of " + total + " written from " + fname + " and burned; the rest kept as the ECU had it.");
-      send({ t: "notice", text: "The driver wrote " + items.length + " table(s)/setting(s) from " + fname + " into the ECU and burned it." });
+      tuneSrc("ECU tune: " + n + " value" + (n === 1 ? "" : "s") + " in " + items.length + " of " + total + " places written from " + fname + " and burned; the rest kept as the ECU had it.");
+      send({ t: "notice", text: "The driver wrote " + n + " value(s) from " + fname + " into the ECU and burned it." });
     } });
   }
   /* TPS calibration at the car (key on, engine off), like TunerStudio's: store the sensor voltage at closed and
@@ -1526,6 +1580,94 @@
     var ini = new File([p.ini], "mainController.ini"), msq = p.msq ? new File([p.msq], p.msqName || "CurrentTune.msq") : null;
     return startSession({ ini: ini, msq: msq, msqText: p.msq || "", name: p.name || "" });
   }
+  /* Every change the ECU takes is saved in the session's tune (the server does it), and, where Chrome lets a page
+     write files (File System Access), into the TunerStudio project's own tune file too, as TunerStudio does: open
+     TunerStudio afterwards and it has every change. The folder is chosen once (its handle kept in IndexedDB); the
+     project's file as it was is copied into its restorePoints folder first, once per live session. */
+  var pf = { dir: null, file: "CurrentTune.msq", t: 0, busy: false, again: false, at: 0, err: "" };
+  function idbGet(key) { return idb(function (st, ok) { var g = st.get(key); g.onsuccess = function () { ok(g.result || null); }; g.onerror = function () { ok(null); }; }).catch(function () { return null; }); }
+  function idbPut(key, v) { return idb(function (st, ok) { st.put(v, key).onsuccess = ok; }).catch(function () { /* private window */ }); }
+  function canFs() { return ROLE === "car" && typeof window.showDirectoryPicker === "function"; }
+  function pfName() { return (pf.dir ? pf.dir.name + "/" : "") + pf.file; }
+  function pfRender(perm) {
+    var el = $(".lt-projsave");
+    if (!el || !canFs()) return;
+    el.hidden = false;
+    el.innerHTML = !pf.dir ? '<button class="btn" type="button" data-pf-choose>Save changes into the TunerStudio project too…</button> <small class="dim">choose the project folder: every change goes into its ' + esc(pf.file) + ", like TunerStudio</small>"
+      : perm !== "granted" ? '<button class="btn primary" type="button" data-pf-allow>Keep saving changes to ' + esc(pfName()) + '</button> <small class="dim">Chrome asks once per visit</small>'
+      : '<span class="lt-pf-ok">✓ Changes are saved to <b>' + esc(pfName()) + "</b>" + (pf.at ? " (last " + new Date(pf.at).toLocaleTimeString() + ")" : "") +
+        "</span>" + (pf.err ? ' <span class="lt-pf-err">' + esc(pf.err) + "</span>" : "") + ' <button class="btn sm" type="button" data-pf-choose>Another folder…</button>';
+  }
+  function pfPerm() { return pf.dir && pf.dir.queryPermission ? pf.dir.queryPermission({ mode: "readwrite" }).catch(function () { return "prompt"; }) : Promise.resolve("prompt"); }
+  function pfLoad() {
+    if (!canFs()) return;
+    var p = carFiles && carFiles.last;
+    if (p && p.msqName) pf.file = p.msqName; else if (carFiles && carFiles.msq && carFiles.msq.name) pf.file = carFiles.msq.name;
+    idbGet("dir").then(function (h) {
+      // the folder kept is this project's (the session's): another project's isn't written
+      if (h && sess && sess.project && h.name !== sess.project) h = null;
+      pf.dir = h;
+      return pfPerm();
+    }).then(pfRender);
+  }
+  function pfUse(h) {
+    pf.dir = h; idbPut("dir", h);
+    // changes made already on this page go in at once
+    return h.getFileHandle(pf.file).then(function () { pfRender("granted"); if (undoStack.length) pfSoon(); }, function () {
+      pf.dir = null; pfRender(); toast("That folder has no " + pf.file + ": choose the TunerStudio project folder.", true);
+    });
+  }
+  function pfChoose() {
+    window.showDirectoryPicker({ mode: "readwrite", id: "msq-project" }).then(pfUse, function () { /* cancelled */ });
+  }
+  function pfSoon() { if (!pf.dir) return; clearTimeout(pf.t); pf.t = setTimeout(pfWrite, 1500); }
+  function stamp(d) { var p = function (n) { return ("0" + n).slice(-2); }; return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "_" + p(d.getHours()) + "." + p(d.getMinutes()) + "." + p(d.getSeconds()); }
+  function pfWrite() {
+    var slug = state.tune || (sess && sess.tune);
+    if (!pf.dir || !slug) return;
+    if (pf.busy) { pf.again = true; return; }
+    pf.busy = true;
+    pfPerm().then(function (perm) {
+      if (perm !== "granted") { pfRender(perm); throw null; }
+      return fetch("/t/" + slug + ".msq", { cache: "no-store" }).then(function (r) { if (!r.ok) throw new Error("the tune couldn't be read from the server"); return r.text(); });
+    }).then(function (text) {
+      return pf.dir.getFileHandle(pf.file).then(function (fh) {
+        var backup = Promise.resolve(), key = "msq.live.backup";
+        if (lsGet(key) !== SID) {  // the project's file as it was, once per live session, where TunerStudio keeps them
+          backup = fh.getFile().then(function (f) { return f.text(); }).then(function (old) {
+            return pf.dir.getDirectoryHandle("restorePoints", { create: true }).then(function (rp) {
+              return rp.getFileHandle(pf.file.replace(/\.msq$/i, "") + "_" + stamp(new Date()) + "_before_MSQ_Viewer.msq", { create: true });
+            }).then(function (bh) { return bh.createWritable().then(function (w) { return w.write(old).then(function () { return w.close(); }); }); });
+          }).then(function () { lsSet(key, SID); });
+        }
+        return backup.then(function () { return fh.createWritable(); }).then(function (w) { return w.write(text).then(function () { return w.close(); }); });
+      });
+    }).then(function () { pf.at = Date.now(); pf.err = ""; pfRender("granted"); }, function (e) {
+      if (e) { pf.err = "Not saved to the project: " + (e.message || e); pfRender("granted"); }
+    }).then(function () { pf.busy = false; if (pf.again) { pf.again = false; pfSoon(); } });
+  }
+  // choosing the project: where Chrome can, the folder itself (read and, later, written), one step
+  function pickDirProject() {
+    window.showDirectoryPicker({ mode: "readwrite", id: "msq-project" }).then(function (h) {
+      var read = function (fh) { return fh.getFile().then(function (f) { return f.text().then(function (t) { return { name: f.name, text: t }; }); }); };
+      var ini = h.getDirectoryHandle("projectCfg").then(function (c) { return c.getFileHandle("mainController.ini"); }).then(read);
+      var msq = h.getFileHandle("CurrentTune.msq").then(read, function () { return { name: "", text: "" }; });
+      return Promise.all([ini, msq]).then(function (r) {
+        pf.file = r[1].name || "CurrentTune.msq";
+        saveProject({ ini: r[0].text, msq: r[1].text, msqName: r[1].name, name: h.name, at: Date.now() });
+        pf.dir = h; idbPut("dir", h);
+        return startSession({ ini: new File([r[0].text], "mainController.ini"), msq: r[1].text ? new File([r[1].text], r[1].name) : null, msqText: r[1].text, name: h.name });
+      }, function () { throw new Error("That folder has no projectCfg/mainController.ini. Choose the TunerStudio project folder."); });
+    }).then(function () { pfRender("granted"); }, function (e) { if (e && e.name !== "AbortError") { $(".lt-status").textContent = e.message; toast(e.message, true); } });
+  }
+  if (canFs()) {
+    root.addEventListener("click", function (e) {
+      var lab = e.target.closest("label.lt-file");
+      if (lab && lab.querySelector("[data-project]")) { e.preventDefault(); pickDirProject(); return; }
+      if (e.target.closest("[data-pf-choose]")) { pfChoose(); return; }
+      if (e.target.closest("[data-pf-allow]") && pf.dir) pf.dir.requestPermission({ mode: "readwrite" }).then(function (p) { pfRender(p); if (p === "granted") pfSoon(); });
+    }, true);
+  }
   /* TunerStudio opens the last project by itself: so does this page (the share link stays the same). */
   var projectP = ROLE === "car" ? lastProject() : Promise.resolve(null);
   if (ROLE === "car") projectP.then(function (p) {
@@ -1642,7 +1784,7 @@
       layout = l; root.classList.add("has-session");
       if (ROLE === "car") { renderShare(); $(".lt-status").textContent = "Not connected. Plug the ECU in: it connects by itself."; }
       renderTablePicker(); connectWs(); renderAll();
-      if (ROLE === "car") projectP.then(function () { autoEcu(); });
+      if (ROLE === "car") projectP.then(function () { autoEcu(); pfLoad(); });
     }).catch(function () {
       if (ROLE === "car") {  // the server restarted: start the session again under the same link, then the ECU
         return projectP.then(function (p) {

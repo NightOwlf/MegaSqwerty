@@ -79,3 +79,20 @@ test("the app's values chosen are written in parts", () => {
   const items = [{ name: "veTable", cells: [{ i: 0, ecu: 1, app: 2 }, { i: 1, ecu: 1, app: 3 }, { i: 5, ecu: 1, app: 4 }] }];
   assert.deepStrictEqual(TD.writes(items, 2), [{ name: "veTable", cells: { 0: 2, 1: 3 } }, { name: "veTable", cells: { 5: 4 } }]);
 });
+
+test("a table is drawn as its grid, both versions on one colour scale", () => {
+  assert.deepStrictEqual(TD.gridOf(layout, "veTable", ecu), { cols: 3, rows: 2, xName: "veRpmBins", yName: "veLoadBins" });
+  assert.deepStrictEqual(TD.gridOf(layout, "cltFuelCorr", ecu), { cols: 2, rows: 1, xName: "cltFuelCorrBins", yName: null });
+  assert.strictEqual(TD.gridOf(layout, "rpmHardLimit", ecu), null);
+  const v = TD.versions(ecu.veTable, { cells: [{ i: 4, ecu: 61, app: 70 }] });
+  assert.deepStrictEqual(v.ecu, [50, 51, 52, 60, 61, 62]);
+  assert.deepStrictEqual(v.app, [50, 51, 52, 60, 70, 62]);
+  assert.strictEqual(v.lo, 50); assert.strictEqual(v.hi, 70);
+});
+
+test("per-cell picks: only the cells taken from the app are written", () => {
+  const items = [{ name: "veTable", kind: "table", cells: [{ i: 1, ecu: 1, app: 2 }, { i: 4, ecu: 1, app: 3 }] },
+                 { name: "rpmHardLimit", kind: "setting", cells: [{ i: 0, ecu: 7000, app: 7200 }] }];
+  assert.deepStrictEqual(TD.chosen(items, [{ 4: true }, {}]), [{ name: "veTable", kind: "table", cells: [{ i: 4, ecu: 1, app: 3 }] }]);
+  assert.deepStrictEqual(TD.chosen(items, [{}, { 0: true }]).map((x) => x.name), ["rpmHardLimit"]);
+});

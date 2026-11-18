@@ -95,5 +95,35 @@
     return out;
   }
 
-  return { msqValues: msqValues, sharedMem: sharedMem, diff: diff, cellAt: cellAt, writes: writes, tolerance: tolerance };
+  /* How a table or curve is drawn as a grid (TunerStudio's way: the highest load row on top): -> {cols, rows,
+     xName, yName} or null when it isn't one (axis bins, a plain setting). */
+  function gridOf(layout, name, tables) {
+    var defs = (layout.tables || []).concat(layout.curves || []), t = defs.filter(function (d) { return d.z === name; })[0];
+    if (!t || !tables[t.x]) return null;
+    var cols = tables[t.x].length, rows = t.y && tables[t.y] ? tables[t.y].length : 1, n = (tables[name] || []).length;
+    if (cols * rows !== n) return null;
+    return { cols: cols, rows: rows, xName: t.x, yName: t.y && tables[t.y] ? t.y : null };
+  }
+
+  /* Both versions of a table in full: the ECU's, and the ECU's with the app's differing cells put in.
+     -> {ecu: [...], app: [...], lo, hi} (lo/hi over both, so one colour scale fits the two). */
+  function versions(ecuVals, item) {
+    var ecu = ecuVals.slice(), app = ecuVals.slice();
+    item.cells.forEach(function (c) { app[c.i] = c.app; });
+    var lo = Infinity, hi = -Infinity;
+    ecu.concat(app).forEach(function (v) { if (v < lo) lo = v; if (v > hi) hi = v; });
+    return { ecu: ecu, app: app, lo: lo, hi: hi };
+  }
+
+  /* What to write, from the driver's picks: picks[k] is {cellIndex: true} for the cells taken from the app.
+     -> items with only those cells (items with none left out). */
+  function chosen(items, picks) {
+    return items.map(function (x, k) {
+      var p = picks[k] || {};
+      return { name: x.name, kind: x.kind, cells: x.cells.filter(function (c) { return p[c.i]; }) };
+    }).filter(function (x) { return x.cells.length; });
+  }
+
+  return { msqValues: msqValues, sharedMem: sharedMem, diff: diff, cellAt: cellAt, writes: writes, tolerance: tolerance,
+           gridOf: gridOf, versions: versions, chosen: chosen };
 });

@@ -524,3 +524,17 @@ def test_the_tune_copy_follows_the_ecu_even_with_option_settings(client, fx):
             pass
     doc = parse_msq(client.get(f"/t/{s['tune']}.msq").content)
     assert float(doc.get("rpmHardLimit").values[0]) == 6900 and float(doc.get("injector_flow").values[0]) == pytest.approx(123.4)
+
+
+def test_the_car_hears_when_a_change_is_in_the_tune(client, fx):
+    """Each change the ECU took is saved in the session's tune; the car page is told, so it can write the
+    TunerStudio project's own tune file too."""
+    s = start(client, fx)
+    with client.websocket_connect(f"/live/{s['id']}/ws?k={s['car_key']}") as cw:
+        cw.receive_json()
+        cw.send_json({"t": "applied", "id": 1, "table": "veTable", "cells": {"3": 61.5}, "by": "driver"})
+        while (m := cw.receive_json())["t"] != "saved":
+            pass
+        assert m["tune"] == s["tune"] and m["table"] == "veTable" and m["rev"]
+    z = parse_msq(client.get(f"/t/{s['tune']}.msq").content).get("veTable").values
+    assert z[3] == pytest.approx(61.5)
