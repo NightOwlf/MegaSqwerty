@@ -119,3 +119,83 @@ test("a session's limit stops a table drifting far from where it started", () =>
   assert.match(ECU.checkChange(L, T, "ignitionTable", { 0: 23 }, 14.7, null, lim), /8° above/);     // +9° from the start
   assert.strictEqual(ECU.checkChange(L, T, "veTable", { 0: 140 }, 14.7, null, null), null === null ? ECU.checkChange(L, T, "veTable", { 0: 140 }) : null);
 });
+
+/* ---------- settings dialogs: options in shared words, text, conditions, the driver's rule ---------- */
+const flags = {
+  isInjectionEnabled: { kind: "bits", type: "U32", offset: 8, bits: [0, 0], options: [[0, "false"], [1, "true"]] },
+  idleMode: { kind: "bits", type: "U32", offset: 8, bits: [1, 1], options: [[0, "Open Loop + Closed Loop"], [1, "Open Loop"]] },
+  highFlag: { kind: "bits", type: "U32", offset: 8, bits: [31, 31], options: [[0, "no"], [1, "yes"]] },
+  injectionMode: { kind: "bits", type: "U08", offset: 12, bits: [2, 3], options: [[0, "Simultaneous"], [1, "Sequential"], [2, "Batch"], [3, "Single Point"]] },
+  idle_solenoidPin: { kind: "bits", type: "U16", offset: 14, bits: [0, 7], options: [[0, "NONE"], [105, "A1 - INJ 1"], [71, "A10 - IGN 2"]] },
+  engineMake: { kind: "string", type: "U08", offset: 20, len: 8 },
+  cranking_rpm: { kind: "scalar", type: "S16", offset: 30, scale: 1, translate: 0, lo: 0, hi: 3000, units: "RPM" }
+};
+
+test("an option goes into its own bits of the word, leaving the settings that share it alone", () => {
+  const page = new Uint8Array(64), dv = new DataView(page.buffer);
+  dv.setUint32(8, 0x80000001, true);   // injection on, high flag on, idle mode 0
+  page[12] = 0b11110011;               // injectionMode bits [2:3] = 0, the rest set
+  dv.setUint16(14, 0x0300 | 71, true);  // a pin in the low byte, something else above it
+  page.set([70, 79, 77, 69, 0, 88], 20); // "FOME" then a stray byte after the end
+  const L = { constants: flags };
+  let t = ECU.decodeConstants(L, page, true);
+  assert.deepStrictEqual([t.isInjectionEnabled[0], t.idleMode[0], t.highFlag[0], t.injectionMode[0], t.idle_solenoidPin[0]], [1, 0, 1, 0, 71]);
+  assert.deepStrictEqual(t.engineMake, ["FOME"]);
+
+  const put = (name, v) => { const c = flags[name], r = ECU.encodeCells(c, { 0: v }, true, page.slice(c.offset, c.offset + ECU.SIZE[c.type]));
+    assert.strictEqual(r.length, 1); assert.strictEqual(r[0].offset, c.offset); page.set(r[0].bytes, r[0].offset); };
+  put("idleMode", 1);
+  put("injectionMode", 2);
+  put("idle_solenoidPin", 105);
+  t = ECU.decodeConstants(L, page, true);
+  assert.deepStrictEqual([t.isInjectionEnabled[0], t.idleMode[0], t.highFlag[0], t.injectionMode[0], t.idle_solenoidPin[0]], [1, 1, 1, 2, 105]);
+  assert.strictEqual(dv.getUint32(8, true), 0x80000003);
+  assert.strictEqual(page[12], 0b11111011);
+  assert.strictEqual(dv.getUint16(14, true), 0x0300 | 105);
+  put("highFlag", 0);
+  assert.strictEqual(dv.getUint32(8, true), 0x00000003);
+});
+
+const JSDOM = (() => { try { return require("jsdom").JSDOM; } catch (e) { return null; } })();
+test("the simulated ECU starts with each option the tune names", { skip: !JSDOM && typeof DOMParser === "undefined" && "needs an XML parser (checked in the browser)" }, () => {
+  if (typeof DOMParser === "undefined") global.DOMParser = new JSDOM("").window.DOMParser;
+  const L = { comms: { pageSizes: [64] }, constants: flags };
+  const page = ECU.pageFromMsq(L, '<msq><page><constant name="idleMode">"Open Loop"</constant><constant name="isInjectionEnabled">"true"</constant>' +
+    '<constant name="idle_solenoidPin">"A10 - IGN 2"</constant><constant name="cranking_rpm">400</constant></page></msq>');
+  const t = ECU.decodeConstants(L, page, true);
+  assert.deepStrictEqual([t.idleMode[0], t.isInjectionEnabled[0], t.idle_solenoidPin[0], t.cranking_rpm[0]], [1, 1, 71, 400]);
+});
+
+test("dialog conditions: which fields are greyed out", () => {
+  const v = { isInjectionEnabled: 1, cylindersCount: 4, idleMode: 0, trigger_type: 8, twoStroke: 0, arr: [5, 6] };
+  const look = (n, i) => Array.isArray(v[n]) ? v[n][i] : v[n];
+  const e = (x) => ECU.evalExpr(x, look);
+  assert.strictEqual(e("isInjectionEnabled && cylindersCount >= 2"), 1);
+  assert.strictEqual(e("isInjectionEnabled && cylindersCount > 4"), 0);
+  assert.strictEqual(e("!isInjectionEnabled"), 0);
+  assert.strictEqual(e("idleMode == 0 || isInjectionEnabled"), 1);
+  assert.strictEqual(e("twoStroke == 0 && (trigger_type == 0 || trigger_type == 8 || trigger_type == 9)"), 1);
+  assert.strictEqual(e("!(twoStroke == 1 || trigger_type != 8)"), 1);
+  assert.strictEqual(e("cylindersCount > 3 ? 7 : 9"), 7);
+  assert.strictEqual(e("2 + 3 * 4 - 6 / 2"), 11);
+  assert.strictEqual(e("arr[1] == 6"), 1);
+  assert.strictEqual(e("1"), 1);
+  assert.strictEqual(e("0"), 0);
+  // what can't be worked out here: null, so the page leaves the field usable
+  assert.strictEqual(e("someUnknownSetting"), null);
+  assert.strictEqual(e("bitStringValue(list, idleMode) == 1"), null);
+  assert.strictEqual(e("isInjectionEnabled &&"), null);
+  assert.strictEqual(e(""), null);
+});
+
+test("the driver at the car may change any dialog setting, inside its range; a remote tuner still may not", () => {
+  const L = { constants: flags, editable: {} }, T = { idleMode: [0], idle_solenoidPin: [71], cranking_rpm: [400], engineMake: ["FOME"] };
+  assert.strictEqual(ECU.checkChange(L, T, "idle_solenoidPin", { 0: 105 }, 14.7, null, null, true), null);
+  assert.match(ECU.checkChange(L, T, "idle_solenoidPin", { 0: 106 }, 14.7, null, null, true), /choices/);
+  assert.strictEqual(ECU.checkChange(L, T, "idleMode", { 0: 1 }, 14.7, null, null, true), null);
+  assert.match(ECU.checkChange(L, T, "idleMode", { 0: 2 }, 14.7, null, null, true), /choices/);
+  assert.strictEqual(ECU.checkChange(L, T, "cranking_rpm", { 0: 2500 }, 14.7, null, null, true), null);   // no step limit at the car
+  assert.match(ECU.checkChange(L, T, "cranking_rpm", { 0: 3500 }, 14.7, null, null, true), /between 0 and 3000/);
+  assert.match(ECU.checkChange(L, T, "engineMake", { 0: 1 }, 14.7, null, null, true), /remotely|changed/);  // text isn't written
+  assert.match(ECU.checkChange(L, T, "idle_solenoidPin", { 0: 105 }), /remotely/);                         // a tuner: no
+});

@@ -170,6 +170,8 @@ def test_a_real_fome_definition_matches_its_tune():
     sizes = {"U08": 1, "S08": 1, "U16": 2, "S16": 2, "U32": 4, "S32": 4, "F32": 4}
     spans = []
     for name, c in live["constants"].items():
+        if c["kind"] in ("bits", "string"):  # flags share a word; text is shown, not written
+            continue
         n = c["rows"] * c["cols"] if c["kind"] == "array" else 1
         end = c["offset"] + n * sizes[c["type"]]
         assert end <= size, name

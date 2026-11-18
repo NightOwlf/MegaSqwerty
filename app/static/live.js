@@ -44,6 +44,21 @@
       if (ROLE === "car") wanted[name] = 1; else sendWant();
     },
     set: function (table, cells) { return liveSet(table, cells); },
+    /* the settings dialogs (dialogs.js): a setting changed in a dialog. At the car the driver may change anything
+       the ECU's dialogs show, inside its range; a tuner's request goes to the car, where the remote rules apply. */
+    setSetting: function (table, cells) {
+      if (ROLE !== "car") return liveSet(table, cells);
+      var id = ++reqN, why = !running ? "Connect the ECU first." : ECU.checkChange(layout, tables, table, cells, STOICH, title, limits(), true);
+      if (why) { setTimeout(function () { emit("rejected", { id: id, why: why }); }, 0); return id; }
+      queue.push({ kind: "set", m: { id: id, table: table, cells: cells }, by: "driver" });
+      return id;
+    },
+    burn: function () { if (ROLE === "car") queue.push({ kind: "burn", m: {} }); else send({ t: "burn", id: ++reqN }); },
+    layout: function () { return layout; },
+    values: function () { return tables; },
+    live: function () { return och; },
+    units: function () { return { stoich: STOICH, tempF: TEMP_F }; },
+    running: function () { return ROLE === "car" ? running : !!state.ecu; },
     state: function () { return Object.assign({ role: ROLE }, state, { mode: ROLE === "car" && modeSel() ? modeSel().value : state.mode }); }
   };
   function liveSet(table, cells) {
@@ -667,15 +682,20 @@
   /* Write cells to the ECU's RAM, read them back, and report what it now holds. */
   function writeCells(table, cells, by, note, id) {
     var c = layout.constants[table], vals = tables[table], before = {};
+    if (c.kind === "string") return Promise.reject(new Error("text settings aren't written from here"));
     Object.keys(cells).forEach(function (k) { before[k] = vals[+k]; });
-    var runs = ECU.encodeCells(c, cells, ecu.little), sz = ECU.SIZE[c.type];
-    var chain = Promise.resolve(), got = {};
-    runs.forEach(function (r) {
-      chain = chain.then(function () { return ecu.write(r.offset, r.bytes); }).then(function () { return ecu.read(r.offset, r.bytes.length); }).then(function (back) {
-        var dec = ECU.decodeConstants({ constants: { x: { kind: "array", type: c.type, offset: 0, rows: 1, cols: back.length / sz, scale: c.scale, translate: c.translate } } }, back, ecu.little).x;
-        var first = (r.offset - c.offset) / sz;
-        dec.forEach(function (v, i) { got[first + i] = Math.round(v * 1e6) / 1e6; vals[first + i] = got[first + i]; });
+    var sz = ECU.SIZE[c.type], bits = c.kind === "bits";
+    var chain = bits ? ecu.read(c.offset, sz) : Promise.resolve(null), got = {};  // an option shares its word: start from what the ECU has
+    chain = chain.then(function (cur) {
+      var inner = Promise.resolve();
+      ECU.encodeCells(c, cells, ecu.little, cur).forEach(function (r) {
+        inner = inner.then(function () { return ecu.write(r.offset, r.bytes); }).then(function () { return ecu.read(r.offset, r.bytes.length); }).then(function (back) {
+          var dec = ECU.decodeConstants({ constants: { x: bits ? Object.assign({}, c, { offset: 0 }) : { kind: "array", type: c.type, offset: 0, rows: 1, cols: back.length / sz, scale: c.scale, translate: c.translate } } }, back, ecu.little).x;
+          var first = bits ? 0 : (r.offset - c.offset) / sz;
+          dec.forEach(function (v, i) { got[first + i] = Math.round(v * 1e6) / 1e6; vals[first + i] = got[first + i]; });
+        });
       });
+      return inner;
     });
     return chain.then(function () {
       if (note !== "undo") undoStack.push({ table: table, cells: before });

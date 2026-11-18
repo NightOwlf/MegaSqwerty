@@ -90,8 +90,24 @@
   }
   function value(c, dv, off, little) {  // userValue = (raw + translate) * scale
     var raw = readRaw(dv, c.type, off, little);
-    if (c.kind === "bits") return (raw >>> c.bits[0]) & ((1 << (c.bits[1] - c.bits[0] + 1)) - 1);
+    if (c.kind === "bits") return Math.floor((raw >>> 0) / Math.pow(2, c.bits[0])) % Math.pow(2, c.bits[1] - c.bits[0] + 1);
     return (raw + (c.translate || 0)) * (c.scale == null ? 1 : c.scale);
+  }
+  /* A bits constant (an option, a flag, a pin) lives in some bits of a word it shares with others: put value v
+     into those bits of the word as it is now (cur: its bytes), leaving the rest alone. -> the word's new bytes */
+  function bitsWord(c, v, cur, little) {
+    var sz = SIZE[c.type], b = new Uint8Array(sz), dv = new DataView(b.buffer);
+    if (cur) b.set(cur.subarray ? cur.subarray(0, sz) : cur);
+    var lo = c.bits[0], width = c.bits[1] - lo + 1, word = readRaw(dv, c.type, 0, little) >>> 0;
+    var top = Math.pow(2, width), mask = (top - 1) * Math.pow(2, lo);
+    v = Math.max(0, Math.min(top - 1, Math.round(v)));
+    var out = ((word & ~mask) | ((v * Math.pow(2, lo)) & mask)) >>> 0;
+    writeRaw(dv, c.type, 0, c.type.charAt(0) === "S" ? out | 0 : out, little);
+    return b;
+  }
+  function bitsOk(c, v) {  // one of the constant's choices (or, without a list, anything its bits hold)
+    if (!(v === Math.round(v)) || v < 0 || v >= Math.pow(2, c.bits[1] - c.bits[0] + 1)) return false;
+    return !c.options || !c.options.length || c.options.some(function (o) { return o[0] === v; });
   }
   function rawFor(c, v) {  // raw = value / scale - translate, rounded and kept inside the type and the range
     if (c.lo != null && v < c.lo) v = c.lo;
@@ -103,6 +119,7 @@
     return Math.max(r[0], Math.min(r[1], raw));
   }
   function count(c) { return c.kind === "array" ? c.rows * c.cols : 1; }
+  function bytesOf(c) { return c.kind === "string" ? c.len || 0 : count(c) * SIZE[c.type]; }
 
   /* ---------- the framed link, over any byte pipe {write(Uint8Array), onData(cb)} ---------- */
   function Link(pipe, timeoutMs) {
@@ -195,7 +212,13 @@
     var dv = new DataView(page.buffer, page.byteOffset, page.byteLength), out = {};
     Object.keys(layout.constants).forEach(function (name) {
       var c = layout.constants[name], n = count(c), sz = SIZE[c.type], vals = [];
-      if (c.offset + n * sz > page.length) return;
+      if (c.offset + bytesOf(c) > page.length) return;
+      if (c.kind === "string") {  // text: shown, never written
+        var s = "";
+        for (var j = 0; j < c.len && page[c.offset + j]; j++) s += String.fromCharCode(page[c.offset + j]);
+        out[name] = [s.replace(/\s+$/, "")];
+        return;
+      }
       for (var i = 0; i < n; i++) vals.push(value(c, dv, c.offset + i * sz, little));
       out[name] = vals;
     });
@@ -211,8 +234,13 @@
     });
     return out;
   }
-  /* The bytes that put `values` (index -> number) into constant c: -> [{offset, bytes, raw}] runs */
-  function encodeCells(c, cells, little) {
+  /* The bytes that put `values` (index -> number) into constant c: -> [{offset, bytes, raw}] runs.
+     A bits constant shares its word with others: `cur` is the word's bytes as the ECU has them now. */
+  function encodeCells(c, cells, little, cur) {
+    if (c.kind === "bits") {
+      var v0 = cells[0] != null ? cells[0] : cells[Object.keys(cells)[0]];
+      return [{ offset: c.offset, bytes: bitsWord(c, +v0, cur, little) }];
+    }
     var sz = SIZE[c.type], ks = Object.keys(cells).map(Number).sort(function (a, b) { return a - b; }), runs = [];
     ks.forEach(function (k) {
       var b = new Uint8Array(sz), dv = new DataView(b.buffer);
@@ -414,6 +442,17 @@
     Array.prototype.forEach.call(doc.getElementsByTagName("constant"), function (el) {
       var c = layout.constants[el.getAttribute("name")];
       if (!c) return;
+      if (c.kind === "string") {  // text (engine make…): its characters, zero after
+        var str = el.textContent.trim().replace(/^"|"$/g, "");
+        for (var j = 0; j < c.len && c.offset + j < page.length; j++) page[c.offset + j] = j < str.length ? str.charCodeAt(j) & 0xFF : 0;
+        return;
+      }
+      if (c.kind === "bits") {  // saved as the option's name ("Closed Loop"), or its number
+        var txt = el.textContent.trim().replace(/^"|"$/g, ""), opt = (c.options || []).filter(function (o) { return o[1] === txt; })[0];
+        var bv = opt ? opt[0] : /^\d+$/.test(txt) ? +txt : null;
+        if (bv != null && c.offset + SIZE[c.type] <= page.length) page.set(bitsWord(c, bv, page.subarray(c.offset), little), c.offset);
+        return;
+      }
       var vals = el.textContent.trim().split(/\s+/).map(Number);
       vals.forEach(function (v, i) {
         if (i < count(c) && v === v) writeRaw(dv, c.type, c.offset + i * SIZE[c.type], rawFor(c, v), little);
@@ -423,12 +462,16 @@
   }
 
   /* What a remote change may do (the car page applies this to every request). -> null, or why not. */
-  function checkChange(layout, tables, table, cells, STOICH, title, limits) {
+  function checkChange(layout, tables, table, cells, STOICH, title, limits, atCar) {
     STOICH = STOICH || 14.7;
     title = title || function (n) { return n; };
     var tableDef = function (z) { return (layout.tables || []).concat(layout.curves || []).filter(function (t) { return t.z === z; })[0]; };
     var c = layout.constants[table], vals = tables[table], kind = (layout.editable || {})[table];
-    if (!c || !vals || !kind) return title(table) + " can't be changed remotely (it needs a power cycle, or it sets how the engine is wired or protected): change it at the car in TunerStudio.";
+    // the driver at the car, in a settings dialog: anything the ECU's dialogs show (pins, trigger, injectors,
+    // what needs a power cycle…), the way TunerStudio allows it, inside the ECU's own range. Tables and curves a
+    // tuner could change keep their step limits.
+    if (atCar && c && vals && c.kind !== "string" && (!kind || kind === "setting")) return checkAtCar(c, vals, table, cells, title);
+    if (!c || !vals || !kind) return title(table) + " can't be changed remotely (it needs a power cycle, or it sets how the engine is wired or protected): the driver changes it at the car.";
     var ks = Object.keys(cells || {});
     if (!ks.length || ks.length > 64) return "Change between 1 and 64 cells at a time.";
     var nm = table + " " + (c.units || ""), ign = /ign|timing|advance|spark/i.test(table) && /deg/i.test(c.units || "");
@@ -468,7 +511,95 @@
     return null;
   }
 
-  return { crc32: crc32, frame: frame, template: template, build: build, Link: Link, Ecu: Ecu, decodeConstants: decodeConstants,
+  function checkAtCar(c, vals, table, cells, title) {
+    var ks = Object.keys(cells || {});
+    if (!ks.length || ks.length > 1024) return "Nothing to change.";
+    for (var i = 0; i < ks.length; i++) {
+      var k = +ks[i], v = +cells[ks[i]];
+      if (!(k >= 0 && k < vals.length) || !(v === v) || !isFinite(v)) return "That value isn't in " + title(table) + ".";
+      if (c.kind === "bits") { if (!bitsOk(c, v)) return "That isn't one of the choices for " + title(table) + "."; continue; }
+      if ((c.lo != null && v < c.lo - 1e-9) || (c.hi != null && v > c.hi + 1e-9)) return title(table) + " must stay between " + c.lo + " and " + c.hi + ".";
+    }
+    return null;
+  }
+
+  /* TunerStudio's { expressions } in menus and dialogs: when a field is greyed out or hidden.
+     lookup(name, index) -> a number (a constant's value, a bits constant's choice, a live channel), or
+     undefined. -> a number, or null when it can't be worked out (an unknown name or function): then the caller
+     leaves the field as it is. */
+  function evalExpr(expr, lookup) {
+    var src = String(expr == null ? "" : expr).trim();
+    if (!src) return null;
+    var toks = [], re = /\s*(0x[0-9a-fA-F]+|\d+\.?\d*(?:[eE][-+]?\d+)?|\.\d+|[A-Za-z_]\w*|"[^"]*"|&&|\|\||==|!=|<=|>=|<<|>>|[-+*\/%!~<>&|^?:()\[\],])/y, m;
+    re.lastIndex = 0;
+    while (re.lastIndex < src.length) {
+      var at = re.lastIndex;
+      m = re.exec(src);
+      if (!m) { if (/^\s*$/.test(src.slice(at))) break; return null; }
+      toks.push(m[1]);
+    }
+    var i = 0, unknown = false;
+    function peek() { return toks[i]; }
+    function next() { return toks[i++]; }
+    function b(x) { return x ? 1 : 0; }
+    function primary() {
+      var t = next();
+      if (t == null) throw 0;
+      if (t === "(") { var v = ternary(); if (next() !== ")") throw 0; return v; }
+      if (t === "!") return b(!unary());
+      if (t === "-") return -unary();
+      if (t === "+") return +unary();
+      if (t === "~") return ~unary();
+      if (/^0x/i.test(t)) return parseInt(t, 16);
+      if (/^[\d.]/.test(t)) return parseFloat(t);
+      if (t.charAt(0) === '"') { unknown = true; return 0; }
+      if (/^[A-Za-z_]/.test(t)) {
+        if (peek() === "(") {  // a function TunerStudio has (bitStringValue, isOnline…): not worked out here
+          var depth = 0;
+          do { var u = next(); if (u === "(") depth++; else if (u === ")") depth--; if (u == null) throw 0; } while (depth > 0);
+          unknown = true; return 0;
+        }
+        var idx = 0;
+        if (peek() === "[") { next(); idx = ternary(); if (next() !== "]") throw 0; }
+        var v2 = lookup(t, idx);
+        if (v2 == null || v2 !== v2 || typeof v2 !== "number") { unknown = true; return 0; }
+        return v2;
+      }
+      throw 0;
+    }
+    function unary() { return primary(); }
+    var LEVELS = [["||"], ["&&"], ["|"], ["^"], ["&"], ["==", "!="], ["<", "<=", ">", ">="], ["<<", ">>"], ["+", "-"], ["*", "/", "%"]];
+    function level(n) {
+      if (n >= LEVELS.length) return unary();
+      var a = level(n + 1);
+      while (LEVELS[n].indexOf(peek()) >= 0) {
+        var op = next(), c2 = level(n + 1);
+        switch (op) {
+          case "||": a = b(a || c2); break; case "&&": a = b(a && c2); break;
+          case "|": a = a | c2; break; case "^": a = a ^ c2; break; case "&": a = a & c2; break;
+          case "==": a = b(Math.abs(a - c2) < 1e-9); break; case "!=": a = b(Math.abs(a - c2) >= 1e-9); break;
+          case "<": a = b(a < c2); break; case "<=": a = b(a <= c2); break; case ">": a = b(a > c2); break; case ">=": a = b(a >= c2); break;
+          case "<<": a = a << c2; break; case ">>": a = a >> c2; break;
+          case "+": a = a + c2; break; case "-": a = a - c2; break;
+          case "*": a = a * c2; break; case "/": a = c2 ? a / c2 : 0; break; case "%": a = c2 ? a % c2 : 0; break;
+        }
+      }
+      return a;
+    }
+    function ternary() {
+      var c3 = level(0);
+      if (peek() !== "?") return c3;
+      next(); var y = ternary(); if (next() !== ":") throw 0; var n = ternary();
+      return c3 ? y : n;
+    }
+    try {
+      var v = ternary();
+      if (i !== toks.length) return null;
+      return unknown ? null : v;
+    } catch (e) { return null; }
+  }
+
+  return { crc32: crc32, evalExpr: evalExpr, bitsOk: bitsOk, bytesOf: bytesOf, frame: frame, template: template, build: build, Link: Link, Ecu: Ecu, decodeConstants: decodeConstants,
            decodeOutputs: decodeOutputs, encodeCells: encodeCells, rawFor: rawFor, count: count, SIZE: SIZE,
            soon: soon, checkChange: checkChange, connectSerial: connectSerial, reopenSerial: reopenSerial, grantedPorts: grantedPorts, openPort: openPort, simPipe: simPipe, pageFromMsq: pageFromMsq };
 });
