@@ -41,7 +41,17 @@
     // Windows to tune inside (null = no limit), like TunerStudio's filters: only this RPM / load / throttle.
     rpmLo: null, rpmHi: null, loadLo: null, loadHi: null, tpsLo: null, tpsHi: null,
     strength: 100,     // % of the worked-out correction to apply (less, for a cautious first pass)
-    locked: null       // cell indexes that must not change: their neighbours take up the difference
+    locked: null,      // cell indexes that must not change: their neighbours take up the difference
+    // Only change a cell when the data is sure of it: the correction has to be bigger than `confidence` times its
+    // own uncertainty (the scatter of the samples behind it over how many independent ones there were). Noisy or
+    // thin cells stay put instead of chasing noise. 0 turns it off.
+    confidence: 2,
+    minChange: 0,      // %: a correction smaller than this isn't worth making (live: saves the ECU pointless writes)
+    // VE Analyze Live: a cell whose mixture doesn't get richer as its VE goes up isn't short of fuel (misfire, a
+    // weak spark or a wideband problem reads lean however much fuel it gets): stop raising it and say so
+    responseCheck: true,
+    ref: "ran"         // what maxChange is measured from: "ran" (the VE the ECU logged running) or "base" (the
+                       // table as it is now: VE Analyze Live, where the table changes as it runs)
   };
   var REASONS = ["used", "cold", "transient", "decel", "sensor", "idle", "duty", "outside", "nodata", "implausible",
                  "section", "filter"];
@@ -134,8 +144,13 @@
     var ranLo = new Float64Array(N).fill(Infinity), ranHi = new Float64Array(N).fill(-Infinity);
     var mism = { n: 0, sum: 0, logged: 0 };
     var errSum = new Float64Array(N), errW = new Float64Array(N);  // mixture error each cell saw, before the fix
+    // the correction each sample asked of a cell (want / used), weighted: its mean, scatter and effective count
+    var rS = new Float64Array(N), rS2 = new Float64Array(N), wS2 = new Float64Array(N);
     var lockedSet = new Uint8Array(N);
-    (o.locked || []).forEach(function (k) { if (k >= 0 && k < N) lockedSet[k] = 1; });
+    // per pass, per cell: the mixture it saw (for the response check), and its history across passes
+    var pY = new Float64Array(N), pW = new Float64Array(N), hist = new Array(N), stuck = new Uint8Array(N);
+    function setLocked(list) { lockedSet.fill(0); (list || []).forEach(function (k) { if (k >= 0 && k < N) lockedSet[k] = 1; }); }
+    setLocked(o.locked);
     var within = function (v, lo, hi) { return (lo == null || !(v < lo)) && (hi == null || !(v > hi)); };
     var prior = 0.01;  // a whisker of the tune's own value, so cells with no samples stay put
     var stats = { total: 0 }, logs = [];
@@ -264,6 +279,9 @@
         var cp = corner[p];
         hits[cp] += s * w;
         errSum[cp] += s * w * (lam / tgt - 1); errW[cp] += s * w;
+        pY[cp] += s * w * Math.log(lam / tgt); pW[cp] += s * w;
+        var r = want / used;
+        rS[cp] += s * w * r; rS2[cp] += s * w * r * r; wS2[cp] += s * w * s * w;
         val[cp] += s * w / (hits[cp] + prior) * err;
         valRan[cp] += s * w / (hits[cp] + prior) * errRan;
         b[cp] += s * w * want;
@@ -279,12 +297,63 @@
        (in proportion), almost none at all moves not at all, and nothing moves more than maxChange. */
     function limited(k, v, ran) {
       if (lockedSet[k] || hits[k] < o.minData * 0.1) return base[k];
+      if (o.ref === "base") ran = base[k];
       var authority = Math.min(1, hits[k] / o.minData);
       var lim = Math.abs(ran) * o.maxChange / 100;
       v = base[k] + (v - base[k]) * authority;
       return Math.max(ran - lim, Math.min(ran + lim, v));
     }
     function current(k) { return limited(k, val[k], valRan[k]); }
+
+    /* How sure a cell's correction is: the relative 1-sigma uncertainty of the mean correction its samples asked
+       for. Readings closer together than ~0.1 s aren't independent (the wideband's own filtering), and even a
+       rock-steady reading is only good to about ±0.5% (the sensor's accuracy). Infinity where there's no data. */
+    function uncertainty(k) {
+      var w = errW[k];
+      if (!(w > 0)) return Infinity;
+      var m = rS[k] / w, v = rS2[k] / w - m * m;
+      var neff = Math.min(wS2[k] > 0 ? w * w / wS2[k] : 0, hits[k] / 0.1);
+      return Math.sqrt(Math.max(v, 0.005 * 0.005) / Math.max(1, neff));
+    }
+
+    /* VE Analyze Live keeps one engine for the whole session: what each sample says the engine needs is measured
+       against the VE that ran then (logged), so it stays true after the table changes. Between passes the table
+       it corrects moves on (rebase), older evidence slowly counts for less (decay), and locks can change. */
+    /* After a live pass: note each cell's table value and the mixture it saw this pass. Raising a cell's VE has to
+       make the mixture there richer; when it has gone up 6% or more over the session and the mixture didn't follow
+       (or went leaner), more fuel isn't the answer: the cell is held (it may still come down). -> newly held cells */
+    function passEnd() {
+      var fresh = [];
+      for (var q = 0; q < N; q++) {
+        var h = hist[q] || (hist[q] = { pts: [], x: base[q] > 0 ? Math.log(base[q]) : NaN, sy: 0, sw: 0, moved: false }), x = base[q] > 0 ? Math.log(base[q]) : NaN;
+        if (Math.abs(x - h.x) > 1e-9) h.moved = true;  // changed since the last pass
+        if (Math.abs(x - h.x) > 1e-9 && h.sw > 0) {  // the cell's value changed: what it saw at the old one is a point
+          if (h.sw >= 0.25) h.pts.push([h.x, h.sy / h.sw, Math.min(h.sw, 5)]);
+          if (h.pts.length > 40) h.pts.shift();
+          h.sy = 0; h.sw = 0;
+        }
+        h.x = x; h.sy += pY[q]; h.sw += pW[q];
+        pY[q] = 0; pW[q] = 0;
+        if (!o.responseCheck || stuck[q]) continue;
+        var pts = h.sw >= 0.25 ? h.pts.concat([[h.x, h.sy / h.sw, Math.min(h.sw, 5)]]) : h.pts;
+        if (pts.length < 2) continue;
+        var sw = 0, sx = 0, sy = 0, lo = Infinity, hi = -Infinity;
+        pts.forEach(function (p) { sw += p[2]; sx += p[2] * p[0]; sy += p[2] * p[1]; lo = Math.min(lo, p[0]); hi = Math.max(hi, p[0]); });
+        var mx = sx / sw, my = sy / sw, cxy = 0, cxx = 0;
+        pts.forEach(function (p) { cxy += p[2] * (p[0] - mx) * (p[1] - my); cxx += p[2] * (p[0] - mx) * (p[0] - mx); });
+        // the cell's value moves the mixture by its share of the interpolation (about half): a working cell gives a
+        // clearly negative slope; around zero or positive means fuel isn't what's wrong there
+        if (hi - lo >= Math.log(1.06) && cxx > 0 && cxy / cxx > -0.1) { stuck[q] = 1; fresh.push(q); }
+      }
+      return fresh;
+    }
+    function rebase(values) { for (var q = 0; q < N; q++) if (values[q] > 0) base[q] = values[q]; }
+    function decay(f) {
+      if (!(f < 1)) return;
+      f = Math.max(0, f);
+      [hits, A, b, bRan, errSum, errW, rS, rS2].forEach(function (arr) { for (var q = 0; q < arr.length; q++) arr[q] *= f; });
+      for (var q = 0; q < N; q++) wS2[q] *= f * f;
+    }
 
     /* Least squares through the ECU's interpolation: A x = rhs, plus a whisker of the tune and the smoothing. */
     function solve(rhsVec, start, smooth, hold) {
@@ -329,8 +398,10 @@
     /* Solve the whole table from every sample. -> {values, changed: [{i, from, to, pct, hits}], ...} */
     function finish() {
       // what ran is rebuilt exactly (no smoothing): it's a record of the ECU's table, not a measurement
-      var x = solve(b, val, o.smooth, true), ran = solve(bRan, valRan, 0, false), k;
+      var live = o.ref === "base";
+      var x = solve(b, val, o.smooth, true), ran = live ? Float64Array.from(base) : solve(bRan, valRan, 0, false), k;
       for (k = 0; k < N; k++) {  // keep what ran inside what was logged there (or the tune, where nothing was)
+        if (live) continue;
         if (ranLo[k] <= ranHi[k]) {
           var lo = Math.min(ranLo[k], base[k]) * 0.85, hi = Math.max(ranHi[k], base[k]) * 1.15;
           ran[k] = Math.max(lo, Math.min(hi, ran[k] === ran[k] ? ran[k] : base[k]));
@@ -341,6 +412,13 @@
       for (k = 0; k < N; k++) {
         var rk = hits[k] >= o.minData * 0.1 ? ran[k] : base[k];
         var full = limited(k, x[k], rk), str = Math.max(0, Math.min(100, o.strength)) / 100;
+        // not sure enough, or too small to bother with: the cell stays as it is
+        var rel = base[k] ? Math.abs(full / base[k] - 1) : 0;
+        if (rel * 100 < o.minChange || (o.confidence > 0 && rel < o.confidence * uncertainty(k))) full = base[k];
+        if (stuck[k] && full > base[k]) full = base[k];  // not responding to fuel: never raised further
+        // live: after a change, see what the new value does before changing the cell again
+        var hk = hist[k];
+        if (o.responseCheck && hk && hk.moved && hk.sw < 0.25) full = base[k];
         var v = Math.round((base[k] + (full - base[k]) * str) * unit) / unit;
         if (!(v > 0)) v = base[k];  // a VE of zero or below is never an answer
         values[k] = v;
@@ -367,7 +445,9 @@
     /* The average mixture error a cell saw, in % (+ lean, − rich), NaN where it saw nothing. */
     function error(k) { return errW[k] > 0 ? errSum[k] / errW[k] * 100 : NaN; }
     return { begin: begin, step: step, finish: finish, current: current, hits: hits, base: base, stats: stats, error: error,
-             mismatch: mismatch, ran: function (k) { return valRan[k]; },
+             mismatch: mismatch, ran: function (k) { return valRan[k]; }, uncertainty: uncertainty,
+             rebase: rebase, decay: decay, setLocked: setLocked, passEnd: passEnd,
+             stuck: function () { var out = []; for (var q = 0; q < N; q++) if (stuck[q]) out.push(q); return out; },
              summary: summary, opts: o, logs: logs, cells: N };
   }
 

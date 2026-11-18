@@ -191,3 +191,84 @@ console.log("all VE Analyze tests passed");
   ra.values.forEach((v, k) => assert(Math.abs(v - rb.values[k]) <= 0.2, "cell " + k + ": " + v + " vs " + rb.values[k]));
   console.log("ok - a VE logged in one byte that wraps above 127.5 is put right");
 }
+
+/* VE Analyze Live: one engine for the whole session, corrections written into the ECU's table pass by pass while
+   the car keeps running on it. Same steps as the viewer (rebase on the table as it is now, decay older evidence,
+   a short window per pass, then the corrections go into the ECU). */
+function liveSession({ truthOf = truth, noise = 0.004, passes = 40, passS = 5, hz = 20, opts = {}, seed = 3, misfire = null } = {}) {
+  const rand = rng(seed), dt = 1 / hz, lag = 0.15, per = Math.round(passS * hz), total = per * passes;
+  const cur = tune.slice(), n0 = total + 200;
+  const d = { T: new Float32Array(n0), rpm: new Float32Array(n0), load: new Float32Array(n0), lam: new Float32Array(n0),
+              tgt: new Float32Array(n0), ve: new Float32Array(n0), tps: new Float32Array(n0), clt: new Float32Array(n0),
+              map: new Float32Array(n0) };
+  const ratio = new Float32Array(n0);
+  const engine = VEAL.create(Object.assign({}, table, { z: cur.slice() }), Object.assign({ lag, lagByRpm: false, ref: "base", minChange: 1 }, opts));
+  let from = 0, n = 0, sent = 0;
+  const sample = (i) => {
+    const t = i * dt;
+    d.T[i] = t;
+    d.rpm[i] = 700 + 3200 * (0.5 - 0.5 * Math.cos(t / 23)) + 60 * Math.sin(t * 1.3);
+    d.load[i] = 25 + 70 * (0.5 - 0.5 * Math.cos(t / 7.3)) + 2 * Math.sin(t * 2.1);
+    d.map[i] = d.load[i]; d.tps[i] = d.load[i] / 2; d.clt[i] = 88; d.tgt[i] = 0.95;
+    d.ve[i] = VEAL.interp(table, cur, d.rpm[i], d.load[i]);           // what the ECU runs right now
+    ratio[i] = VEAL.interp(table, truthOf, d.rpm[i], d.load[i]) / d.ve[i];
+    const src = Math.max(0, i - Math.round(lag / dt));
+    d.lam[i] = d.tgt[src] * ratio[src] * (1 + (rand() - 0.5) * 2 * noise);
+    // a misfire: unburned air reaches the wideband, and the more fuel it's given the leaner it reads
+    if (misfire && misfire(d.rpm[src], d.load[src])) d.lam[i] *= 1.12 * Math.pow(1 / ratio[src], 1.3);
+  };
+  for (let p = 0; p < passes; p++) {
+    for (let k = 0; k < per; k++) sample(n++);
+    engine.rebase(cur); engine.decay(Math.pow(0.5, passS / 300));
+    const s0 = Math.max(0, from - Math.round(2.5 * hz));
+    const slice = Object.fromEntries(Object.entries(d).map(([k, v]) => [k, v.subarray(s0, n)]));
+    const log = engine.begin(slice);
+    let i = from - s0;
+    for (; i < n - s0 && log.j[i] >= 0; i++) engine.step(i);
+    from = s0 + i;
+    engine.passEnd();
+    const res = engine.finish();
+    res.changed.forEach(c => { cur[c.i] = c.to; sent++; });
+  }
+  return { cur, engine, sent };
+}
+
+// 13. VE Analyze Live closes the loop: the ECU's table ends up where the engine wants it, without overshooting.
+{
+  const { cur, engine } = liveSession();
+  let w = 0, k0 = 0;
+  cur.forEach((v, k) => { if (engine.hits[k] > 2) { k0++; w = Math.max(w, Math.abs(v / truth[k] - 1)); } });
+  assert(k0 > 20, "the drive covers the table: " + k0 + " cells");
+  assert(w < 0.02, "every driven cell lands within 2% of what the engine wants, worst " + (w * 100).toFixed(2) + "%");
+  console.log("ok - VE Analyze Live converges on the engine's real VE in the ECU (worst cell " + (w * 100).toFixed(2) + "% off)");
+}
+
+// 14. ...and it doesn't chase noise: a table that's already right, read through a noisy wideband, is left alone.
+{
+  const quiet = liveSession({ truthOf: tune, noise: 0.03 });
+  const naive = liveSession({ truthOf: tune, noise: 0.03, opts: { confidence: 0, minChange: 0 } });
+  let drift = 0;
+  quiet.cur.forEach((v, k) => { if (quiet.engine.hits[k] > 2) drift = Math.max(drift, Math.abs(v / tune[k] - 1)); });
+  assert(drift < 0.02, "a right table stays right through noise, drift " + (drift * 100).toFixed(2) + "%");
+  assert(quiet.sent < naive.sent / 3, "far fewer pointless writes than without the confidence check: " + quiet.sent + " vs " + naive.sent);
+  console.log("ok - noise doesn't move a right table (" + quiet.sent + " writes vs " + naive.sent + " without the confidence check)");
+}
+
+// 15. ...and it won't chase a misfire: where more fuel reads leaner (a weak spark, a misfire), it stops raising
+// the cells and says which, instead of piling fuel in until the table hits its limits.
+{
+  const zone = (rpm, load) => rpm > 2400 && rpm < 3600 && load > 70;
+  const inZone = k => X[k % C] >= 2500 && X[k % C] <= 3500 && Y[Math.floor(k / C)] >= 80;
+  const guarded = liveSession({ misfire: zone, passes: 60 });
+  const naive = liveSession({ misfire: zone, passes: 60, opts: { responseCheck: false } });
+  let up = 0, upNaive = 0;
+  tune.forEach((v, k) => { if (inZone(k)) { up = Math.max(up, guarded.cur[k] / v - 1); upNaive = Math.max(upNaive, naive.cur[k] / v - 1); } });
+  const held = guarded.engine.stuck();
+  assert(held.some(inZone), "the misfiring cells are reported: " + held);
+  assert(upNaive > 0.3, "without the check the fuel runs away: +" + (upNaive * 100).toFixed(0) + "%");
+  assert(up < upNaive / 2, "with it, the cells stop rising: +" + (up * 100).toFixed(0) + "% vs +" + (upNaive * 100).toFixed(0) + "%");
+  let w = 0;
+  guarded.cur.forEach((v, k) => { if (!zone(X[k % C], Y[Math.floor(k / C)]) && X[k % C] < 2000 && guarded.engine.hits[k] > 2) w = Math.max(w, Math.abs(v / truth[k] - 1)); });
+  assert(w < 0.02, "cells away from the misfire still tune normally: " + (w * 100).toFixed(2) + "%");
+  console.log("ok - a misfire isn't fed: " + held.length + " cells held at +" + (up * 100).toFixed(0) + "% (+" + (upNaive * 100).toFixed(0) + "% without the check)");
+}

@@ -2320,52 +2320,109 @@
       status.textContent = "The log couldn't be loaded for VE Analyze. Reload the page and try again.";
     });
   }
-  /* VE Analyze Live (like TunerStudio's VE Analyze Live): every 15 seconds while the car runs, the data since the
-     last pass goes through the same engine, and the cells it has enough clean data for are corrected in the ECU
-     (within the max change and locks you set, and the driver's say on remote changes). */
-  var veLive = { on: false, timer: 0, from: 0, passes: 0, cells: 0 };
+  /* VE Analyze Live (TunerStudio's VE Analyze Live, done more carefully): every 5 seconds while the car runs, the
+     data since the last pass goes through one engine kept for the whole session. What each sample says the engine
+     needs is measured against the VE that actually ran then (logged by the ECU), so evidence keeps counting after
+     the table changes, and slowly gives way to newer data. A cell is only corrected when the data is sure of it
+     (not noise), by at least 1%, within the max change and locks you set and the driver's say on remote changes;
+     after a change it waits to see what the new value does before changing it again, and a cell whose mixture
+     doesn't get richer as fuel goes up (a misfire or a wideband problem reading lean) is held and reported, not fed. */
+  var VE_LIVE_EVERY = 5000, VE_LIVE_HALFLIFE = 300;
+  var veLive = { on: false, timer: 0, fromT: 0, lastT: 0, passes: 0, cells: 0, engine: null, lag: null, mine: {}, blocked: {}, held: [] };
   function veLiveToggle(btn) {
+    var t = ve.table, status = $(".lv-ve-status");
     veLive.on = !veLive.on;
     btn.classList.toggle("on", veLive.on);
     btn.textContent = veLive.on ? "■ Stop live" : "● Run live";
     clearInterval(veLive.timer);
-    var status = $(".lv-ve-status");
     if (veLive.on) {
       if (ve.running) ve.running = false;
-      veLive.from = Math.max(0, N - 1); veLive.passes = 0; veLive.cells = 0;
-      status.textContent = "VE Analyze Live: drive normally. Every 15 seconds the cells you've driven through are corrected in the ECU.";
-      veLive.timer = setInterval(veLivePass, 15000);
-    } else status.textContent = "VE Analyze Live stopped after " + plural(veLive.passes, "pass") + ", " + plural(veLive.cells, "cell") + " corrected.";
+      if (vePending && t) {  // a suggestion from a run on the log so far would hold back everything live sends
+        delete edits[t.name]; setVePending(false); editsChanged(t);
+        toast("VE Analyze's earlier suggestion was put aside: Live corrects the ECU's table as you drive.");
+      }
+      veLive.fromT = N ? T[N - 1] : 0; veLive.lastT = veLive.fromT; veLive.passes = 0; veLive.cells = 0;
+      veLive.engine = null; veLive.lag = null; veLive.mine = {}; veLive.blocked = {}; veLive.held = [];
+      $(".lv-ve-warn").hidden = true;
+      status.textContent = "VE Analyze Live: drive normally (warm engine, steady throttle is best). Every few seconds the cells you've driven through are corrected in the ECU.";
+      veLive.timer = setInterval(veLivePass, VE_LIVE_EVERY);
+    } else status.textContent = "VE Analyze Live stopped after " + plural(veLive.passes, "pass") + ", " + plural(veLive.cells, "cell correction") + ".";
+  }
+  function indexAtT(time) {  // the first record at or after a time (the live buffer drops its oldest records when full)
+    var lo = 0, hi = N;
+    while (lo < hi) { var mid = (lo + hi) >> 1; if (T[mid] < time) lo = mid + 1; else hi = mid; }
+    return lo;
+  }
+  function veLiveBusy(t) {  // corrections from the last pass still on their way to the ECU (or waiting for the driver)
+    return Object.keys(liveReq).some(function (id) { return liveReq[id].t === t; });
   }
   function veLivePass() {
     var t = ve.table, status = $(".lv-ve-status");
-    if (!veLive.on || ve.running || !LB || !t) return;
-    var from = veLive.from, to = N;
-    if (to - from < 60) return;  // a few seconds of data at least
-    var cur2 = Object.assign({}, t, { z: t.z.map(function (v, k) { return valueAt(t, k); }) });
-    var opts = veOpts(); opts.locked = Object.keys(locks[t.name] || {}).map(Number);
-    var engine = VEAL.create(cur2, opts);
+    if (!veLive.on || ve.running || veLive.busy || !LB || !t || N < 2) return;
+    if (veLiveBusy(t)) { status.textContent = "VE Analyze Live · waiting for the ECU (or the driver) to take the last corrections…"; return; }
+    var to = N, from = indexAtT(veLive.fromT);
+    if (to - from < 40) return;  // a couple of seconds of data at least
+    var now = Array.prototype.map.call(t.z, function (v, k) { return valueAt(t, k); });
+    var opts = veOpts();
+    opts.ref = "base"; opts.minChange = opts.minChange == null ? 1 : opts.minChange; opts.responseCheck = true;
+    var userLag = typeof opts.lag === "number" ? opts.lag : null;
+    if (!veLive.engine) veLive.engine = VEAL.create(Object.assign({}, t, { z: now.slice() }), opts);
+    var engine = veLive.engine;
+    Object.keys(opts).forEach(function (k) { if (k !== "lag" && k !== "locked") engine.opts[k] = opts[k]; });
+    engine.setLocked(Object.keys(locks[t.name] || {}).map(Number));
+    engine.rebase(now);
+    var tEnd = T[to - 1];
+    engine.decay(Math.pow(0.5, Math.max(0, tEnd - veLive.lastT) / VE_LIVE_HALFLIFE));
+    veLive.lastT = tEnd;
     ve.engine = engine;
+    veLive.busy = true;
     veData(idx, function (c) { return c === "t" ? Promise.resolve(T) : load(c).then(function (x) { return x && x.v; }); }).then(function (d) {
       return filterMask(d.T.length, function (name) { var c = byName(name); return c >= 0 ? load(c).then(function (x) { return x && x.v; }) : Promise.resolve(null); })
         .then(function (m) { if (m) d.userOk = m; return d; });
     }).then(function (d) {
-      if (!veLive.on) return;
-      var n = Math.min(to, d.T.length), mask = new Uint8Array(d.T.length);
-      for (var i = from; i < n; i++) mask[i] = 1;
-      d.inSection = mask;
-      engine.begin(d);
-      for (i = from; i < n; i++) engine.step(i);
+      veLive.busy = false;
+      if (!veLive.on || veLive.engine !== engine) return;
+      var n = Math.min(to, d.T.length);  // every channel cut to the same records (they arrive a moment apart)
+      Object.keys(d).forEach(function (k) { var v = d[k]; if (v && v.subarray && k !== "trimMode") n = Math.min(n, v.length); });
+      // the wideband's delay, measured on the last few minutes (steadier than one short window), unless it was set
+      if (userLag == null) {
+        var a = Math.max(0, n - 3600), fuel = d.fuel;
+        if (!fuel && d.ve && d.map) { fuel = new Float32Array(n); for (var q = a; q < n; q++) fuel[q] = d.ve[q] * d.map[q]; }
+        var got = fuel ? VEAL.measureLag(d.T.subarray(a, n), fuel.subarray(a, n), d.lam.subarray(a, n), null) : null;
+        if (got != null) veLive.lag = veLive.lag == null ? got : veLive.lag * 0.7 + got * 0.3;
+        engine.opts.lag = Math.max(0.05, Math.min(0.6, veLive.lag == null ? 0.2 : veLive.lag));
+      } else engine.opts.lag = userLag;
+      // this pass: the new records, plus a couple of seconds before them so transients and fuel cut are known
+      var s0 = Math.max(0, from - 50), part = {};
+      Object.keys(d).forEach(function (k) { var v = d[k]; part[k] = v && v.subarray ? v.subarray(s0, n) : v; });
+      var log = engine.begin(part), i = from - s0, end = n - s0;
+      for (; i < end && log.j[i] >= 0; i++) engine.step(i);  // records whose wideband reading hasn't arrived wait for the next pass
+      veLive.fromT = T[Math.min(N - 1, s0 + i)] + (s0 + i >= n ? 1e-6 : 0);
+      var fresh = engine.passEnd();
       var res = engine.finish();
-      veLive.from = n; veLive.passes++;
-      var ch = (res.changed || []).filter(function (c) { return !(locks[t.name] && locks[t.name][c.i]); });
-      ch.forEach(function (c) { setValue(t, c.i, c.to); });
+      veLive.passes++;
+      var ch = (res.changed || []).filter(function (c) { return !isLocked(t, c.i) && !veLive.blocked[c.i]; });
+      ch.forEach(function (c) { setValue(t, c.i, c.to); veLive.mine[c.i] = c.to; });
       veLive.cells += ch.length;
       if (ch.length) { editsChanged(t); if (ve.grid) { ve.grid.paint(); ch.forEach(function (c) { ve.grid.flash(c.i); }); } }
-      status.textContent = "VE Analyze Live · pass " + veLive.passes + ": " + (ch.length ? plural(ch.length, "cell") + " corrected and sent to the ECU" : "no cell had enough clean data this time") +
-        " · " + plural(veLive.cells, "cell") + " in all · " + plural(engine.stats.used, "sample") + " used this pass";
+      if (fresh.length) { veLive.held = veLive.held.concat(fresh); veLiveHeld(t); }
+      var wait = res.stats.used ? "" : " · no clean data yet (warm up, hold the throttle steady)";
+      status.textContent = "VE Analyze Live · pass " + veLive.passes + ": " + (ch.length ? plural(ch.length, "cell") + " corrected and sent to the ECU" : "nothing sure enough to change this time") +
+        " · " + plural(veLive.cells, "correction") + " in all · wideband delay " + Math.round(engine.opts.lag * 1000) + " ms" + wait;
       renderWhy();
-    }).catch(function () { /* try again next pass */ });
+    }).catch(function () { veLive.busy = false; /* try again next pass */ });
+  }
+  /* Cells where more fuel didn't make the mixture richer: VE Analyze Live won't raise them, and says why. */
+  function veLiveHeld(t) {
+    var box = $(".lv-ve-warn");
+    if (!box || !veLive.held.length) return;
+    var C = t.x.length, where = veLive.held.slice(0, 12).map(function (k) {
+      return Math.round(t.x[k % C]) + " rpm · " + Math.round(t.y[Math.floor(k / C)]) + (t.yu ? " " + t.yu : "");
+    });
+    box.hidden = false;
+    box.innerHTML = "<b>⚠ Adding fuel isn't making " + plural(veLive.held.length, "cell") + " richer</b> (" + esc(where.join(", ")) + (veLive.held.length > 12 ? "…" : "") + "). " +
+      "VE Analyze Live has stopped raising them. When more fuel reads leaner, the engine is usually misfiring (weak spark: check dwell, plugs, coils) " +
+      "or the wideband is reading wrong (its ground, or an exhaust leak), not short of fuel. Fix that, then pull those cells back to where they ran well.";
   }
   function renderWhy() {
     var e = ve.engine;
@@ -3723,6 +3780,7 @@
     var r = liveReq[m.id];
     if (r) {
       var t = r.t, e = edits[t.name], p = livePend[t.name] || {};
+      if (veLive.on && t === ve.table) Object.keys(r.cells).forEach(function (k) { if (veLive.mine[k] === r.cells[k]) veLive.blocked[k] = 1; });
       Object.keys(r.cells).forEach(function (k) { if (e && e[k] === r.cells[k]) delete e[k]; delete p[k]; });
       if (e && !Object.keys(e).length) delete edits[t.name];
       allGrids().forEach(function (g) { if (g.t === t) g.paint(); });
