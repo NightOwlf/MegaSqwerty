@@ -556,6 +556,7 @@
   function drawEvents(ctx, W, H, kx, t0, t1, label) {
     ctx.save();
     ctx.font = "11px system-ui, sans-serif"; ctx.textBaseline = "top"; ctx.textAlign = "left";
+    var free = -Infinity, row = 0, rows = [-Infinity, -Infinity];  // labels only where they fit: two rows, never on top of each other
     evMarks.concat(diag.show ? diag.marks : []).forEach(function (e) {
       var a = e.ta != null ? e.ta : T[Math.min(N - 1, e.i0)], b = e.tb != null ? e.tb : T[Math.min(N - 1, e.i1)];
       if (b < t0 || a > t1) return;
@@ -563,7 +564,16 @@
       var col = e.col || (e.kind === "Warning" ? "255,170,0" : "255,59,48");
       ctx.fillStyle = "rgba(" + col + ",.22)"; ctx.fillRect(x0, 0, x1 - x0, H);
       ctx.fillStyle = "rgb(" + col + ")"; ctx.fillRect(x0, 0, 2, H);
-      if (label) ctx.fillText(e.kind + ": " + e.text, x0 + 4, 2);
+      if (label) {
+        var txt = e.text ? e.text : e.kind, w = ctx.measureText(txt).width + 6;
+        for (row = 0; row < rows.length && x0 < rows[row]; row++) { /* the next row with room */ }
+        if (row < rows.length && x0 + w < W) {
+          var y = 2 + row * 14;
+          ctx.fillStyle = "rgba(0,0,0,.65)"; ctx.fillRect(x0 + 3, y - 1, w, 13);
+          ctx.fillStyle = "rgb(" + col + ")"; ctx.fillText(txt, x0 + 5, y);
+          rows[row] = x0 + w + 6;
+        }
+      }
     });
     ctx.restore();
   }
