@@ -1742,3 +1742,51 @@ li.open .lt-chg-more { transform: rotate(90deg); }
   .lv-dyno-cv { height: 280px; }
   .lv-dyno-big b { font-size: 28px; }
 }
+
+/* ---------- live tuning inside the log viewer ---------- */
+.lt-lv { display: grid; gap: 8px; }
+.lt-lv .lt-head h1 { display: none; }
+.lt-lv .lt-head { gap: 6px 10px; }
+.lt-lv .lt-status:empty { display: none; }
+.lt-lv .lt-mode-note { margin: 0; font-size: 12.5px; }
+.lt-lv .lt-mode-note:empty { display: none; }
+.lt-head .ts-rec { padding: 0; }
+.lt-carbox { border: 1px solid var(--line); border-radius: 6px; background: var(--win); }
+.lt-carbox > summary { padding: 8px 12px; cursor: pointer; font-size: 13.5px; }
+.lt-carbox > .lt-setup { border: 0; border-top: 1px solid var(--line); border-radius: 0 0 6px 6px; }
+.lt-strip { display: grid; grid-template-columns: minmax(0, 330px) minmax(0, 1fr); gap: 6px; align-items: stretch; }
+.lt-strip .ts-dials { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: #0b0c0e; }
+.lt-strip .ts-read { grid-area: auto; grid-column: auto; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); align-content: start; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: #0b0c0e; }
+.lt-strip .ts-read span { border-radius: 4px; background: #16181c; padding: 3px 6px; }
+.lt-strip .ts-read b { font-size: 17px; }
+.lv-live .lv-gpanel { display: grid; gap: 8px; padding: 6px; border-radius: 6px; background: linear-gradient(#2a2c31, #4a4d55); overflow-y: auto; }
+.lv-live .lv-gpanel[hidden] { display: none; }
+.lv-live .lv-gpanel .ts-cluster { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.lv-live .lv-setpanel { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--win); overflow-y: auto; }
+.lv-live .lv-setpanel[hidden] { display: none; }
+.lv-live.tab-gauges .lv-over, .lv-live.tab-settings .lv-over { display: none; }
+.lv-burn.primary { background: #d81e0b; border-color: #8a1205; color: #fff; }
+.lv-follow.on { background: #1f8f4e; border-color: #2fbf6c; color: #fff; }
+.lt-lv > .lt-log { padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--win); font-size: 12.5px; }
+.lt-lv > .lt-log ul { margin: 4px 0 0; padding: 0; max-height: 260px; overflow-y: auto; list-style: none; }
+.lt-lv > .lt-log li { border-top: 1px solid var(--line); }
+@media (max-width: 759px) {
+  .lt-strip { grid-template-columns: minmax(0, 1fr); }
+  .lt-strip .ts-dials { max-width: 420px; width: 100%; justify-self: center; }
+  .lt-strip .ts-read { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .lt-strip .ts-read b { font-size: 15px; }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  .lt-strip { grid-template-columns: minmax(0, 250px) minmax(0, 1fr); }
+}
+@media (max-width: 759px) {
+  .lt-strip { gap: 4px; }
+  .lt-strip .ts-dials { max-width: 330px; padding: 2px; }
+  .lt-strip .ts-read { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 2px; padding: 2px; }
+  .lt-strip .ts-read span { padding: 1px 3px; }
+  .lt-strip .ts-read small { font-size: 9.5px; }
+  .lt-strip .ts-read b { font-size: 13px; }
+  .lt-strip .ts-read i { display: none; }
+  .lt-lv .lt-mode-note { font-size: 12px; }
+}
+@media (max-width: 400px) { .lt-strip .ts-read { grid-template-columns: repeat(4, minmax(0, 1fr)); } }

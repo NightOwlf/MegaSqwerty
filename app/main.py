@@ -1252,7 +1252,58 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             "og_url": page_url(request),
         })
 
-    livemod.register(app, store, templates, {"client_ip": client_ip, "ingest_log": ingest_log})
+    def live_index(s) -> dict:
+        """A live session described the way a log is (index.json): its channels (every live channel the ECU
+        sends, named by their datalog labels), the roles found from those names exactly as for an uploaded log,
+        and the session tune's tables with the channels that move their cursors. So the log viewer runs on it
+        unchanged."""
+        import numpy as np
+        from .logfile import Channel, LogDoc
+        outs, gauges = s.layout["outputs"], s.layout.get("gauges") or {}
+        gby: dict = {}
+        for gname in list(s.layout.get("front") or []) + list(gauges):
+            g = gauges.get(gname)
+            if g and g["ch"] not in gby:
+                gby[g["ch"]] = g
+        keys, chans, fake = [], [], []
+        for name, o in outs.items():
+            label, units, g = o.get("label") or name, o.get("units", ""), gby.get(name)
+            lo, hi = (g["lo"], g["hi"]) if g and g["hi"] > g["lo"] and abs(g["hi"]) < 1e6 else (None, None)
+            keys.append(name)
+            chans.append({"n": label, "u": units, "d": g["vd"] if g else (0 if o.get("kind") == "bits" else 2), "lo": lo, "hi": hi})
+            fake.append(Channel(label, units, values=np.array([1.0])))
+        found = logsmod.resolve(LogDoc(fake, rows=1))
+        where = {id(c): i for i, c in enumerate(fake)}
+        roles = {r: where[id(c)] for r, c in found.items()}
+        index = {"roles": roles, "channels": chans}
+        tables, tune = [], None
+        doc = store.get_doc(s.tune) if s.tune else None
+        if doc is not None:
+            tmap, tviews = tune_views(doc)
+            tables = logsmod.viewer_tables(tviews, index, lambda z: meta_digits(tmap, z))
+            editable = s.layout.get("editable") or {}
+            for t in tables:
+                t["ro"] = t["name"] not in editable  # what a remote change may not touch, shown read-only
+            tune = {"slug": s.tune, "label": views.tune_label(doc), "stoich": stoich_of(doc),
+                    "file": msq_filename(doc, s.tune), "parent": None, "changed": 0,
+                    "notes": store.notes(s.tune), "rev": store.rev(s.tune), "idle_ve": False}
+        stoich = tune["stoich"] if tune else 14.7
+        lam = {r: (1.0 if logsmod.meta_is_lambda(chans[roles[r]]) else stoich) for r in ("lambda", "lambda_target") if r in roles}
+        return {"rows": 0, "seconds": 0, "title": "", "note": "", "truncated": False, "roles": roles, "tables": tables,
+                "tune": tune, "lam": lam, "markers": [], "channels": chans, "keys": keys, "live": True}
+
+    def live_page(request: Request, s, role: str, key: str):
+        doc = store.get_doc(s.tune) if s.tune else None
+        index = live_index(s)
+        return templates.TemplateResponse(request, "viewer.html", {
+            "live": True, "role": role, "sid": s.id, "key": key, "log_slug": "", "name": "Live tuning",
+            "index": index, "length": "live", "tune_slug": s.tune if doc is not None else "",
+            "tune_label": views.tune_label(doc) if doc is not None else "", "own_tune": "", "summary": None,
+            "also": [], "keys": [], "tune_key": None, "og_url": page_url(request), "og_title": "Live tuning",
+            "og_desc": "A live tuning session"})
+
+    livemod.register(app, store, templates, {"client_ip": client_ip, "ingest_log": ingest_log,
+                                             "live_index": live_index, "live_page": live_page})
 
     return app
 

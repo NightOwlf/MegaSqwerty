@@ -7,8 +7,8 @@
 <meta property="og:title" content="{{ og_title }}">
 <meta property="og:description" content="{{ og_desc }}">
 {% endblock %}
-{% block bodyclass %}page-viewer{% endblock %}
-{% block scripts %}<script src="/static/veal.js?v={{ asset_v }}" defer></script><script src="/static/viewer.js?v={{ asset_v }}" defer></script>{% endblock %}
+{% block bodyclass %}page-viewer{% if live %} page-live-lv{% endif %}{% endblock %}
+{% block scripts %}{% if live %}<script src="/static/ecu.js?v={{ asset_v }}" defer></script><script src="/static/live.js?v={{ asset_v }}" defer></script>{% endif %}<script src="/static/veal.js?v={{ asset_v }}" defer></script><script src="/static/viewer.js?v={{ asset_v }}" defer></script>{% endblock %}
 {% set led = {'ok': 'on', 'warn': 'warn', 'error': 'bad', 'info': ''} %}
 {% block main %}
 {% if keys or tune_key %}
@@ -25,22 +25,27 @@
   </div>
 </section>
 {% endif %}
-<div class="lv" id="lv" data-log="{{ log_slug }}" data-rows="{{ index.rows }}" data-tune="{{ tune_slug }}" data-also="{{ also|join(',') }}" data-name="{{ name }}">
+{% if live %}<div class="lt lt-lv" id="live" data-role="{{ role }}" data-sid="{{ sid }}" data-key="{{ key }}">
+{% include "_live_head.html" %}
+{% endif %}
+<div class="lv{% if live %} lv-live{% endif %}" id="lv" data-log="{{ log_slug }}" data-rows="{{ index.rows }}" data-tune="{{ tune_slug }}" data-also="{{ also|join(',') }}" data-name="{{ name }}"{% if live %} data-live="1" data-sid="{{ sid }}" data-key="{{ key }}" data-role="{{ role }}"{% endif %}>
   <div class="lv-bar">
     <div class="lv-name">
       {% if tune_slug %}<a class="lv-back" href="/t/{{ tune_slug }}" title="Open the tune">{{ icon('left') }}<span>{{ tune_label }}</span></a>{% else %}<a class="lv-back" href="/logs" title="Open another log">{{ icon('left') }}<span>Logs</span></a>{% endif %}
       <b title="{{ name }}">{{ name }}</b>
-      <span class="dim mono">{{ length }} · {{ '{:,}'.format(index.rows) }} records · {{ index.channels|length }} channels</span>
+      {% if live %}<span class="dim mono lv-livestat">live from the car · {{ index.channels|length }} channels</span>{% else %}<span class="dim mono">{{ length }} · {{ '{:,}'.format(index.rows) }} records · {{ index.channels|length }} channels</span>{% endif %}
     </div>
     <div class="lv-tabs" role="tablist">
-      <button type="button" role="tab" data-lv-tab="graphs" aria-selected="true">Data Log</button>
+      <button type="button" role="tab" data-lv-tab="graphs" aria-selected="true">{{ 'Live Graphs' if live else 'Data Log' }}</button>
+      {% if live %}<button type="button" role="tab" data-lv-tab="gauges" aria-selected="false">Gauges</button>{% endif %}
       <button type="button" role="tab" data-lv-tab="scatter" aria-selected="false">Scatter Plot</button>
       <button type="button" role="tab" data-lv-tab="ve" aria-selected="false">VE Analyze</button>
       <button type="button" role="tab" data-lv-tab="sim" aria-selected="false" title="This drive, simulated with the VE table as it is now">Simulate</button>
       <button type="button" role="tab" data-lv-tab="dyno" aria-selected="false" title="Horsepower and torque from a full-throttle pull in this log">Dyno</button>
+      {% if live %}<button type="button" role="tab" data-lv-tab="settings" aria-selected="false">Settings</button>{% endif %}
     </div>
     <div class="lv-actions">
-      <button class="btn sm" type="button" data-lv-tune title="Choose the tune to read this log with">{{ icon('folder') }}<span>{{ 'Change tune' if tune_slug else 'Add tune' }}</span></button>
+      {% if not live %}<button class="btn sm" type="button" data-lv-tune title="Choose the tune to read this log with">{{ icon('folder') }}<span>{{ 'Change tune' if tune_slug else 'Add tune' }}</span></button>{% endif %}
       {% if summary %}<a class="btn sm" href="/t/{{ tune_slug }}/log/{{ log_slug }}" title="What this log shows about the tune"><span class="led {{ led[summary.tone] }}"></span><span>Report: {{ summary.short }}</span></a>{% endif %}
       <label class="lv-sel lv-preset" title="Show a ready-made set of channels">Layout
         <select data-lv-preset><option value="">Choose…</option><option value="tuning">Tuning overview</option><option value="fuel">Fuel / VE</option><option value="afr">AFR &amp; correction</option><option value="boost">Boost</option><option value="spark">Ignition &amp; knock</option><option value="warm">Warm-up &amp; idle</option></select>
@@ -48,12 +53,14 @@
       <label class="lv-sel" title="How many graphs to stack">Graphs
         <select data-lv-count><option>1</option><option>2</option><option>3</option><option>4</option></select>
       </label>
-      <button class="btn sm primary" type="button" data-lv-share title="Copy a link that opens at this exact moment, with these channels">{{ icon('link') }}<span>Copy link</span></button>
+      {% if live %}<button class="btn sm" type="button" data-live-undo title="Undo the last change in the ECU">↶<span class="lv-wide"> Undo</span></button>
+      <button class="btn sm lv-burn" type="button" data-live-burn title="Make the changes permanent in the ECU">Burn<span class="lv-wide"> to ECU</span></button>
+      {% else %}<button class="btn sm primary" type="button" data-lv-share title="Copy a link that opens at this exact moment, with these channels">{{ icon('link') }}<span>Copy link</span></button>{% endif %}
       <span class="lv-dl">
         <button class="btn sm" type="button" data-lv-dl aria-haspopup="true" title="Download the tune (.msq, with your changes) or the log">{{ icon('download') }}<span class="lv-wide">Download</span></button>
         <span class="lv-dl-menu" hidden>
           {% if tune_slug %}<button type="button" data-dl-tune><b>Tune (.msq)</b><small>with every change you made, for TunerStudio</small></button>{% endif %}
-          <a href="/l/{{ log_slug }}/download" data-dl-log><b>Log file</b><small>the original datalog</small></a>
+          {% if not live %}<a href="/l/{{ log_slug }}/download" data-dl-log><b>Log file</b><small>the original datalog</small></a>{% endif %}
         </span>
       </span>
       {% if tune_slug %}<button class="btn sm" type="button" data-lv-history title="Backups of this tune: restore or download any of them">History</button>{% endif %}
@@ -65,6 +72,16 @@
   <div class="lv-body">
     <div class="lv-main">
       <div class="lv-graphs" data-lv-panel="graphs"></div>
+      {% if live %}<div class="lv-gpanel" data-lv-panel="gauges" hidden>
+        <div class="ts-dials ts-cluster" data-dials="cluster"></div>
+        <div class="ts-ind"></div>
+        <div class="lt-gauges"></div>
+      </div>
+      <div class="lt-set lv-setpanel" data-lv-panel="settings" hidden>
+        <input type="search" placeholder="Search settings (idle, launch, accel, cranking, rev limit…)" aria-label="Search settings" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <ul></ul>
+        <p class="fine">The driver approves every settings change. Settings that need a power cycle, or that set how the engine is wired, timed, measured or protected (pins, trigger, injectors, sensors, boost limits, knock), aren't here: change those at the car.</p>
+      </div>{% endif %}
       <div class="lv-scatter" data-lv-panel="scatter" hidden>
         <div class="lv-scatter-bar">
           <button type="button" class="lv-pick" data-sc="x"></button>
@@ -131,7 +148,8 @@
           <button type="button" data-lv="zout" title="Zoom out (↓ or −)">−</button>
           <button type="button" data-lv="zin" title="Zoom in (↑ or +)">+</button>
           <button type="button" data-lv="fit" title="Show the whole log (F)">Fit</button>
-          <button type="button" data-lv="together" class="lv-together-btn on" title="Live view: everyone on this link sees the same moment">● Live view</button>
+          {% if live %}<button type="button" data-lv="follow" class="lv-follow on" title="Follow the car: the graphs scroll with the newest data">● Live</button>
+          {% else %}<button type="button" data-lv="together" class="lv-together-btn on" title="Live view: everyone on this link sees the same moment">● Live view</button>{% endif %}
           <button type="button" data-lv="sec" class="lv-secbtn" title="Choose sections of the log to tune: drag across a graph" aria-label="Choose sections of the log to tune">✂<span class="lv-secword"> Section</span></button>
         </div>
         <div class="lv-status mono" aria-live="off"></div>
@@ -148,16 +166,20 @@
       <div class="lv-table" data-slot="1"></div>
     </aside>
   </div>
-  <p class="lv-load" role="status">Loading the log…</p>
+  <p class="lv-load" role="status">{{ 'Waiting for live data from the car…' if live else 'Loading the log…' }}</p>
 
-  <details class="danger lv-danger">
+  {% if not live %}<details class="danger lv-danger">
     <summary>{{ icon('trash') }}<span>Delete this log</span></summary>
     <form method="post" action="/l/{{ log_slug }}/delete">
       <label>Delete key <input name="key" autocomplete="off" autocapitalize="off" spellcheck="false" required></label>
       <button class="btn danger-btn" type="submit">Delete</button>
     </form>
-  </details>
+  </details>{% endif %}
 </div>
+{% if live %}
+<div class="lt-log"><b>Changes</b> <small class="dim">tap one to see each cell, from what to what</small><ul></ul></div>
+</div>
+{% endif %}
 
 <div class="lv-pop" hidden>
   <p class="lv-pop-title"></p>

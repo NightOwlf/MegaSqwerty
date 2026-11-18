@@ -7,8 +7,10 @@
   var root = document.getElementById("lv");
   if (!root) return;
   var SLUG = root.dataset.log, TUNE = root.dataset.tune || "";
-  var base = "/l/" + SLUG;
-  var query = location.search || "";
+  // Live tuning runs this same viewer on the car's live data (live.js feeds it through window.MSQLive)
+  var LIVE = root.dataset.live === "1";
+  var base = LIVE ? "/live/" + root.dataset.sid : "/l/" + SLUG;
+  var query = LIVE ? "?k=" + encodeURIComponent(root.dataset.key || "") : location.search || "";
   var $ = function (s, el) { return (el || root).querySelector(s); };
   var $$ = function (s, el) { return Array.prototype.slice.call((el || root).querySelectorAll(s)); };
   var $d = function (s) { return document.querySelector(s); };
@@ -99,6 +101,7 @@
   }
   function load(i) {
     if (i == null || i < 0 || !idx || i >= idx.channels.length) return Promise.resolve(null);
+    if (LIVE && !idx.channels[i].virt) return Promise.resolve(liveChan(i));
     var have = store[i];
     if (have) return have.then ? have : Promise.resolve(have);
     var m = idx.channels[i];
@@ -713,6 +716,7 @@
     return [lo, hi];
   }
   function setValue(t, k, v) {
+    if (LIVE && t.ro) { roNote(t); return; }
     var unit = Math.pow(10, t.d);
     v = Math.round(v * unit) / unit;
     if (!(v === v)) return;
@@ -727,12 +731,14 @@
     return n;
   }
   function saveEdits() {
+    if (LIVE) return;
     try {
       if (editCount()) localStorage.setItem(EDIT_KEY, JSON.stringify(edits));
       else localStorage.removeItem(EDIT_KEY);
     } catch (e) { /* storage unavailable */ }
   }
   function restoreEdits() {
+    if (LIVE) return;
     var saved = null;
     try { saved = JSON.parse(localStorage.getItem(EDIT_KEY) || "null"); } catch (e) { /* ignore */ }
     if (!saved || typeof saved !== "object") return;
@@ -1415,6 +1421,7 @@
     return n;
   }
   function renderSaveBars() {
+    if (LIVE) return liveBars();
     var n = editCount(), tablesN = Object.keys(edits).length, copy = idx && idx.tune && idx.tune.parent;
     $$(".lv-save").forEach(function (bar) {
       var idle = !n && !saving && !saveErr;  // nothing waiting: a slim line that doesn't follow you around
@@ -1448,10 +1455,12 @@
   }
   function scheduleAuto(ms) {
     clearTimeout(autoTimer);
+    if (LIVE) { if (editCount() && !ve.running && !vePending) autoTimer = setTimeout(liveSend, ms == null ? 250 : Math.min(ms, 400)); return; }
     if (!autoSave || !TUNE || !editCount() || ve.running || vePending) return;
     autoTimer = setTimeout(function () { pushEdits().catch(function () { /* shown in the bar */ }); }, ms == null ? 1500 : ms);
   }
   function pushEdits(checkpoint) {
+    if (LIVE) return liveSend();
     if (!TUNE) return Promise.reject(new Error("no tune"));
     if (saving) { saveAgain = true; return saving; }
     if (!editCount()) return Promise.resolve(lastSaved);
@@ -1888,7 +1897,7 @@
       box.innerHTML = "<span><b>VE Analyze suggests " + plural(n, "cell") + "</b> · not applied yet. The tune is backed up before it changes.</span>" +
         '<span class="st-grow"></span><button class="btn sm" type="button" data-save-compare>Compare</button>' +
         '<button class="btn sm" type="button" data-goto-sim>See it simulated</button>' +
-        '<button class="btn sm" type="button" data-ve-discard>Discard</button><button class="btn sm primary" type="button" data-ve-apply>Apply to tune</button>';
+        '<button class="btn sm" type="button" data-ve-discard>Discard</button><button class="btn sm primary" type="button" data-ve-apply>' + (LIVE ? "Send to the ECU" : "Apply to tune") + "</button>";
     } else if (veUndo) {
       box.hidden = false; box.className = "lv-ve-apply done";
       box.innerHTML = "<span><b>✓ Applied to the tune.</b> The tune as it was before is backed up.</span><span class=\"st-grow\"></span>" +
@@ -1902,6 +1911,7 @@
     vePending = false;
     pushEdits("Before VE Analyze (" + stamp + ")").then(function () {
       try { localStorage.removeItem("msq.lv.vepending:" + TUNE); } catch (e) { /* ignore */ }
+      if (LIVE) { veUndo = null; renderVeApply(); toast("VE Analyze's changes are in the ECU. Burn to keep them; Undo in the bar takes them back."); return; }
       if (!wasCopy) { veUndo = { parent: true }; renderVeApply(); toast("Applied. The original upload is untouched, so Undo goes straight back to it."); return; }
       return fetch("/t/" + TUNE + "/versions", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (j) {
         var v = (j.versions || []).filter(function (x) { return /^Before VE Analyze/.test(x.label); })[0];
@@ -2566,7 +2576,7 @@
     if (idx) setTimeout(renderSections, 0);
     $$("[data-lv-tab]").forEach(function (x) { x.setAttribute("aria-selected", x.dataset.lvTab === tab ? "true" : "false"); });
     $$("[data-lv-panel]").forEach(function (x) { x.hidden = x.dataset.lvPanel !== tab; });
-    root.classList.toggle("tab-ve", tab === "ve"); root.classList.toggle("tab-dyno", tab === "dyno");
+    root.classList.toggle("tab-ve", tab === "ve"); root.classList.toggle("tab-dyno", tab === "dyno"); root.classList.toggle("tab-gauges", tab === "gauges"); root.classList.toggle("tab-settings", tab === "settings");
     if (tab === "scatter") { load(sc.x); load(sc.y); load(sc.z); scatterDirty = true; }
     if (tab === "ve") {
       if (!vePane.el) { makePane(vePane, $(".lv-ve-graph")); vePane.el.classList.add("lv-pane-ve"); }
@@ -2832,6 +2842,7 @@
       else if (a === "fit") setView(tMin, tMax);
       else if (a === "sec") { selMode = !selMode; secStart = null; renderSections(); invalidate(); }
       else if (a === "together") together.toggle();
+      else if (a === "follow" && LB) { LB.follow = true; var sp = Math.min(60, view.t1 - view.t0); view.t1 = tMax; view.t0 = Math.max(tMin, tMax - sp); cur = N - 1; play(false); b.classList.add("on"); invalidate(); }
       return;
     }
     b = e.target.closest("[data-sec], [data-sec-del], [data-sec-go]");
@@ -2984,7 +2995,7 @@
   var syncing = false, syncTimer = 0;
   function syncSoon(ms) { clearTimeout(syncTimer); syncTimer = setTimeout(function () { sync(true); }, ms || 0); }
   function sync(force) {
-    if (!TUNE || !idx || !idx.tune || syncing || saving || ve.running) return;
+    if (LIVE || !TUNE || !idx || !idx.tune || syncing || saving || ve.running) return;
     if (!force && document.hidden) return;
     syncing = true;
     var done = function () { syncing = false; };
@@ -3236,14 +3247,205 @@
     });
   }
 
+  /* ---------- live: the car's data, streaming in ----------
+     live.js hands every frame over (window.MSQLive): a list of channel names and their values. They go into one
+     growing buffer per channel (about 20 records a second, the last two hours), and every quarter second the
+     viewer's channels are pointed at what's arrived, so the graphs, cursor, tables, scatter, VE Analyze and the
+     dyno work on it exactly as on a log. While the view is at the newest data it follows the car. Edits to the
+     tables are sent to the car, which writes them to the ECU (or asks the driver); what the ECU reports back
+     becomes the table's value. */
+  var LB = null, liveT = 0, roShown = {};
+  function roNote(t) {
+    if (roShown[t.name]) return;
+    roShown[t.name] = 1; toast(t.label + " can't be changed remotely (it needs a power cycle, or sets how the engine is wired or protected).");
+  }
+  function liveChan(i) {
+    var m = idx.channels[i];
+    if (!LB.ch[i]) { LB.ch[i] = new Float32Array(LB.cap); LB.ch[i].fill(NaN); if (window.MSQLive) window.MSQLive.want(idx.keys[i]); }
+    if (!store[i] || store[i].then) store[i] = { v: LB.ch[i].subarray(0, N), pyr: pyramid(LB.ch[i].subarray(0, N)) };
+    return store[i];
+  }
+  function lbGrow() {
+    var MAX = 144000;  // two hours at 20 a second
+    if (LB.n < LB.cap) return;
+    if (LB.cap < MAX) {
+      var cap = Math.min(MAX, LB.cap * 2), t = new Float64Array(cap); t.set(LB.t); LB.t = t;
+      Object.keys(LB.ch).forEach(function (i) { var a = new Float32Array(cap); a.fill(NaN); a.set(LB.ch[i]); LB.ch[i] = a; });
+      LB.cap = cap; return;
+    }
+    var drop = 12000;  // full: forget the oldest ten minutes
+    LB.t.copyWithin(0, drop); Object.keys(LB.ch).forEach(function (i) { LB.ch[i].copyWithin(0, drop); });
+    LB.n -= drop; cur = Math.max(0, cur - drop);
+  }
+  function livePush(ts, list, vals) {
+    if (!LB || !list || !vals) return;
+    if (LB.t0 == null) LB.t0 = ts;
+    var t = ts - LB.t0, n = LB.n;
+    if (n && t - LB.t[n - 1] < 0.045) return;
+    if (n && t <= LB.t[n - 1]) return;
+    lbGrow(); n = LB.n;
+    LB.t[n] = t;
+    var seen = LB.seen || (LB.seen = {});
+    LB.stamp = (LB.stamp || 0) + 1;
+    for (var k = 0; k < list.length; k++) {
+      var i = LB.at[list[k]];
+      if (i == null) continue;
+      var v = vals[k];
+      if (v == null || v !== v) continue;
+      var m = idx.channels[i];
+      if (m.toF) v = v * 1.8 + 32;
+      if (!LB.ch[i]) { LB.ch[i] = new Float32Array(LB.cap); LB.ch[i].fill(NaN); }
+      LB.ch[i][n] = v; seen[i] = LB.stamp;
+      if (m.lo == null || v < m.lo) m.lo = v;
+      if (m.hi == null || v > m.hi) m.hi = v;
+    }
+    Object.keys(LB.ch).forEach(function (i) { if (seen[i] !== LB.stamp && n) LB.ch[i][n] = LB.ch[i][n - 1]; });  // hold the last value
+    LB.n = n + 1;
+  }
+  function liveCommit() {
+    if (!LB || LB.n === N && N) return;
+    var wasN = N, wasEnd = tMax, wasMin = tMin, follow = LB.follow;
+    if (idx.started && (view.t1 < wasEnd - 0.3 || cur < wasN - 3 || playing)) follow = false;  // looking at the past: stay there
+    N = LB.n; T = LB.t.subarray(0, N);
+    if (N < 2) return;
+    tMin = T[0]; tMax = T[N - 1] > T[0] ? T[N - 1] : T[0] + 1;
+    Object.keys(store).forEach(function (i) {
+      var m = idx.channels[i];
+      if (!m) return;
+      if (m.virt) { if (store[i] && !store[i].then) { delete store[i]; load(+i); } return; }
+      if (LB.ch[i]) store[i] = { v: LB.ch[i].subarray(0, N), pyr: pyramid(LB.ch[i].subarray(0, N)) };
+    });
+    if (!idx.started) { start(idx, T); return; }
+    if (follow) {
+      var span = Math.min(view.t1 - view.t0, tMax - tMin);
+      if (view.t0 <= wasMin + 0.01 && span >= wasEnd - wasMin - 0.5) { view.t0 = tMin; view.t1 = tMax; }  // the whole session in view: keep it whole
+      else { view.t1 = tMax; view.t0 = Math.max(tMin, tMax - span); }
+      cur = N - 1;
+    }
+    LB.follow = follow;
+    var fb = $("[data-lv=follow]"); if (fb) fb.classList.toggle("on", follow);
+    scatterDirty = true;
+    invalidate();
+  }
+  function liveBoot() {
+    var api = window.MSQLive;
+    if (!api) return fail("Live tuning couldn't start. Reload the page.");
+    fetch(base + "/index.json" + query, { cache: "no-store" }).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }).then(function (j) {
+      idx = j;
+      toFahrenheit();
+      LB = { cap: 8192, n: 0, t: new Float64Array(8192), ch: {}, t0: null, at: {}, follow: true };
+      (j.keys || []).forEach(function (name, i) { LB.at[name] = i; });
+      idx.channels.forEach(function (m) { m.lo = m.lo == null ? null : m.lo; });
+      api.on("frame", livePush);
+      api.on("hist", function (frames) { frames.forEach(function (f) { livePush(f[0], f[1], f[2]); }); liveCommit(); });
+      api.on("applied", liveApplied);
+      api.on("rejected", liveRejected);
+      api.on("tables", liveTables);
+      api.on("state", function () { liveBars(); });
+      api.ready();
+      setInterval(liveCommit, 250);
+    }).catch(function () {  // the server restarted and the car hasn't brought the session back yet
+      loadNote.textContent = "Waiting for the car to start the session again…"; loadNote.hidden = false;
+      setTimeout(liveBoot, 3000);
+    });
+  }
+  function liveStarted() {
+    idx.started = true;
+    view.t1 = tMax; view.t0 = Math.max(tMin, tMax - 60); cur = N - 1;
+    root.classList.add("live-on");
+  }
+  // edits: send what's changed and not yet sent; the ECU's answer settles it
+  var livePend = {}, liveReq = {}, liveWait = [];
+  function liveSend() {
+    var api = window.MSQLive, ids = [];
+    if (!api) return Promise.reject(new Error("not connected"));
+    idx.tables.forEach(function (t) {
+      var e = edits[t.name]; if (!e) return;
+      var p = livePend[t.name] = livePend[t.name] || {}, cells = {}, n = 0;
+      Object.keys(e).forEach(function (k) { if (p[k] !== e[k]) { cells[k] = e[k]; n++; } });
+      var ks = Object.keys(cells);
+      for (var i = 0; i < ks.length; i += 64) {
+        var part = {}; ks.slice(i, i + 64).forEach(function (k) { part[k] = cells[k]; p[k] = cells[k]; });
+        var id = api.set(t.name, part);
+        liveReq[id] = { t: t, cells: part }; ids.push(id);
+      }
+    });
+    liveBars();
+    if (!ids.length) return Promise.resolve({});
+    return new Promise(function (ok, no) { liveWait.push({ ids: ids, ok: ok, no: no, bad: null }); });
+  }
+  function liveSettle(id, why) {
+    liveWait = liveWait.filter(function (w) {
+      var i = w.ids.indexOf(id); if (i < 0) return true;
+      w.ids.splice(i, 1); if (why) w.bad = why;
+      if (w.ids.length) return true;
+      if (w.bad) w.no(new Error(w.bad)); else w.ok({});
+      return false;
+    });
+  }
+  function tableNamed(name) { return (idx.tables || []).filter(function (t) { return t.name === name; })[0]; }
+  function liveApplied(m) {
+    var t = tableNamed(m.table);
+    if (t) {
+      var e = edits[t.name], p = livePend[t.name] || {}, tol = 0.51 * Math.pow(10, -t.d), flashes = [];
+      Object.keys(m.cells || {}).forEach(function (k) {
+        var v = +m.cells[k]; t.z[+k] = v; flashes.push(+k);
+        if (e && k in e && Math.abs(e[k] - v) <= tol + Math.abs(v) * 1e-4) delete e[k];
+        else if (e && k in e && p[k] === e[k]) delete e[k];  // the ECU rounded it: what it holds is the value
+        delete p[k];
+      });
+      if (e && !Object.keys(e).length) delete edits[t.name];
+      allGrids().forEach(function (g) { if (g.t === t) { g.paint(); flashes.forEach(function (k) { g.flash(k); }); } });
+      compareSoon();
+      if (tab === "sim") simSoon();
+    }
+    if (m.id != null && liveReq[m.id]) { delete liveReq[m.id]; liveSettle(m.id, null); }
+    liveBars(); invalidate();
+  }
+  function liveRejected(m) {
+    var r = liveReq[m.id];
+    if (r) {
+      var t = r.t, e = edits[t.name], p = livePend[t.name] || {};
+      Object.keys(r.cells).forEach(function (k) { if (e && e[k] === r.cells[k]) delete e[k]; delete p[k]; });
+      if (e && !Object.keys(e).length) delete edits[t.name];
+      allGrids().forEach(function (g) { if (g.t === t) g.paint(); });
+      delete liveReq[m.id]; liveSettle(m.id, m.why || "refused");
+    }
+    toast("Not changed: " + (m.why || "refused"));
+    liveBars();
+  }
+  function liveTables(tbls) {
+    (idx.tables || []).forEach(function (t) {
+      var z = tbls[t.name];
+      if (z && z.length === t.z.length) for (var k = 0; k < z.length; k++) t.z[k] = z[k];
+    });
+    allGrids().forEach(function (g) { g.paint(); });
+    invalidate();
+  }
+  function liveBars() {
+    var api = window.MSQLive, st = api ? api.state() : {}, n = editCount();
+    var waiting = Object.keys(liveReq).length;
+    $$(".lv-save").forEach(function (bar) {
+      bar.hidden = false; bar.classList.toggle("idle", !n && !waiting);
+      var label = $(".lv-save-n", bar);
+      label.classList.remove("err");
+      label.textContent = vePending && n ? "VE Analyze suggests " + plural(n, "change") + ": Apply sends them to the ECU"
+        : waiting ? (st.mode === "ask" && st.role === "view" ? "Waiting for the driver to allow " : "Sending to the ECU: ") + plural(n, "change")
+        : n ? plural(n, "change") + " to send"
+        : st.needBurn ? "✓ In the ECU · not burned yet (Burn keeps it)" : "✓ The ECU has this tune";
+      ["[data-save-tune]", "[data-autosave]", "[data-save-discard]", "[data-save-close]"].forEach(function (s) { var el = $(s, bar); if (el) (el.closest("label") || el).hidden = true; });
+      $("[data-undo-edit]", bar).hidden = true;
+      $("[data-save-compare]", bar).hidden = true;
+    });
+    var bb = $("[data-live-burn]");
+    if (bb) { bb.classList.toggle("primary", !!st.needBurn); bb.disabled = st.role === "view" && !st.burn; bb.title = bb.disabled ? "The driver hasn't let the tuner burn" : "Make the changes permanent in the ECU"; }
+  }
+
   /* ---------- start ---------- */
   function fail(msg) { loadNote.textContent = msg; loadNote.classList.add("err"); loadNote.hidden = false; }
-  Promise.all([
-    fetch(base + "/index.json" + query).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }),
-    fetchF32(base + "/ch/t")
-  ]).then(function (res) {
-    idx = res[0]; T = res[1]; N = T.length;
-    toFahrenheit();
+  function start(index, times) {
+    idx = index; T = times; N = T.length;
+    if (!LIVE) toFahrenheit();
     if (N < 2) return fail("This log has no records to show.");
     addVirtual();
     addSimulated();
@@ -3277,7 +3479,7 @@
     renderSaveBars();
     renderNotes();
     renderSections();
-    together.start();
+    if (!LIVE) together.start();
     try { localStorage.removeItem("msq.lv.cells"); } catch (e) { /* ignore */ }
     var repaintT = 0;
     window.addEventListener("resize", function () { clearTimeout(repaintT); repaintT = setTimeout(function () { allGrids().forEach(function (g) { g.paint(); }); }, 150); });
@@ -3297,6 +3499,12 @@
     window.addEventListener("resize", function () { fitHeight(); scatterDirty = true; invalidate(); });
     window.addEventListener("orientationchange", function () { setTimeout(function () { fitHeight(); scatterDirty = true; invalidate(); }, 250); });
     if (startHash.tab === "scatter" || startHash.tab === "ve") setTab(startHash.tab);
+    if (LIVE) liveStarted();
     invalidate();
-  }).catch(function () { fail("This log couldn't be loaded. Reload the page to try again."); });
+  }
+  if (LIVE) liveBoot();
+  else Promise.all([
+    fetch(base + "/index.json" + query).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }),
+    fetchF32(base + "/ch/t")
+  ]).then(function (res) { start(res[0], res[1]); }).catch(function () { fail("This log couldn't be loaded. Reload the page to try again."); });
 })();

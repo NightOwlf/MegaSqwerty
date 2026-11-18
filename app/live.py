@@ -189,7 +189,14 @@ def register(app, store, templates, deps) -> None:
         role = "car" if secrets.compare_digest(k, s.car_key) else "view" if secrets.compare_digest(k, s.view_key) else None
         if role is None:
             raise HTTPException(404)
-        return templates.TemplateResponse(request, "live.html", {"role": role, "sid": sid, "key": k})
+        return deps["live_page"](request, s, role, k)  # the log viewer, running live
+
+    @app.get("/live/{sid}/index.json")
+    def live_index_json(sid: str, k: str = ""):
+        s = get(sid)
+        if not (secrets.compare_digest(k, s.car_key) or secrets.compare_digest(k, s.view_key)):
+            raise HTTPException(404)
+        return JSONResponse(deps["live_index"](s), headers={"Cache-Control": "private, no-cache"})
 
     @app.post("/live/start")
     async def live_start(request: Request):

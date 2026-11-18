@@ -27,6 +27,36 @@
   function showT(v, u) { return TEMP_F && isC(u) && v != null ? v * 1.8 + 32 : v; }
   function showU(u) { return TEMP_F && isC(u) ? "°F" : u || ""; }
   var frames = 0, fps = 0, rtt = null, chList = [];
+  /* The log viewer runs on this page's data (viewer.js in live mode): it listens here for frames, the session so
+     far, and what the ECU applied or refused, and sends its table edits through set(). */
+  var bus = {}, viewerReady = false, viewerWant = {}, heldHist = null;
+  function emit(ev) { var a = Array.prototype.slice.call(arguments, 1); (bus[ev] || []).forEach(function (f) { try { f.apply(null, a); } catch (e) { console.error(e); } }); }
+  window.MSQLive = {
+    on: function (ev, f) { (bus[ev] = bus[ev] || []).push(f); },
+    ready: function () {
+      viewerReady = true;
+      if (heldHist) { emit("hist", heldHist); heldHist = null; }
+      if (Object.keys(tables).length) emit("tables", tables);
+    },
+    want: function (name) {
+      if (!name || viewerWant[name]) return;
+      viewerWant[name] = 1;
+      if (ROLE === "car") wanted[name] = 1; else sendWant();
+    },
+    set: function (table, cells) { return liveSet(table, cells); },
+    state: function () { return Object.assign({ role: ROLE }, state, { mode: ROLE === "car" && modeSel() ? modeSel().value : state.mode }); }
+  };
+  function liveSet(table, cells) {
+    var id = ++reqN;
+    if (ROLE === "car") {
+      var why = !running ? "Connect the ECU first." : check(table, cells);
+      if (why) { setTimeout(function () { emit("rejected", { id: id, why: why }); }, 0); return id; }
+      queue.push({ kind: "set", m: { id: id, table: table, cells: cells }, by: "driver" });
+      return id;
+    }
+    send({ t: "set", id: id, table: table, cells: cells });
+    return id;
+  }
   setInterval(function () { fps = frames; frames = 0; if (ROLE === "view") { send({ t: "ping", at: Date.now() }); pill(); } }, 1000);
   var hist = { t: [], rows: {} }, HIST_S = 30;
   var sess = (function () { try { return JSON.parse(localStorage.getItem("msq.live.car") || "null"); } catch (e) { return null; } })();
@@ -82,19 +112,24 @@
       if (ROLE === "view") sendWant();
       (m.changes || []).forEach(logChange);
       renderAll();
-    } else if (m.t === "state") { state = Object.assign(state, m.state); renderState(); renderRec(); }
+    } else if (m.t === "state") { state = Object.assign(state, m.state); renderState(); renderRec(); emit("state"); }
     else if (m.t === "chs") { chList = m.n || []; }
-    else if (m.t === "hist" && ROLE === "view") loadHist(m);
+    else if (m.t === "hist" && ROLE === "view") {
+      loadHist(m);
+      var fr = (m.f || []).map(function (x) { return [x[0], (m.chs || [])[x[1]], x[2] && x[2].v]; }).filter(function (x) { return x[1] && x[2]; });
+      if (viewerReady) emit("hist", fr); else heldHist = fr;
+    }
     else if (m.t === "o" && ROLE === "view") {
       var v = m.v || [];
       for (var i = 0; i < chList.length; i++) if (v[i] != null) och[chList[i]] = v[i];
       frames++; pushFrame(Date.now() / 1000, chList, v); drawLive();
+      emit("frame", Date.now() / 1000, chList, v);
     }
     else if (m.t === "want" && ROLE === "car") { wanted = {}; (m.n || []).forEach(function (n) { wanted[n] = 1; }); }
     else if (m.t === "pong") { rtt = Date.now() - (m.at || Date.now()); pill(); }
     else if (m.t === "tables" && ROLE === "view") {
       Object.keys(m.tables).forEach(function (k) { tables[k] = m.tables[k]; base[k] = m.tables[k].slice(); });
-      updateStoich(); renderTable();
+      updateStoich(); renderTable(); emit("tables", m.tables);
     }
     else if (m.t === "applied") {
       if (ROLE === "view") {
@@ -103,8 +138,9 @@
         clearPending(m.id, m.table, m.cells);
       }
       logChange(m); flashCells(m.table, m.cells); renderTable(); if ((layout.editable || {})[m.table] === "setting") renderSettings();
+      emit("applied", m);
       if (ROLE === "view" && m.by === "driver") toast("The driver changed " + Object.keys(m.cells).length + " cell(s) in " + title(m.table));
-    } else if (m.t === "rejected") { clearPending(m.id); toast("Not changed: " + (m.why || "refused"), true); renderTable(); }
+    } else if (m.t === "rejected") { clearPending(m.id); renderTable(); if (bus.rejected) emit("rejected", m); else toast("Not changed: " + (m.why || "refused"), true); }
     else if (m.t === "burned") { toast("Burned to the ECU: the changes are now permanent."); state.needBurn = false; snapBase(); renderTable(); renderState(); }
     else if (m.t === "notice") { toast(m.text || ""); $(".lt-mode-note") && ($(".lt-mode-note").textContent = m.text || ""); }
     else if (ROLE === "car" && (m.t === "set" || m.t === "undo" || m.t === "burn")) carRequest(m);
@@ -124,6 +160,7 @@
       if (j.error) throw new Error(j.error);
       sess = { id: j.id, car_key: j.car_key, view_key: j.view_key, tune: j.tune };
       try { localStorage.setItem("msq.live.car", JSON.stringify(sess)); } catch (e) { /* ignore */ }
+      if (!root.dataset.sid) { location.replace(j.car_url); return new Promise(function () { /* the page is moving */ }); }
       SID = j.id; KEY = j.car_key;
       history.replaceState(null, "", j.car_url);
       return fetch("/live/" + SID + "/layout?k=" + encodeURIComponent(KEY)).then(function (r) { return r.json(); });
@@ -166,7 +203,7 @@
     }).then(function (page) {
       tables = ECU.decodeConstants(layout, page, ecu.little);
       snapBase(); updateStoich();
-      send({ t: "tables", tables: tables });
+      send({ t: "tables", tables: tables }); emit("tables", tables);
       running = true; root.classList.add("ecu-on"); root.classList.toggle("is-sim", !!sim);
       $(".lt-status").textContent = (sim ? "Simulated ECU" : "ECU") + " connected: " + state.ecuSignature;
       pushState(); renderAll(); pollLoop(); keepAwake();
@@ -293,7 +330,9 @@
         lastSent = now;
         var list = streamChannels(), key = list.join(",");
         if (key !== chKey) { chKey = key; chList = list; send({ t: "chs", n: chList }); }
-        send({ t: "o", v: chList.map(function (n) { var v = och[n]; return v == null ? null : v; }), ts: now });
+        var vals = chList.map(function (n) { var v = och[n]; return v == null ? null : v; });
+        send({ t: "o", v: vals, ts: now });
+        emit("frame", now / 1000, chList, vals);
       }
       // ~60 reads a second. With the page in the background Chrome slows timers right down, so there the next
       // read follows straight on (the ECU's own reply time paces it) and only the sending is limited.
@@ -332,7 +371,7 @@
           });
           tables = fresh;
           if (lost) snapBase();
-          send({ t: "tables", tables: tables });
+          send({ t: "tables", tables: tables }); emit("tables", tables);
           if (lost) {
             state.needBurn = false; undoStack = [];
             send({ t: "notice", text: "The ECU restarted: changes that weren't burned are gone (the tables show what it has now)." });
@@ -414,6 +453,7 @@
     }
     return writeCells(job.m.table, job.m.cells, job.by, job.m.note || "", job.m.id).then(null, function (e) {
       send({ t: "rejected", id: job.m.id, why: "Writing to the ECU failed: " + e.message });
+      if (job.by === "driver") emit("rejected", { id: job.m.id, why: "Writing to the ECU failed: " + e.message });
     });
   }
   /* Write cells to the ECU's RAM, read them back, and report what it now holds. */
@@ -434,6 +474,7 @@
       if (undoStack.length > 100) undoStack.shift();
       state.needBurn = true; pushState();
       send({ t: "applied", id: id, table: table, cells: got, was: before, by: by, note: note });
+      emit("applied", { id: id, table: table, cells: got, was: before, by: by, note: note });
       logChange({ table: table, cells: got, was: before, by: by, note: note, at: Date.now() / 1000 });
       flashCells(table, got); renderTable(); renderState();
     });
@@ -649,7 +690,7 @@
   // gauges the tuner added: any live channel the ECU has (kept in this browser)
   var extra = (function () { try { return JSON.parse(localStorage.getItem("msq.live.gauges") || "[]") || []; } catch (e) { return []; } })();
   function saveExtra() { try { localStorage.setItem("msq.live.gauges", JSON.stringify(extra)); } catch (e) { /* ignore */ } sendWant(); }
-  function sendWant() { if (ROLE === "view") send({ t: "want", n: extra }); }
+  function sendWant() { if (ROLE === "view") send({ t: "want", n: extra.concat(Object.keys(viewerWant)) }); }
   function drawGauges() {
     var box = $(".lt-gauges");
     if (!box || !layout) return;
@@ -1024,7 +1065,7 @@
   /* indicator lamps, from the project's front page */
   var lampsBuilt = false;
   function drawLamps() {
-    var box = $(".ts-ind"), view = box && box.closest(".ts-view");
+    var box = $(".ts-ind"), view = box && box.closest(".ts-view, [data-lv-panel]");
     if (!box || !layout || !view || view.hidden) return;
     var list = layout.indicators || [];
     if (!lampsBuilt) { box.innerHTML = list.map(function (x, i) { return '<span data-lamp="' + i + '"></span>'; }).join(""); lampsBuilt = true; }
@@ -1110,6 +1151,17 @@
     }
     var tabb = e.target.closest("[data-view]");
     if (tabb) { showView(tabb.dataset.view); return; }
+    var lt = e.target.closest("[data-lv-tab]");
+    if (lt) { setTimeout(function () { if (lt.dataset.lvTab === "settings") renderSettings(); dialSets = {}; drawLive(); }, 0); }
+    if (e.target.closest("[data-live-burn]")) {
+      if (!confirm("Burn to the ECU? The changes become permanent (they survive turning the car off).")) return;
+      if (ROLE === "car") queue.push({ kind: "burn", m: {} }); else send({ t: "burn", id: ++reqN });
+      return;
+    }
+    if (e.target.closest("[data-live-undo]")) {
+      if (ROLE === "car") queue.push({ kind: "undo", m: { by: "driver" } }); else send({ t: "undo", id: ++reqN });
+      return;
+    }
     var cb = e.target.closest(".lt-chg");
     if (cb) {
       var li2 = cb.parentNode, open = li2.classList.toggle("open"), box2 = li2.querySelector(".lt-chg-d");

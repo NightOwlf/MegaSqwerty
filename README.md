@@ -397,6 +397,15 @@ by a little for a smooth change, or tap cells first to move a selection together
 Tune a running car from anywhere: someone at the car connects the ECU to a page, and a tuner opens a link on
 a phone or computer to watch it run and change the tables, sent to the ECU in moments.
 
+**The live page is the log viewer, running live**: the same graphs (pick channels, stack 1–4, zoom, pan, the
+cursor with every value and ▲▼ highs and lows), the same editable tables beside them with 3D and Shape, VE
+Analyze, Scatter, Simulate and the Dyno, all on the car's data as it streams in (about 20 records a second;
+a tuner who joins late gets the session so far). While the view is at the newest data it follows the car
+(● Live); scroll back or tap a moment and it stays there. Editing a cell works exactly as in the log viewer, and
+the change goes to the car, which writes it to the ECU (or asks the driver); the bar says when the ECU has it
+and whether it's burned. Above the viewer: the RPM, MAP and AFR gauges (target AFR as the amber needle) and a
+readout row with TPS. Tabs add **Gauges** (the project's front-page gauges and lamps) and **Settings**.
+
 The screen works like TunerStudio's: **Tuning** (RPM, MAP and AFR gauges, the target AFR as a second amber needle
 and number on the AFR gauge, a readout row with TPS, VE, EGO, timing and temperatures, the table with the
 operating point and its trail, and the graph), **Gauge Cluster** (the project's own front-page gauges with its
