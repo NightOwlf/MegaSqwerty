@@ -463,7 +463,7 @@
     if (!bar) return;
     bar.hidden = !sections.length && !selMode && secStart == null;
     var span = tMax - tMin > 600;
-    bar.innerHTML = '<b>Sections to tune</b>' +
+    bar.innerHTML = '<b>' + (LIVE ? "Sections to tune" : "Sections: tune, trim or download") + '</b>' +
       (sections.length ? sections.map(function (r, i) {
         return '<span class="lv-chip mono"><button type="button" data-sec-go="' + i + '" title="Show this section">' + fmtT(r[0], span ? 700 : 60) + "–" + fmtT(r[1], span ? 700 : 60) +
           '</button><button type="button" data-sec-del="' + i + '" aria-label="Remove this section">×</button></span>';
@@ -474,9 +474,12 @@
       '<button type="button" class="btn sm" data-sec="end" title="Mark where it ends, at the cursor">End ⟧</button>' +
       '<button type="button" class="btn sm" data-sec="view" title="Add what\'s on screen as a section">+ On screen</button>' +
       (sections.length ? '<button type="button" class="btn sm" data-sec="clear">Clear</button>' +
-        (tab !== "ve" ? '<button type="button" class="btn sm primary" data-sec="tune">Tune these ▶</button>' : "") +
-        (LIVE ? "" : '<button type="button" class="btn sm" data-sec="keep" title="A new log with only these sections (the start and end trimmed off)">Keep only these</button>' +
-          '<button type="button" class="btn sm" data-sec="cut" title="A new log with these sections taken out">Cut these out</button>') : "");
+        (tab !== "ve" ? '<button type="button" class="btn sm primary" data-sec="tune">Tune these ▶</button>' : "") : "") +
+      // trimming: always here, so it's easy to find; it needs a section marked first
+      (LIVE ? "" : '<span class="lv-trim"><button type="button" class="btn sm" data-sec="keep"' + (sections.length ? "" : " disabled") +
+        ' title="A new log with only the marked sections: trims off the start and end">✂ Keep only these</button>' +
+        '<button type="button" class="btn sm" data-sec="cut"' + (sections.length ? "" : " disabled") + ' title="A new log with the marked sections taken out">✂ Cut these out</button>' +
+        (sections.length ? "" : '<small class="dim">mark a section to trim the log</small>') + "</span>");
   }
   function inSections(Tarr) {
     if (!sections.length) return null;

@@ -1823,3 +1823,5 @@ li.open .lt-chg-more { transform: rotate(90deg); }
 .lv-dx-t tr[data-dx]:hover { background: var(--sel-soft); }
 .lv-dx-t td:first-child { width: 70px; color: var(--link); }
 .lv.tab-diag .lv-over { display: none; }
+.lv-trim { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding-left: 8px; border-left: 1px solid var(--line); }
+.lv-trim .btn:disabled { opacity: .5; }
