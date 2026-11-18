@@ -175,3 +175,19 @@ console.log("all VE Analyze tests passed");
   assert(Math.abs(halfway.values[k] - want) <= 0.11, "50% strength goes half way: " + halfway.values[k] + " vs " + want);
   console.log("ok - locked cells hold and strength scales the change");
 }
+
+// 12. A VE logged in one byte (FOME: 0–127.5) wraps above 127.5: the result is the same as with the true value.
+{
+  const assert = require("assert");
+  const big = tune.map(v => v + 60);  // a tune with cells above 127.5
+  const T2 = Object.assign({}, table, { z: big });
+  const log = makeLog();
+  const wrapped = Object.assign({}, log, { ve: log.ve.map(v => { const t = v + 60; return t > 127.5 ? t - 128 : t; }) });
+  const exact = Object.assign({}, log, { ve: log.ve.map(v => v + 60) });
+  const a = VEAL.create(T2, { lag: 0.15 }), b = VEAL.create(T2, { lag: 0.15 });
+  a.begin(wrapped); b.begin(exact);
+  for (let i = 0; i < log.T.length; i++) { a.step(i); b.step(i); }
+  const ra = a.finish(), rb = b.finish();
+  ra.values.forEach((v, k) => assert(Math.abs(v - rb.values[k]) <= 0.2, "cell " + k + ": " + v + " vs " + rb.values[k]));
+  console.log("ok - a VE logged in one byte that wraps above 127.5 is put right");
+}

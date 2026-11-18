@@ -374,6 +374,21 @@ def diagnose(parsed: LogDoc, stoich: float = 14.7) -> dict:
                     "Check idle air / ETB idle position, idle timing control, vacuum leaks and the idle VE cells.", r,
                     lambda a, b: {"spread": f"±{np.nanstd(rpm[a:b + 1]):.0f} rpm"})
 
+    # ---------------------------------------------------------------- the logged VE wrapping (one byte, 0–127.5)
+    vel = L.a("ve")
+    if vel is not None and pw is not None and np.nanmax(vel) <= 128.5:
+        prev_v, prev_p = np.roll(vel, 1), np.roll(pw, 1)
+        jump = running & (np.abs(vel - prev_v) > 80) & (np.abs(pw - prev_p) < 0.25 * np.maximum(pw, 0.5)) & (pw > 0.5)
+        jump[0] = False
+        if jump.sum() >= 2:
+            low = running & (vel < 30) & (pw > 3) & ((mp > 70) if mp is not None else True)
+            add("ve_wrap", "info", "The logged VE wraps above 127.5",
+                f"{L.roles['ve'].name} jumped by more than 80 with the injector pulse width steady {int(jump.sum())} time(s), and reads very low "
+                f"(under 30) at load while fuel is normal. The ECU logs VE in one byte (0–127.5), so a cell above 127.5 is logged 128 lower.",
+                "The engine is fine: only the logged copy wraps. MegaSqwerty's VE Analyze and Simulate put the 128 back. "
+                "A VE table mostly above 127.5 usually means the injector size or required fuel setting is off: worth checking.",
+                _runs(low, t, 0.5))
+
     # ---------------------------------------------------------------- the log itself
     gaps = _runs(np.diff(t, prepend=t[0]) > 1.0, t, 0.0, 0.0)
     if gaps:

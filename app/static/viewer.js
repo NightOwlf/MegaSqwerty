@@ -141,7 +141,7 @@
         for (var i = 0; i < n; i++) {
           var fx = where(t.x, X[i]), fy = where(t.y, Y[i] * t.ya + t.yb), afr = L[i] / lamDiv * stoich;
           if (!(fx === fx) || !(fy === fy) || !(afr > 5 && afr < 30)) { out[i] = NaN; continue; }
-          var veNow = interpTable(t, now, fx, fy), veRan = V && V[i] > 1 && V[i] < 300 ? V[i] : interpTable(t, was, fx, fy);
+          var veNow = interpTable(t, now, fx, fy), veTune = interpTable(t, was, fx, fy), veRan = V && V[i] > 0 && V[i] < 300 ? VEAL.unwrapVe(V[i], veTune) : veTune;
           var sim = veNow > 0 ? afr * veRan / veNow : NaN;
           out[i] = sim;
           if (Math.abs(veNow / veRan - 1) > 0.001) st.changed++;

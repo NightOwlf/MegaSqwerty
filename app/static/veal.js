@@ -103,6 +103,14 @@
     return best > 0.02 ? bestLag : null;
   }
 
+  /* Some ECUs log VE in one byte (FOME/rusEFI: U08 × 0.5, so 0–127.5): a VE above 127.5 comes out 128 less
+     (a cell at 148.5 logs as 20.5). Put the 128 back when the table says the cell is up there. */
+  function unwrapVe(v, fromTune) {
+    if (!(fromTune > 110) || !(v < 128)) return v;
+    var best = v;
+    for (var k = 1; k <= 3; k++) if (Math.abs(v + 128 * k - fromTune) < Math.abs(best - fromTune)) best = v + 128 * k;
+    return best;
+  }
   function median(arr) {
     var a = Array.prototype.filter.call(arr, finite).sort(function (p, q) { return p - q; });
     return a.length ? a[a.length >> 1] : NaN;
@@ -121,6 +129,9 @@
     // The same fit for the VE the ECU actually ran (logged), which rebuilds the table that was on the car even
     // when the tune attached isn't it. Changes are limited relative to this, not to a file that never ran.
     var bRan = new Float64Array(N), valRan = Float64Array.from(table.z);
+    // the range of VE the ECU actually logged in each cell: the rebuilt "what ran" can't leave it (with sparse data,
+    // or a table that was changed while the log ran, an unbounded fit swings neighbours to impossible values)
+    var ranLo = new Float64Array(N).fill(Infinity), ranHi = new Float64Array(N).fill(-Infinity);
     var mism = { n: 0, sum: 0, logged: 0 };
     var errSum = new Float64Array(N), errW = new Float64Array(N);  // mixture error each cell saw, before the fix
     var lockedSet = new Uint8Array(N);
@@ -218,9 +229,9 @@
       }
       var a = reason ? null : locate(table.x, d.rpm[i]), c = reason ? null : locate(table.y, d.load[i]);
       if (!reason && (!a || !c)) reason = 7;
-      var logged = !reason && d.ve && d.ve[i] > 1 && d.ve[i] < 300;
+      var logged = !reason && d.ve && d.ve[i] > 0 && d.ve[i] < 300;
       var fromTune = reason ? NaN : interp(table, base, d.rpm[i], d.load[i]);
-      var used = reason ? NaN : (logged ? d.ve[i] : fromTune);
+      var used = reason ? NaN : (logged ? unwrapVe(d.ve[i], fromTune) : fromTune);
       if (!reason && !(used > 0)) reason = 8;
       var want = NaN;
       if (!reason) {
@@ -257,6 +268,7 @@
         valRan[cp] += s * w / (hits[cp] + prior) * errRan;
         b[cp] += s * w * want;
         bRan[cp] += s * w * used;
+        if (w >= 0.25 && used === used) { if (used < ranLo[cp]) ranLo[cp] = used; if (used > ranHi[cp]) ranHi[cp] = used; }
         for (q = 0; q < 4; q++) if (weight[q] > 0) A[band(cp, corner[q])] += s * w * weight[q];
       }
       return weight[0] >= weight[1] && weight[0] >= weight[2] && weight[0] >= weight[3] ? corner[0]
@@ -318,12 +330,19 @@
     function finish() {
       // what ran is rebuilt exactly (no smoothing): it's a record of the ECU's table, not a measurement
       var x = solve(b, val, o.smooth, true), ran = solve(bRan, valRan, 0, false), k;
+      for (k = 0; k < N; k++) {  // keep what ran inside what was logged there (or the tune, where nothing was)
+        if (ranLo[k] <= ranHi[k]) {
+          var lo = Math.min(ranLo[k], base[k]) * 0.85, hi = Math.max(ranHi[k], base[k]) * 1.15;
+          ran[k] = Math.max(lo, Math.min(hi, ran[k] === ran[k] ? ran[k] : base[k]));
+        } else if (!(ran[k] > 0)) ran[k] = base[k];
+      }
       var digits = Math.max(0, Math.min(4, table.d == null ? 1 : table.d)), unit = Math.pow(10, digits);
       var values = new Array(N), changed = [];
       for (k = 0; k < N; k++) {
         var rk = hits[k] >= o.minData * 0.1 ? ran[k] : base[k];
         var full = limited(k, x[k], rk), str = Math.max(0, Math.min(100, o.strength)) / 100;
         var v = Math.round((base[k] + (full - base[k]) * str) * unit) / unit;
+        if (!(v > 0)) v = base[k];  // a VE of zero or below is never an answer
         values[k] = v;
         val[k] = v;
         valRan[k] = rk;
@@ -352,5 +371,5 @@
              summary: summary, opts: o, logs: logs, cells: N };
   }
 
-  return { create: create, interp: interp, locate: locate, measureLag: measureLag, DEFAULTS: DEFAULTS, LABELS: LABELS };
+  return { create: create, interp: interp, locate: locate, measureLag: measureLag, unwrapVe: unwrapVe, DEFAULTS: DEFAULTS, LABELS: LABELS };
 });
