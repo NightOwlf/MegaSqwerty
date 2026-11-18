@@ -389,7 +389,8 @@ def register(app, store, templates, deps) -> None:
         if not text:
             return JSONResponse({"error": "Nothing recorded yet: the first save is a minute after the ECU connects."}, status_code=404)
         fname = "Live-session-" + re.sub(r"[^0-9T-]", "-", start or "now") + ("-section" if e else "") + ".msl"
-        return Response(text.encode("latin-1", "replace"), media_type="text/plain; charset=iso-8859-1",
+        body = await run_in_threadpool(app.state.for_log_tools, text.encode("latin-1", "replace"), "")  # + EGO cor1 for MegaLogViewer
+        return Response(body, media_type="text/plain; charset=iso-8859-1",
                         headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
     def key_ok(s: Session, k: str) -> bool:

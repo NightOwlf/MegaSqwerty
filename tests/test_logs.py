@@ -721,19 +721,24 @@ def test_a_downloaded_section_reads_in_tunerstudio_like_the_original(client):
     chans = CHANNELS + [("Fuel: Trim bank 1", "%")]
     raw = msl([r + [1.5] for r in rows], chans).replace(b'"speeduino 202501"', b'"rusEFI (FOME) Vthpnp.2026.05.01.vthpnp.2982106365: FOME vthpnp"')
     url = client.post("/logs", files={"file": ("drive.msl", raw, "text/plain")}).headers["location"]
-    assert client.get(f"{url}/download").content == raw  # the whole log: byte for byte what was uploaded
+    whole = client.get(f"{url}/download").content
+    # the whole log as uploaded, plus "EGO cor1" (100 + the trim): the field MegaLogViewer's VE Analyze reads
+    wl, rl = whole.decode().split("\n"), raw.decode().split("\n")
+    assert len(wl) == len(rl) and wl[:2] == rl[:2]
+    assert all(w == r + "\tEGO cor1" * (i == 2) + "\t%" * (i == 3) + "\t101.50" * (i > 3) for i, (w, r) in enumerate(zip(wl, rl)) if r)
+    assert client.get(f"{url}/download").content == whole
     sec = client.get(f"{url}/download?s=2-4").text
     head, n2, u2, body = _sections(sec)
     assert head == ['"rusEFI (FOME) Vthpnp.2026.05.01.vthpnp.2982106365: FOME vthpnp"', '"Capture Date: Tue Sep 15 12:00:00 2026"']
-    assert n2 == names and u2 == [u for _, u in chans]
+    assert n2 == names + ["EGO cor1"] and u2 == [u for _, u in chans] + ["%"]
     first = body[0].split("\t")
     assert 2.0 <= float(first[0]) <= 2.06  # the log's own clock, not restarted
-    assert first[names.index("Fuel: Trim bank 1")] == "1.5"
+    assert first[names.index("Fuel: Trim bank 1")] == "1.5" and first[-1] == "101.50"
     assert "nan" not in sec
     # it reads back exactly as the original does
     a, b = logs.parse_log(raw, "a.msl"), logs.parse_log(sec.encode(), "b.msl")
-    assert [c.name for c in a.channels] == [c.name for c in b.channels]
-    assert [c.units for c in a.channels] == [c.units for c in b.channels]
+    assert [c.name for c in a.channels] + ["EGO cor1"] == [c.name for c in b.channels]
+    assert [c.units for c in a.channels] + ["%"] == [c.units for c in b.channels]
 
 
 def test_a_section_of_an_mlg_keeps_tunerstudios_header():

@@ -956,7 +956,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         base = re.sub(r"[^A-Za-z0-9._-]+", "-", row["name"]).strip("-._")[:60] or f"{row['slug']}.log"
         binary = raw[:5] == b"MLVLG"
         if not binary:
-            raw = with_signature(raw, log_signature(row))
+            raw = for_log_tools(raw, log_signature(row))
         return Response(raw, media_type="application/octet-stream" if binary else "text/plain; charset=utf-8",
                         headers={"Content-Disposition": f'attachment; filename="{base}"'})
 
@@ -1219,7 +1219,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             raise HTTPException(404)
         text = await run_in_threadpool(log_as_msl, raw, row["name"], ranges, False, log_signature(row))
         base = re.sub(r"[^A-Za-z0-9._-]+", "-", re.sub(r"\.(msl|mlg|csv|tsv|log)$", "", row["name"], flags=re.I)).strip("-._")[:50] or log_slug
-        return Response(text.encode("latin-1", "replace"), media_type="text/plain; charset=iso-8859-1",
+        return Response(await run_in_threadpool(with_ego_cor, text.encode("latin-1", "replace")), media_type="text/plain; charset=iso-8859-1",
                         headers={"Content-Disposition": f'attachment; filename="{base}-section.msl"'})
 
     @app.post("/l/{log_slug}/trim")
@@ -1278,6 +1278,48 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             return raw
         nl = b"\r\n" if b"\r\n" in raw[:4000] else b"\n"
         return b'"' + sig.encode("latin-1", "replace") + b'"' + nl + raw
+
+    TRIM_NAMES = ("Fuel: Trim bank 1", "fuelPidCorrection1", "Fuel: Trim bank1")
+
+    def with_ego_cor(raw: bytes) -> bytes:
+        """MegaLogViewer's VE Analyze reads the closed-loop correction from a field named "EGO cor1" (MegaSquirt's
+        name, 100 = none). FOME/rusEFI log it as "Fuel: Trim bank 1", a trim around 0 (their .ini gives VE Analyze
+        100 + that). A text log that has the trim and no "EGO cor1" gets it as one more column."""
+        nl = "\r\n" if b"\r\n" in raw[:4000] else "\n"
+        text = raw.decode("latin-1")
+        lines = text.split(nl)
+        ni = next((i for i, ln in enumerate(lines[:20]) if ln and not ln.startswith('"')), None)
+        if ni is None or ni + 1 >= len(lines):
+            return raw
+        names = lines[ni].split("\t")
+        if "EGO cor1" in names:
+            return raw
+        k = next((names.index(n) for n in TRIM_NAMES if n in names), None)
+        if k is None:
+            return raw
+        units_row = ni + 1 < len(lines) and not re.match(r"^-?[\d.]+(\t|$)", lines[ni + 1])
+        out = lines[:ni] + [lines[ni] + "\tEGO cor1"]
+        first = ni + 1
+        if units_row:
+            out.append(lines[ni + 1] + "\t%")
+            first += 1
+        for ln in lines[first:]:
+            if not ln:
+                out.append(ln)
+                continue
+            cells = ln.split("\t")
+            try:
+                v = f"{100.0 + float(cells[k]):.2f}" if k < len(cells) and cells[k].strip() else ""
+            except ValueError:
+                v = ""
+            out.append(ln + "\t" + v)
+        return nl.join(out).encode("latin-1")
+
+    def for_log_tools(raw: bytes, signature: str) -> bytes:
+        """A downloaded text log, ready for TunerStudio and MegaLogViewer: the ECU signature first (TunerStudio
+        names the fields by it) and the EGO correction under the name MegaLogViewer's VE Analyze looks for."""
+        return with_ego_cor(with_signature(raw, signature))
+    app.state.for_log_tools = for_log_tools
 
     def parse_ranges(s: str) -> list[tuple[float, float]]:
         out = []

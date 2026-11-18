@@ -470,9 +470,11 @@ def test_live_session_logs_are_written_the_way_tunerstudio_writes_them(client, f
     assert r.status_code == 200 and r.json()["rows"] == 20
     lines = client.get(f"/live/{sid}/session.msl?k={car}").text.strip().split("\n")
     assert lines[0] == f'"{sig}"' and lines[1].startswith('"Capture Date: ')
-    assert lines[2] == "Time\tRPM\tMAP\tFuel: Trim bank 1" and lines[3] == "s\tRPM\tkPa\t%"
+    # MegaLogViewer's VE Analyze reads the correction as "EGO cor1" (100 = none): 100 + FOME's trim
+    assert lines[2] == "Time\tRPM\tMAP\tFuel: Trim bank 1\tEGO cor1" and lines[3] == "s\tRPM\tkPa\t%\t%"
     rows = [ln.split("\t") for ln in lines[4:]]
     assert len(rows) == 40 and rows[0][1] == "900" and rows[0][3] == "" and rows[20][1] == "2000" and rows[20][3] == "1.5"
+    assert rows[0][4] == "" and rows[20][4] == "101.50"
     assert float(rows[20][0]) == pytest.approx(10.0, abs=0.01)  # the second part, 10 s later on the same clock
 
 
