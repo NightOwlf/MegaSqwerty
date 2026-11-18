@@ -107,6 +107,7 @@
     var m = idx.channels[i];
     var p = (m.virt ? m.virt() : fetchF32(base + "/ch/" + i)).then(function (v) {
       if (m.toF) for (var q = 0; q < v.length; q++) v[q] = v[q] * 1.8 + 32;  // shown in °F
+      if (m.toAfr) for (var q2 = 0; q2 < v.length; q2++) v[q2] = v[q2] * m.toAfr;  // lambda shown as AFR
       store[i] = { v: v, pyr: pyramid(v) };
       scatterDirty = true;
       invalidate();
@@ -1614,7 +1615,7 @@
     saveErr = "";
     saving = fetch("/t/" + TUNE + "/save", {
       method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({ changes: sent, key: owned()[TUNE] || "", checkpoint: checkpoint || "" })
+      body: JSON.stringify({ changes: (function () { var o = {}; Object.keys(sent).forEach(function (n) { o[n] = ecuCells(tableNamed(n), sent[n]); }); return o; })(), key: owned()[TUNE] || "", checkpoint: checkpoint || "" })
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (j) { return [r.ok, j]; });
     }, function () { return [false, { error: "check your connection." }]; }).then(function (res) {
@@ -3220,12 +3221,12 @@
           var t = idx.tables.filter(function (x) { return x.name === nt.name; })[0];
           if (!t || nt.z.length !== t.z.length) return;
           for (var k = 0; k < t.z.length; k++) {
-            if (Math.abs(nt.z[k] - t.z[k]) > 1e-9) {
-              t.z[k] = nt.z[k];
+            if (Math.abs(toTable(t, nt.z[k]) - t.z[k]) > 1e-6) {
+              t.z[k] = toTable(t, nt.z[k]);
               if (!edited(t, k)) { moved++; (flashes[t.name] = flashes[t.name] || []).push(k); }
             }
           }
-          t.p = nt.p;
+          t.p = nt.p && t.toAfr ? nt.p.map(function (v) { return v * t.toAfr; }) : nt.p;
         });
         var notesChanged = (fresh.tune.notes || "") !== (idx.tune.notes || "");
         idx.tune.rev = fresh.tune.rev; idx.tune.notes = fresh.tune.notes; idx.tune.changed = fresh.tune.changed;
@@ -3444,7 +3445,45 @@
   var TEMP_F = (function () { try { return (localStorage.getItem("msq.lv.temp") || "F") !== "C"; } catch (e) { return true; } })();
   function isCelsius(u) { return /^\s*(°\s*c|deg\s*c|degc|c|celsius|degrees\s*c)\s*$/i.test(String(u || "")); }
   function f(v) { return v == null ? v : v * 1.8 + 32; }
+  /* Mixture is always shown as AFR on the fuel's scale (the tune's stoich): a lambda channel (FOME logs the target as
+     "Fuel: target lambda") is shown ×stoich and renamed, and a target table holding lambda is shown in AFR. Values go
+     back to the ECU's own units whenever they're saved or sent, and the maths (VE Analyze, Simulate) knows. */
+  var LAM_SKIP = /good|ok$|valid|cut|prot|err|time|since|monitor|heater|state|status|flag|count|enable|corr|trim|gain|adc|volt|raw/i;
+  function isLambdaChannel(m) {
+    if (!m || m.virt || LAM_SKIP.test(m.n)) return false;
+    var named = /lambda/i.test(m.n) || /lambda/i.test(m.u || "");
+    if (!named) return false;
+    return m.hi == null || m.hi <= 2.5;
+  }
+  function toAfr() {
+    if (!idx || idx.afrDone) return;
+    idx.afrDone = true;
+    var S = (idx.tune && idx.tune.stoich) || 14.7, names = {};
+    idx.channels.forEach(function (m) { names[m.n] = 1; });
+    idx.channels.forEach(function (m, i) {
+      if (!isLambdaChannel(m)) return;
+      m.toAfr = S; m.u = "AFR";
+      if (m.lo != null) { m.lo = Math.round(m.lo * S * 100) / 100; m.hi = Math.round(m.hi * S * 100) / 100; }
+      var nn = m.n.replace(/lambda/ig, "AFR");
+      m.n = names[nn] ? nn + " (from λ)" : nn; names[m.n] = 1;
+      m.d = Math.max(m.d || 0, 2);
+      ["lambda", "lambda_target"].forEach(function (r) { if (idx.roles && idx.roles[r] === i) { idx.lam = idx.lam || {}; idx.lam[r] = S; } });
+    });
+    (idx.tables || []).forEach(function (t) {
+      if (t.id !== "afr") return;
+      t.label = String(t.label || "").replace(/lambda/ig, "AFR");
+      if (t.lam) {  // the table holds lambda: shown in AFR, sent back in lambda
+        t.toAfr = S; t.d0 = t.d; t.d = 1; t.units = "AFR"; t.lam = null;
+        t.z = t.z.map(function (v) { return v * S; });
+        if (t.p) t.p = t.p.map(function (v) { return v * S; });
+      }
+    });
+  }
+  function fromTable(t, v) { return t && t.toAfr ? Math.round(v / t.toAfr * Math.pow(10, t.d0 + 1)) / Math.pow(10, t.d0 + 1) : v; }
+  function toTable(t, v) { return t && t.toAfr ? v * t.toAfr : v; }
+  function ecuCells(t, cells) { var o = {}; Object.keys(cells).forEach(function (k) { o[k] = fromTable(t, cells[k]); }); return o; }
   function toFahrenheit() {
+    toAfr();
     if (!TEMP_F || !idx) return;
     idx.channels.forEach(function (m) {
       if (!isCelsius(m.u)) return;
@@ -3504,6 +3543,7 @@
       if (v == null || v !== v) continue;
       var m = idx.channels[i];
       if (m.toF) v = v * 1.8 + 32;
+      if (m.toAfr) v = v * m.toAfr;
       if (!LB.ch[i]) { LB.ch[i] = new Float32Array(LB.cap); LB.ch[i].fill(NaN); }
       LB.ch[i][n] = v; seen[i] = LB.stamp;
       if (m.lo == null || v < m.lo) m.lo = v;
@@ -3584,7 +3624,7 @@
       var ks = Object.keys(cells);
       for (var i = 0; i < ks.length; i += 64) {
         var part = {}; ks.slice(i, i + 64).forEach(function (k) { part[k] = cells[k]; p[k] = cells[k]; });
-        var id = api.set(t.name, part);
+        var id = api.set(t.name, ecuCells(t, part));
         liveReq[id] = { t: t, cells: part }; ids.push(id);
       }
     });
@@ -3607,7 +3647,7 @@
     if (t) {
       var e = edits[t.name], p = livePend[t.name] || {}, tol = 0.51 * Math.pow(10, -t.d), flashes = [];
       Object.keys(m.cells || {}).forEach(function (k) {
-        var v = +m.cells[k]; t.z[+k] = v; flashes.push(+k);
+        var v = toTable(t, +m.cells[k]); t.z[+k] = v; flashes.push(+k);
         if (e && k in e && Math.abs(e[k] - v) <= tol + Math.abs(v) * 1e-4) delete e[k];
         else if (e && k in e && p[k] === e[k]) delete e[k];  // the ECU rounded it: what it holds is the value
         delete p[k];
@@ -3635,7 +3675,7 @@
   function liveTables(tbls) {
     (idx.tables || []).forEach(function (t) {
       var z = tbls[t.name];
-      if (z && z.length === t.z.length) for (var k = 0; k < z.length; k++) t.z[k] = z[k];
+      if (z && z.length === t.z.length) for (var k = 0; k < z.length; k++) t.z[k] = toTable(t, z[k]);
     });
     allGrids().forEach(function (g) { g.paint(); });
     invalidate();
