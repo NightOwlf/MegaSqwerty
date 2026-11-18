@@ -1141,6 +1141,69 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         return Response(block, media_type="application/octet-stream",
                         headers={"Content-Encoding": "deflate", "Cache-Control": "public, max-age=31536000, immutable"})
 
+    # ---------------------------------------------------------------- the log doctor, and data for tools
+    diag_cache: dict = {}
+
+    def tune_stoich(request: Request, row: dict) -> float:
+        _, doc = viewer_tune(request, row)
+        return stoich_of(doc) if doc is not None else 14.7
+
+    @app.get("/l/{log_slug}/diagnose.json")
+    async def log_diagnose(request: Request, log_slug: str):
+        """Everything the log doctor finds in this log: each finding with when, the numbers then, and what to check."""
+        from . import diagnose as diagmod
+        row = any_log(log_slug)
+        stoich = tune_stoich(request, row)
+        key = (log_slug, row.get("size"), stoich)
+        if key not in diag_cache:
+            raw = store.read_log_raw(log_slug)
+            if raw is None:
+                raise HTTPException(404)
+            parsed = await run_in_threadpool(logsmod.parse_log, raw, row["name"])
+            diag_cache[key] = await run_in_threadpool(diagmod.diagnose, parsed, stoich)
+            while len(diag_cache) > 30:
+                diag_cache.pop(next(iter(diag_cache)))
+        return JSONResponse(dict(diag_cache[key], log=log_slug, name=row["name"]), headers={"Cache-Control": "private, no-cache"})
+
+    @app.get("/l/{log_slug}/data.json")
+    def log_data(log_slug: str, ch: str = "", s: str = "", every: int = 1, limit: int = 20000):
+        """Raw numbers for tools: the channels named in `ch` (names or roles like rpm, map, lambda), between
+        `s=from-to` seconds, every Nth record. No `ch`: the list of channels and roles."""
+        import zlib
+        import numpy as np
+        row = any_log(log_slug)
+        index, base = log_index(log_slug)
+        chans, roles = index["channels"], index.get("roles", {})
+        if not ch:
+            return JSONResponse({"name": row["name"], "rows": index["rows"], "seconds": index.get("seconds"),
+                                 "roles": {r: chans[i]["n"] for r, i in roles.items() if i < len(chans)},
+                                 "channels": [{k: c.get(k) for k in ("n", "u", "lo", "hi")} for c in chans]})
+        path = store.col_path(log_slug)
+
+        def col(entry):
+            return np.frombuffer(zlib.decompress(logsmod.read_block(path, base, entry)), dtype="<f4")
+        t = col(index["time"])
+        keep = np.ones(len(t), dtype=bool)
+        rng = [r for r in (s or "").split(",") if r]
+        if rng:
+            keep[:] = False
+            for part in rng:
+                m = re.match(r"^\s*(-?[\d.]+)-(-?[\d.]+)\s*$", part)
+                if m:
+                    keep |= (t >= float(m.group(1))) & (t <= float(m.group(2)))
+        sel = np.flatnonzero(keep)[:: max(1, every)][: max(1, min(limit, 200000))]
+        out, units = {}, {}
+        for name in [x.strip() for x in ch.split(",") if x.strip()][:40]:
+            i = roles.get(name)
+            if i is None:
+                i = next((k for k, c in enumerate(chans) if c["n"].lower() == name.lower()), None)
+            if i is None:
+                continue
+            v = col(chans[i])
+            out[chans[i]["n"]] = [None if x != x else round(float(x), 4) for x in v[sel]]
+            units[chans[i]["n"]] = chans[i].get("u", "")
+        return JSONResponse({"t": [round(float(x), 3) for x in t[sel]], "channels": out, "units": units})
+
     @app.get("/l/{log_slug}/download")
     async def log_viewer_download(log_slug: str, s: str = ""):
         """The log as uploaded, or with `s=from-to,from-to` (seconds, as the viewer counts them) just those
@@ -1234,6 +1297,20 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         start = _dt.datetime.fromtimestamp(first, _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ") if out else ""
         return "\n".join(['"MSQ Viewer live session ' + start + '"', head[1], head[2]] + body) + "\n", start[:16]
     app.state.session_msl = session_msl
+
+    def session_diagnose(s) -> dict:
+        import datetime as _dt
+        from . import diagnose as diagmod
+        text, _ = session_msl(s, [])
+        if not text:
+            return {"findings": [], "rows": 0, "seconds": 0, "epoch0": None}
+        m = re.search(r"(\d{4}-\d\d-\d\dT[\d:.]+)Z", text[:120])
+        epoch0 = _dt.datetime.fromisoformat(m.group(1)).replace(tzinfo=_dt.timezone.utc).timestamp() if m else None
+        doc = store.get_doc(s.tune) if s.tune else None
+        out = diagmod.diagnose(logsmod.parse_log(text.encode("latin-1", "replace"), "session.msl"), stoich_of(doc) if doc is not None else 14.7)
+        out["epoch0"] = epoch0
+        return out
+    app.state.session_diagnose = session_diagnose
     app.state.parse_ranges = parse_ranges
 
     @app.post("/l/{log_slug}/delete")

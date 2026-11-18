@@ -1804,3 +1804,22 @@ li.open .lt-chg-more { transform: rotate(90deg); }
 .lt-codes:empty { display: none; }
 .lt-code { display: inline-block; margin: 2px 4px 2px 0; padding: 2px 8px; border-radius: 3px; background: #c62828; color: #fff; font-weight: 700; }
 .lv-velive.on { background: #1f8f4e; border-color: #2fbf6c; color: #fff; }
+
+/* ---------- the log doctor ---------- */
+.lv-diag[hidden] { display: none; }
+.lv-diag { display: grid; gap: 8px; align-content: start; overflow-y: auto; }
+.lv-diag-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 13px; }
+.lv-diag-list { display: grid; gap: 6px; }
+.lv-dx { border: 1px solid var(--line); border-left-width: 4px; border-radius: 6px; background: var(--win); font-size: 13px; }
+.lv-dx.bad { border-left-color: #ff3b30; } .lv-dx.warn { border-left-color: #ffaa00; } .lv-dx.info { border-left-color: #4fd8ff; }
+.lv-dx summary { padding: 8px 10px; cursor: pointer; }
+.lv-dx-sev { display: inline-block; min-width: 58px; padding: 1px 6px; border-radius: 3px; font: 700 11px var(--ui); text-align: center; color: #000; }
+.lv-dx.bad .lv-dx-sev { background: #ff3b30; color: #fff; } .lv-dx.warn .lv-dx-sev { background: #ffaa00; } .lv-dx.info .lv-dx-sev { background: #4fd8ff; }
+.lv-dx p { margin: 0 10px 6px; line-height: 1.45; }
+.lv-dx-fix { color: var(--muted); }
+.lv-dx-t { width: calc(100% - 20px); margin: 0 10px 8px; border-collapse: collapse; font-size: 12.5px; }
+.lv-dx-t td { padding: 4px 6px; border-top: 1px solid var(--line); vertical-align: top; }
+.lv-dx-t tr[data-dx] { cursor: pointer; }
+.lv-dx-t tr[data-dx]:hover { background: var(--sel-soft); }
+.lv-dx-t td:first-child { width: 70px; color: var(--link); }
+.lv.tab-diag .lv-over { display: none; }

@@ -486,7 +486,7 @@
     return m;
   }
   function drawMarkers(ctx, W, H, kx, t0, t1, label) {
-    if (evMarks.length) drawEvents(ctx, W, H, kx, t0, t1, label);
+    if (evMarks.length || (diag.marks.length && diag.show)) drawEvents(ctx, W, H, kx, t0, t1, label);
     if (!idx.markers || !idx.markers.length) return;
     ctx.save();
     ctx.strokeStyle = "#ff3b30"; ctx.fillStyle = "#ff8a80"; ctx.lineWidth = 1;
@@ -553,11 +553,11 @@
   function drawEvents(ctx, W, H, kx, t0, t1, label) {
     ctx.save();
     ctx.font = "11px system-ui, sans-serif"; ctx.textBaseline = "top"; ctx.textAlign = "left";
-    evMarks.forEach(function (e) {
-      var a = T[Math.min(N - 1, e.i0)], b = T[Math.min(N - 1, e.i1)];
+    evMarks.concat(diag.show ? diag.marks : []).forEach(function (e) {
+      var a = e.ta != null ? e.ta : T[Math.min(N - 1, e.i0)], b = e.tb != null ? e.tb : T[Math.min(N - 1, e.i1)];
       if (b < t0 || a > t1) return;
       var x0 = Math.round((a - t0) * kx), x1 = Math.max(x0 + 2, Math.round((b - t0) * kx));
-      var col = e.kind === "Warning" ? "255,170,0" : "255,59,48";
+      var col = e.col || (e.kind === "Warning" ? "255,170,0" : "255,59,48");
       ctx.fillStyle = "rgba(" + col + ",.22)"; ctx.fillRect(x0, 0, x1 - x0, H);
       ctx.fillStyle = "rgb(" + col + ")"; ctx.fillRect(x0, 0, 2, H);
       if (label) ctx.fillText(e.kind + ": " + e.text, x0 + 4, 2);
@@ -580,6 +580,62 @@
     }).join("");
   }
   function fmtClock(s) { var m = Math.floor(s / 60), r = s - m * 60; return m + ":" + (r < 10 ? "0" : "") + r.toFixed(1); }
+  /* ---------- the log doctor (Diagnose tab): the server reads every record and lists what needs a look ---------- */
+  var diag = { data: null, marks: [], show: true, shift: 0 };
+  var SEVCOL = { bad: "255,59,48", warn: "255,170,0", info: "79,216,255" };
+  function runDiag() {
+    var sum = $(".lv-diag-sum"), list = $(".lv-diag-list");
+    sum.textContent = "reading the whole " + (LIVE ? "session" : "log") + "…";
+    var url = LIVE ? base + "/diagnose.json" + query : base + "/diagnose.json" + (TUNE ? "?tune=" + encodeURIComponent(TUNE) : "");
+    var go = function () {
+      fetch(url, { cache: "no-store" }).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }).then(function (j) {
+        diag.data = j;
+        // a live session's log counts from its own start: line it up with this page's clock
+        diag.shift = LIVE && j.epoch0 && LB ? j.epoch0 - LB.t0 : 0;
+        renderDiag();
+      }).catch(function () { sum.textContent = LIVE ? "Nothing recorded yet: the session saves every minute." : "Couldn't read the log. Try again."; list.innerHTML = ""; });
+    };
+    if (LIVE && window.MSQLive && window.MSQLive.flush) window.MSQLive.flush().then(go, go); else go();
+  }
+  function renderDiag() {
+    var j = diag.data, list = $(".lv-diag-list"), sum = $(".lv-diag-sum");
+    if (!j) return;
+    var F = j.findings || [], nb = F.filter(function (f) { return f.sev === "bad"; }).length, nw = F.filter(function (f) { return f.sev === "warn"; }).length;
+    sum.textContent = F.length ? (nb ? plural(nb, "problem") + " · " : "") + (nw ? plural(nw, "thing") + " to check · " : "") + plural(F.length - nb - nw, "note") +
+      " · " + Math.round((j.running_s || 0) / 60) + " min with the engine running, of " + Math.round((j.seconds || 0) / 60) + " min"
+      : "Nothing stands out in " + Math.round((j.seconds || 0) / 60) + " min of data.";
+    diag.marks = [];
+    list.innerHTML = F.map(function (f, fi) {
+      f.events.forEach(function (e) { diag.marks.push({ ta: e.t0 + diag.shift, tb: Math.max(e.t1, e.t0 + 0.05) + diag.shift, kind: f.title, text: e.worst || e.trim || e.retard || "", col: SEVCOL[f.sev] }); });
+      return '<details class="lv-dx ' + f.sev + '"' + (f.sev === "bad" ? " open" : "") + "><summary><span class=\"lv-dx-sev\">" + { bad: "Problem", warn: "Check", info: "Note" }[f.sev] + "</span> <b>" + esc(f.title) + "</b>" +
+        (f.count > 1 ? ' <span class="dim">×' + f.count + "</span>" : "") + "</summary>" +
+        "<p>" + esc(f.detail) + "</p><p class=\"lv-dx-fix\"><b>What to check:</b> " + esc(f.fix) + "</p>" +
+        '<table class="lv-dx-t"><tbody>' + f.events.slice(0, 25).map(function (e, k) {
+          var a = e.at || {}, bits = [];
+          if (a.rpm != null) bits.push(Math.round(a.rpm) + " rpm");
+          if (a.map != null) bits.push(a.map + " kPa");
+          if (a.tps != null) bits.push("TPS " + a.tps + "%");
+          if (a.afr != null) bits.push("AFR " + a.afr + (a.target != null ? " / " + a.target : ""));
+          ["worst", "trim", "retard", "avg", "spread"].forEach(function (x) { if (e[x]) bits.push(e[x]); });
+          return '<tr data-dx="' + fi + ":" + k + '"><td class="mono">' + fmtClock(e.t0 + diag.shift) + "</td><td>" + esc(bits.join(" · ")) + "</td><td class=\"dim\">" + (e.t1 - e.t0 >= 0.05 ? (e.t1 - e.t0).toFixed(1) + " s" : "") + "</td></tr>";
+        }).join("") + (f.events.length > 25 ? '<tr><td colspan="3" class="dim">and ' + (f.count - 25) + " more</td></tr>" : "") + "</tbody></table></details>";
+    }).join("") || '<p class="dim">No problems found.</p>';
+    invalidate();
+  }
+  root.addEventListener("click", function (e) {
+    var tr = e.target.closest("[data-dx]");
+    if (tr && diag.data) {
+      var p = tr.dataset.dx.split(":"), ev = diag.data.findings[+p[0]].events[+p[1]];
+      var a = ev.t0 + diag.shift, b = ev.t1 + diag.shift, pad = Math.max(4, (b - a) * 2);
+      if (LB) LB.follow = false;
+      setTab("graphs"); setView(a - pad, b + pad);
+      var lo = 0, hi = N - 1; while (lo < hi) { var mid = (lo + hi) >> 1; if (T[mid] < a) lo = mid + 1; else hi = mid; }
+      cur = lo; invalidate(); window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    if (e.target.closest("[data-diag-run]")) { runDiag(); return; }
+  });
+  root.addEventListener("change", function (e) { if (e.target.matches("[data-diag-marks]")) { diag.show = e.target.checked; invalidate(); } });
   root.addEventListener("click", function (e) {
     var li = e.target.closest("[data-ev]");
     if (!li) return;
@@ -2727,7 +2783,7 @@
     if (idx) setTimeout(renderSections, 0);
     $$("[data-lv-tab]").forEach(function (x) { x.setAttribute("aria-selected", x.dataset.lvTab === tab ? "true" : "false"); });
     $$("[data-lv-panel]").forEach(function (x) { x.hidden = x.dataset.lvPanel !== tab; });
-    root.classList.toggle("tab-ve", tab === "ve"); root.classList.toggle("tab-dyno", tab === "dyno"); root.classList.toggle("tab-gauges", tab === "gauges"); root.classList.toggle("tab-settings", tab === "settings");
+    root.classList.toggle("tab-ve", tab === "ve"); root.classList.toggle("tab-dyno", tab === "dyno"); root.classList.toggle("tab-gauges", tab === "gauges"); root.classList.toggle("tab-diag", tab === "diag"); root.classList.toggle("tab-settings", tab === "settings");
     if (tab === "scatter") { load(sc.x); load(sc.y); load(sc.z); scatterDirty = true; }
     if (tab === "ve") {
       if (!vePane.el) { makePane(vePane, $(".lv-ve-graph")); vePane.el.classList.add("lv-pane-ve"); }
@@ -2735,6 +2791,7 @@
     }
     if (tab === "sim") openSim();
     if (tab === "dyno") openDyno();
+    if (tab === "diag" && !diag.data) runDiag();
     invalidate(); saveSoon();
   }
   /* ---------------------------------------------------------------- virtual dyno

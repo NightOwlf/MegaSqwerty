@@ -494,6 +494,21 @@ three 3D surfaces on one height scale that turn together, with the changed cells
 changed cell, biggest first, with its RPM, load, before, after, change and (after a run) how many seconds of
 the log it was built from; tap one to find it in all three. On a phone it shows one at a time.
 
+### Diagnose: the log doctor
+
+The **Diagnose** tab reads every record of a log (or, in live tuning, everything the session has saved) and lists
+what needs a look, worst first: lean or rich under load, off target while cruising, lean on throttle tip-in, the
+wideband not ready or pinned, closed-loop trim working hard, knock, fuel and spark cuts with their reasons, warning
+codes, RPM dropouts and trigger errors, MAP / TPS / temperature sensor glitches, running hot, hot intake air, low or
+high voltage, injectors near their limit, fuel pressure drops, boost over target, unsteady idle and gaps in the
+log. Each finding says what happened, what to check, and lists every time it happened with RPM, MAP, TPS and AFR
+against target; tap one to go there. They're also marked on the graphs.
+
+For tools (and for an assistant helping you): `GET /l/<log>/diagnose.json`, `GET /l/<log>/data.json?ch=rpm,map,lambda&s=from-to&every=N`
+(no `ch`: the channels and roles), `GET /live/<session>/diagnose.json?k=…` and `GET /live/<session>/status.json?k=…`
+(state, live values now, recent changes, the session's logs). `tools/msq.py` wraps them for a terminal:
+`diagnose`, `channels`, `slice`, `around`, `live` and `tune`, given the links the app shows. They only read.
+
 ### Cuts and warnings in a log
 
 If fuel or spark was cut while the engine was running, the log viewer marks each one on the graphs (a red band

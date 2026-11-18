@@ -42,6 +42,7 @@
       <button type="button" role="tab" data-lv-tab="ve" aria-selected="false">VE Analyze</button>
       <button type="button" role="tab" data-lv-tab="sim" aria-selected="false" title="This drive, simulated with the VE table as it is now">Simulate</button>
       <button type="button" role="tab" data-lv-tab="dyno" aria-selected="false" title="Horsepower and torque from a full-throttle pull in this log">Dyno</button>
+      <button type="button" role="tab" data-lv-tab="diag" aria-selected="false" title="Problems found in this log: lean or rich spots, knock, cuts, sensor glitches, dropouts…">Diagnose</button>
       {% if live %}<button type="button" role="tab" data-lv-tab="settings" aria-selected="false">Settings</button>{% endif %}
     </div>
     <div class="lv-actions">
@@ -126,6 +127,13 @@
         </div>
         <div class="lv-dyno-graph"><canvas class="lv-dyno-cv"></canvas><canvas class="lv-dyno-cv2"></canvas><div class="lv-dyno-tip mono" hidden></div></div>
         <p class="fine lv-dyno-how">How it works: the dyno finds full-throttle pulls in this log (throttle above the line you set, RPM climbing in one gear for at least 1.5 seconds) and picks the cleanest, longest one. Speed comes from RPM (smooth) scaled by the speed sensor when the log has one, or by your gearing and tire. Power = (weight × acceleration + rolling resistance + air drag) × speed, at the wheels; crank adds the drivetrain loss back. Torque = power × 5252 ÷ RPM. Flat, straight road, one gear, no wheelspin, gives the best result; a hill or wind changes it.</p>
+      </div>
+      <div class="lv-diag" data-lv-panel="diag" hidden>
+        <div class="lv-diag-head"><b>Log doctor</b><span class="dim lv-diag-sum">reading the whole {{ 'session' if live else 'log' }}…</span>
+          <span class="st-grow"></span><label class="check sm"><input type="checkbox" data-diag-marks checked><span>Mark on the graphs</span></label>
+          <button class="btn sm" type="button" data-diag-run>↻ Check again</button></div>
+        <div class="lv-diag-list"></div>
+        <p class="fine">It looks at every record: mixture against target (under load, cruising, on tip-in), knock, fuel and spark cuts and why, warning codes, RPM dropouts and trigger errors, sensor glitches, temperatures, voltage, injector duty, fuel pressure, boost against target, idle and gaps in the log. Each finding is something worth a look, with when it happened and the numbers then; tap one to go there.{% if live %} Live, it reads what the session has saved (every minute).{% endif %}</p>
       </div>
       <div class="lv-sim" data-lv-panel="sim" hidden>
         <div class="lv-sim-head"><b>Simulated log</b><span class="dim">this drive's AFR as it would have been with the VE table as it is now (your edits, 3D changes or a VE Analyze suggestion)</span>
@@ -284,6 +292,7 @@
       <dt>“now 48.5 %” by a table</dt><dd>What the engine was using at the cursor: the table read at that moment's RPM and load (the dot), blended between the four cells around it.</dd>
       <dt>Shape (3D)</dt><dd>With a table in 3D, tap <b>Shape</b>, then drag a point up or down to raise or lower it; its neighbours follow a little, for a smooth change. Tap cells first (or Range) to move a whole area together, e.g. to change a slope. Tap Shape again to go back to turning the map.</dd>
       <dt>Dyno</dt><dd>A virtual dyno: horsepower and torque against RPM from the best full-throttle pull in the log (pick another, or overlay two), with AFR, boost and timing along the pull. Fill in the car's weight and drivetrain (and gearing if the log has no speed sensor) for accurate numbers.</dd>
+      <dt>Diagnose</dt><dd>The log doctor reads every record and lists what needs a look, worst first: lean or rich under load, off target while cruising, lean on tip-in, knock, cuts and their reasons, warning codes, RPM dropouts, trigger errors, sensor glitches, heat, voltage, injector duty, fuel pressure, boost overshoot, unsteady idle, gaps. Tap a finding's time to go there; they're also marked on the graphs.</dd>
       <dt>Simulate</dt><dd>This drive replayed with the VE table as it is now: the recorded AFR and target, and below it the AFR your changes would have given, with how close each gets to target. Open it after editing cells or running VE Analyze; it updates as you edit.</dd>
       <dt>Compare</dt><dd>Before, after and the % change of every table you or VE Analyze changed, side by side as tables or 3D, with a list of every changed cell.</dd>
       <dt>3D</dt><dd>Shows a table as a surface. Drag to turn it, pinch or scroll to zoom, double-click to reset, tap a point to select that cell.</dd>

@@ -368,6 +368,37 @@ def register(app, store, templates, deps) -> None:
         return Response(text.encode("latin-1", "replace"), media_type="text/plain; charset=iso-8859-1",
                         headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
+    def key_ok(s: Session, k: str) -> bool:
+        return secrets.compare_digest(k, s.car_key) or secrets.compare_digest(k, s.view_key)
+
+    @app.get("/live/{sid}/diagnose.json")
+    async def live_diagnose(sid: str, k: str = ""):
+        """The log doctor on everything this session has recorded so far."""
+        s = get(sid)
+        if not key_ok(s, k):
+            raise HTTPException(404)
+        out = await run_in_threadpool(app.state.session_diagnose, s)
+        return JSONResponse(out, headers={"Cache-Control": "private, no-cache"})
+
+    @app.get("/live/{sid}/status.json")
+    def live_status(sid: str, k: str = ""):
+        """For tools: the session's state, the latest live values by channel, its logs and the recent changes."""
+        s = get(sid)
+        if not key_ok(s, k):
+            raise HTTPException(404)
+        now = {}
+        if s.frame and s.chs:
+            try:
+                vals = json.loads(s.frame).get("v") or []
+                labels = {n: (s.layout["outputs"].get(n) or {}).get("label") or n for n in s.chs}
+                now = {labels[n]: v for n, v in zip(s.chs, vals) if v is not None}
+            except ValueError:
+                now = {}
+        return JSONResponse({"state": s.public_state(), "now": now, "changes": s.changes[-50:],
+                             "signature": s.layout["comms"].get("signature", ""), "history_frames": len(s.hist),
+                             "logs": [r for r in store.logs_for(s.tune) if r["name"].startswith("Live session")] if s.tune else []},
+                            headers={"Cache-Control": "no-store"})
+
     def logsmod_slug_ok(slug: str) -> bool:
         return bool(re.match(r"^[A-Za-z0-9]{10}$", slug or ""))
 

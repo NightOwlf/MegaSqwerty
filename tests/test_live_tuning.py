@@ -371,3 +371,44 @@ def test_a_session_part_whose_clock_restarted_downloads_in_order(client, fx):
     lines = client.get(f"/live/{sid}/session.msl?k={car}").text.strip().split("\n")[3:]
     rpms = [int(float(x.split("\t")[1])) for x in lines]
     assert rpms[:30] == list(range(1000, 1030)) and rpms[30:] == list(range(2000, 2030)) and slug
+
+
+def test_the_log_doctor_finds_problems_and_tools_can_read_the_numbers(client, fx):
+    """A log with a lean spot under load, an RPM dropout and a MAP glitch: the doctor names each, with when."""
+    import math
+    rows = []
+    for i in range(600):
+        t = i * 0.05
+        rpm = 3000 + 500 * math.sin(t / 3)
+        mp, tps, lam, tgt = 60.0, 20.0, 1.0, 1.0
+        if 10 <= t < 12:
+            mp, tps, lam, tgt = 150.0, 90.0, 0.92, 0.8  # under boost, 15% leaner than target
+        if abs(t - 20) < 0.02:
+            rpm = 0  # crank signal lost for one sample
+        if abs(t - 25) < 0.02:
+            mp = 250.0  # one wild MAP sample
+        rows.append(f"{t:.2f}\t{rpm:.0f}\t{mp:.1f}\t{tps:.1f}\t{lam:.3f}\t{tgt:.3f}")
+    text = "Time\tRPM\tMAP\tTPS\tLambda\tLambda Target\ns\trpm\tkPa\t%\tlambda\tlambda\n" + "\n".join(rows) + "\n"
+    r = client.post("/logs", files={"file": ("doc.msl", text.encode(), "text/plain")}, follow_redirects=False)
+    slug = r.headers["location"].rstrip("/").split("/")[-1]
+    j = client.get(f"/l/{slug}/diagnose.json").json()
+    ids = {f["id"]: f for f in j["findings"]}
+    assert "lean_load" in ids and abs(ids["lean_load"]["events"][0]["t0"] - 10) < 0.2
+    assert "rpm_dropout" in ids and abs(ids["rpm_dropout"]["events"][0]["t0"] - 20) < 0.2
+    assert "glitch_map" not in ids or ids["glitch_map"]["count"] >= 2  # one glitch alone isn't reported
+    assert j["findings"][0]["sev"] == "bad"
+    d = client.get(f"/l/{slug}/data.json?ch=rpm,MAP&s=19.9-20.1").json()
+    assert d["channels"]["RPM"] == [3000 + round(500 * math.sin(19.9 / 3)), 0.0, 3000 + round(500 * math.sin(20.1 / 3))] or len(d["t"]) == 5
+    assert "rpm" in client.get(f"/l/{slug}/data.json").json()["roles"]
+
+
+def test_tools_can_read_a_live_session(client, fx):
+    s = start(client, fx)
+    sid, car, view = s["id"], s["car_key"], s["view_key"]
+    head = '"MSQ Viewer live session 2026-11-18T01:00:00.000Z"\nTime\tRPM\tMAP\tAFR\ns\tRPM\tkPa\tAFR\n'
+    client.post(f"/live/{sid}/log?k={car}&part=1", content=head + "".join(f"{i * 0.05:.3f}\t{2000 + i}\t40\t14.7\n" for i in range(100)))
+    st = client.get(f"/live/{sid}/status.json?k={view}").json()
+    assert st["logs"] and "state" in st and st["signature"]
+    d = client.get(f"/live/{sid}/diagnose.json?k={view}").json()
+    assert d["rows"] == 100 and d["epoch0"] == 1794963600.0
+    assert client.get(f"/live/{sid}/status.json?k=nope").status_code == 404
