@@ -84,10 +84,11 @@
       renderAll();
     } else if (m.t === "state") { state = Object.assign(state, m.state); renderState(); renderRec(); }
     else if (m.t === "chs") { chList = m.n || []; }
+    else if (m.t === "hist" && ROLE === "view") loadHist(m);
     else if (m.t === "o" && ROLE === "view") {
       var v = m.v || [];
       for (var i = 0; i < chList.length; i++) if (v[i] != null) och[chList[i]] = v[i];
-      frames++; pushHist(); drawLive();
+      frames++; pushFrame(Date.now() / 1000, chList, v); drawLive();
     }
     else if (m.t === "want" && ROLE === "car") { wanted = {}; (m.n || []).forEach(function (n) { wanted[n] = 1; }); }
     else if (m.t === "pong") { rtt = Date.now() - (m.at || Date.now()); pill(); }
@@ -169,6 +170,10 @@
       running = true; root.classList.add("ecu-on"); root.classList.toggle("is-sim", !!sim);
       $(".lt-status").textContent = (sim ? "Simulated ECU" : "ECU") + " connected: " + state.ecuSignature;
       pushState(); renderAll(); pollLoop(); keepAwake();
+      $("[data-tpscal]").hidden = !canCalTps();
+      var proj = carFiles && (carFiles.msqText || (carFiles.last && carFiles.last.msq));
+      var pname = carFiles && (carFiles.msq ? carFiles.msq.name : carFiles.last ? (carFiles.last.msqName || "the project's tune") : "");
+      if (proj) compareTune(proj, pname || "the project's tune", false); else tuneSrc("The ECU's own tune (read from it just now).");
     }).catch(function (e) {
       if (e && e.name === "NotFoundError") { $(".lt-status").textContent = "No port chosen."; return; }
       $(".lt-status").textContent = "Couldn't connect: " + (e && e.message || e);
@@ -397,6 +402,7 @@
   function work() {
     var job = queue.shift();
     if (!job || !ecu) return Promise.resolve();
+    if (job.kind === "done") { job.fn(); return Promise.resolve(); }
     if (job.kind === "burn") {
       return ecu.burn().then(function () { state.needBurn = false; snapBase(); send({ t: "burned" }); pushState(); toast("Burned: the changes are permanent."); renderTable(); renderState(); },
         function (e) { send({ t: "rejected", id: job.m.id, why: "Burn failed: " + e.message }); });
@@ -427,12 +433,90 @@
       if (note !== "undo") undoStack.push({ table: table, cells: before });
       if (undoStack.length > 100) undoStack.shift();
       state.needBurn = true; pushState();
-      send({ t: "applied", id: id, table: table, cells: got, by: by, note: note });
-      logChange({ table: table, cells: got, by: by, note: note, at: Date.now() / 1000 });
+      send({ t: "applied", id: id, table: table, cells: got, was: before, by: by, note: note });
+      logChange({ table: table, cells: got, was: before, by: by, note: note, at: Date.now() / 1000 });
       flashCells(table, got); renderTable(); renderState();
     });
   }
 
+  /* What's in the ECU is what counts (TunerStudio's rule): the tables come from the ECU, not the file. If the
+     project's tune (or one you open) is different, a difference report lets the driver keep the ECU's or write
+     the file's into it (then Burn), the way TunerStudio asks. Only tables, curves and the settings this page
+     handles are written; wiring, sensor and protection settings stay as the ECU has them. */
+  function tuneSrc(text) { var el = $(".lt-tunesrc"); if (el) el.textContent = text; }
+  function msqValues(text) {
+    var doc = new DOMParser().parseFromString(text, "application/xml"), out = {};
+    Array.prototype.forEach.call(doc.getElementsByTagName("constant"), function (el) {
+      var name = el.getAttribute("name"), c = layout.constants[name];
+      if (!c || !tables[name]) return;
+      var vals = el.textContent.trim().split(/\s+/).map(Number);
+      if (vals.length === tables[name].length && vals.every(function (v) { return v === v; })) out[name] = vals;
+    });
+    return out;
+  }
+  // constants that share ECU memory under two names, and what the firmware sets itself, can't be compared
+  var shared = null;
+  function sharedMem() {
+    if (shared) return shared;
+    shared = {};
+    var list = Object.keys(layout.constants).map(function (n) { var c = layout.constants[n]; return [c.offset, c.offset + ECU.count(c) * ECU.SIZE[c.type], n]; })
+      .sort(function (a, b) { return a[0] - b[0]; });
+    for (var i = 0; i < list.length; i++) for (var j = i + 1; j < list.length && list[j][0] < list[i][1]; j++) { shared[list[i][2]] = 1; shared[list[j][2]] = 1; }
+    return shared;
+  }
+  function diffTune(vals) {
+    var out = [], sh = sharedMem();
+    Object.keys(vals).forEach(function (name) {
+      if (sh[name] || /firmware|version|signature/i.test(name)) return;
+      var c = layout.constants[name], tol = Math.pow(10, -(c.digits == null ? 2 : c.digits)) * 0.6 + Math.abs(c.scale || 0) * 0.51, cells = {}, n = 0;
+      vals[name].forEach(function (v, i) { if (Math.abs(v - tables[name][i]) > tol) { cells[i] = v; n++; } });
+      if (n) out.push({ name: name, cells: cells, n: n });
+    });
+    return out;
+  }
+  function compareTune(text, fname, asked) {
+    var d = diffTune(msqValues(text)), box = $(".lt-diff");
+    if (!d.length) { tuneSrc("ECU tune: the same as " + fname + "."); if (asked) toast("The ECU already has " + fname + "."); return; }
+    tuneSrc("ECU tune: different from " + fname + " in " + d.length + " table" + (d.length === 1 ? "" : "s") + "/setting" + (d.length === 1 ? "" : "s") + " (using the ECU's).");
+    box.hidden = false;
+    $(".lt-modal-in", box).innerHTML = "<b>Difference report</b><p>The ECU and <b>" + esc(fname) + "</b> are different. The engine runs what's in the ECU.</p><ul class=\"lt-dlist\">" +
+      d.slice(0, 40).map(function (x) { return "<li>" + esc(title(x.name)) + ' <small class="dim">' + x.n + " value" + (x.n === 1 ? "" : "s") + "</small></li>"; }).join("") + "</ul>" +
+      '<div class="lt-row"><button class="btn" type="button" data-diff="ecu">Use the ECU\'s tune</button><button class="btn primary" type="button" data-diff="file">Write ' + esc(fname) + " to the ECU</button></div>" +
+      '<p class="fine">Writing puts these tables and settings into the ECU\'s working memory; Burn makes it permanent. Wiring, sensor and protection settings aren\'t written from here.</p>';
+    box.onclick = function (e) {
+      var b = e.target.closest("[data-diff]");
+      if (!b) return;
+      box.hidden = true;
+      if (b.dataset.diff === "file") loadTune(d, fname);
+    };
+  }
+  function loadTune(d, fname) {
+    tuneSrc("Writing " + fname + " to the ECU…");
+    d.forEach(function (x) {
+      var ks = Object.keys(x.cells);
+      for (var i = 0; i < ks.length; i += 128) {
+        var part = {}; ks.slice(i, i + 128).forEach(function (k) { part[k] = x.cells[k]; });
+        queue.push({ kind: "set", m: { table: x.name, cells: part, note: "load" }, by: "driver" });
+      }
+    });
+    queue.push({ kind: "done", fn: function () {
+      tuneSrc("ECU tune: " + fname + " (written, not burned yet).");
+      toast(fname + " is in the ECU now. Burn to keep it after the key goes off.");
+      send({ t: "tables", tables: tables });
+    } });
+  }
+  /* TPS calibration at the car (key on, engine off), like TunerStudio's: store the sensor voltage at closed and
+     wide-open throttle. FOME/rusEFI keep it as tpsMin/tpsMax, 200 units a volt. */
+  var tpsNew = {};
+  function canCalTps() { return !!(layout && layout.constants.tpsMin && layout.constants.tpsMax && layout.outputs.rawTps1Primary && tables.tpsMin); }
+  function drawTps() {
+    var box = $(".lt-tps");
+    if (!box || box.hidden) return;
+    var v = och.rawTps1Primary, tp = gaugeValue("tps");
+    $(".lt-tps-live", box).textContent = "Sensor now: " + fmt(v, 3) + " V  (" + Math.round((v || 0) * 200) + ")   TPS " + fmt(tp, 1) + "%\nSaved: closed " + tables.tpsMin[0] + ", wide open " + tables.tpsMax[0];
+    $(".lt-tps-new", box).textContent = tpsNew.closed != null || tpsNew.open != null ? "New: closed " + (tpsNew.closed == null ? "–" : tpsNew.closed) + ", wide open " + (tpsNew.open == null ? "–" : tpsNew.open) : "";
+    $("[data-tps-save]", box).disabled = !(tpsNew.closed != null && tpsNew.open != null);
+  }
   /* ---------------------------------------------------------------- shared: tables, gauges, graph */
   var curTable = null, sel = {}, rangeMode = false, anchor = null, base = {}, trail = [];
   function snapBase() { base = {}; Object.keys(tables).forEach(function (k) { if (tables[k] && tables[k].slice) base[k] = tables[k].slice(); }); }
@@ -604,11 +688,38 @@
     inp.value = ""; inp.oninput = render; render();
     if (window.innerWidth > 700) inp.focus();
   }
-  function pushHist() {
-    var now = Date.now() / 1000;
-    hist.t.push(now);
-    ["rpm", "map", "afr", "lambda_target"].forEach(function (r) { (hist.rows[r] = hist.rows[r] || []).push(gaugeValue(r)); });
-    while (hist.t.length && hist.t[0] < now - HIST_S) { hist.t.shift(); Object.keys(hist.rows).forEach(function (r) { hist.rows[r].shift(); }); }
+  /* The session so far, about 10 frames a second: what the graph scrolls back through and the gauges, table dot
+     and readouts show when you tap a moment. A tuner who joins later gets it from the server first. */
+  var H = { t: [], f: [], c: [] }, descs = null;
+  function descOf(list) {
+    if (descs && descs.list === list) return descs;
+    var at = {}; list.forEach(function (n, i) { at[n] = i; });
+    descs = { list: list, at: at };
+    return descs;
+  }
+  function pushFrame(ts, list, vals, force) {
+    var n = H.t.length;
+    if (!force && n && ts - H.t[n - 1] < 0.095) return;
+    var f = new Float32Array(vals.length);
+    for (var i = 0; i < vals.length; i++) f[i] = vals[i] == null ? NaN : vals[i];
+    H.t.push(ts); H.f.push(f); H.c.push(descOf(list));
+    if (H.t.length > 90000) { H.t.splice(0, 9000); H.f.splice(0, 9000); H.c.splice(0, 9000); }
+  }
+  function pushHist() { if (chList.length) pushFrame(Date.now() / 1000, chList, chList.map(function (n) { return och[n]; })); }
+  function frameVal(i, name) { var d = H.c[i], k = d && d.at[name]; return k == null ? null : H.f[i][k]; }
+  function frameOch(i) { var o = {}, d = H.c[i]; if (!d) return o; d.list.forEach(function (n, k) { var v = H.f[i][k]; if (v === v) o[n] = v; }); return o; }
+  function frameAt(t) {  // the last frame at or before t
+    var lo = 0, hi = H.t.length - 1;
+    if (hi < 0 || t < H.t[0]) return -1;
+    while (lo < hi) { var mid = (lo + hi + 1) >> 1; if (H.t[mid] <= t) lo = mid; else hi = mid - 1; }
+    return lo;
+  }
+  function loadHist(m) {  // [time, channel list id, frame] from the server, older than anything here
+    var old = H; H = { t: [], f: [], c: [] }; descs = null;
+    (m.f || []).forEach(function (x) { var list = (m.chs || [])[x[1]]; if (list && x[2] && x[2].v) pushFrame(x[0], list, x[2].v, true); });
+    var last = H.t.length ? H.t[H.t.length - 1] : -Infinity;
+    old.t.forEach(function (t, i) { if (t > last) { H.t.push(t); H.f.push(old.f[i]); H.c.push(old.c[i]); } });
+    drawLive();
   }
   var drawPending = false, lastData = 0;
   function drawLive() {
@@ -618,49 +729,151 @@
     requestAnimationFrame(frame);
   }
   function frame() {  // keeps the graph scrolling smoothly between frames while data is flowing
-    drawGauges(); drawDials(); drawLamps(); drawChart(); cursor();
-    if (Date.now() - lastData < 1500) requestAnimationFrame(frame); else drawPending = false;
+    var real = och, si = scrub != null ? frameAt(scrub) : -1;
+    if (si >= 0) och = frameOch(si);
+    try { drawGauges(); drawDials(); drawLamps(); drawRead(); cursor(); } finally { och = real; }
+    drawTps();
+    drawChart();
+    if (Date.now() - lastData < 1500 || gDirty) { gDirty = false; requestAnimationFrame(frame); } else drawPending = false;
+  }
+  /* The graph: TunerStudio's look, but it keeps the whole session. Drag to scroll back, pinch or the wheel or
+     −/+ to zoom, tap a moment to see everything at that time (the gauges, readouts and table dot follow),
+     "Live ▶" to follow the car again. */
+  var view = { span: 30, end: null }, scrub = null, gDirty = false;
+  var GL = [["rpm", "#00e5ff", "rpm (RPM)", 0], ["map", "#ff2a1a", "map (kPa)", 0], ["tps", "#ff66ff", "tps (%)", 0],
+            ["lambda_target", "#ffe600", "target AFR", 2], ["afr", "#22dd22", "afr", 2]];
+  function roleVal(i, role) {
+    var n = layout && layout.roles && layout.roles[role], v = n == null ? null : frameVal(i, n);
+    if (v == null || v !== v) return null;
+    if ((role === "afr" || role === "lambda_target") && v > 0 && v < 2) v *= STOICH;
+    return v;
+  }
+  function gRange(role) {
+    var g = role === "afr" || role === "lambda_target" ? null : dialCfg(role);
+    return role === "afr" || role === "lambda_target" ? [10, 20] : role === "tps" ? [0, 100] : g ? [g.lo, g.hi] : role === "rpm" ? [0, 8000] : [0, 250];
   }
   function drawChart() {
     var cv = $(".lt-chart canvas");
-    if (!cv || !cv.offsetParent) return;
-    var dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
-    if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    if (!cv || !cv.offsetParent || !layout) return;
+    var dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H2 = cv.clientHeight;
+    if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H2 * dpr); }
     var ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
-    var now = Date.now() / 1000, kx = W / HIST_S;
-    var rg = dialCfg("rpm"), mg = dialCfg("map");
-    var lines = [["rpm", "#00e5ff", 0, rg ? rg.hi : 8000, "rpm (RPM)", 0], ["map", "#ff2a1a", mg ? mg.lo : 0, mg ? mg.hi : 250, "map (kPa)", 0],
-                 ["lambda_target", "#ffe600", 10, 20, "target AFR", 2], ["afr", "#22dd22", 10, 20, "afr", 2]];
-    // TunerStudio's graph: white grid lines, each trace's scale top-left and bottom-left in its colour, names on the right
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H2);
+    var n = H.t.length, latest = n ? H.t[n - 1] : Date.now() / 1000;
+    var end = view.end == null ? Math.max(latest, Date.now() / 1000 - 0.05) : view.end, t0 = end - view.span, kx = W / view.span;
     ctx.strokeStyle = "rgba(255,255,255,.45)"; ctx.lineWidth = 1;
-    for (var gy = 1; gy < 4; gy++) { var yy = Math.round(H * gy / 4) + 0.5; ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(W, yy); ctx.stroke(); }
-    ctx.font = "12px Arial, Helvetica, sans-serif"; ctx.textBaseline = "top";
-    var lx = 4, bx = 4;
-    lines.forEach(function (l, i) {
-      ctx.fillStyle = l[1];
-      var top = String(+(+l[3]).toFixed(l[5])), bot = String(+(+l[2]).toFixed(l[5]));
-      ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.fillText(top, lx, 3); lx += ctx.measureText(top).width + 6;
-      ctx.textBaseline = "bottom"; ctx.fillText(bot, bx, H - 2); bx += ctx.measureText(bot).width + 6;
-      ctx.textAlign = "right"; ctx.textBaseline = "top";
-      var ys0 = hist.rows[l[0]], last = ys0 && ys0.length ? ys0[ys0.length - 1] : null;
-      ctx.fillText(l[4] + (last == null ? "" : "  " + fmt(last, l[5])), W - 4, 3 + i * 14);
-    });
-    ctx.textAlign = "left";
+    for (var gy = 1; gy < 4; gy++) { var yy = Math.round(H2 * gy / 4) + 0.5; ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(W, yy); ctx.stroke(); }
+    var lines = GL.filter(function (l) { return layout.roles && layout.roles[l[0]]; });
+    var i0 = Math.max(0, frameAt(t0)), i1 = n - 1, step = Math.max(1, Math.floor((i1 - i0) / (W * 1.5)));
     ctx.lineWidth = 1.5;
-    lines.forEach(function (l, i) {
-      var ys = hist.rows[l[0]];
-      if (!ys || !ys.length) return;
-      ctx.strokeStyle = l[1]; ctx.beginPath(); var pen = false;
-      for (var j = 0; j < ys.length; j++) {
-        var v = ys[j]; if (v == null) { pen = false; continue; }
-        var x = W - (now - hist.t[j]) * kx, y = H - 4 - (v - l[2]) / (l[3] - l[2]) * (H - 8);
+    lines.forEach(function (l) {
+      var r = gRange(l[0]), pen = false;
+      ctx.strokeStyle = l[1]; ctx.beginPath();
+      for (var i = i0; i <= i1; i += step) {
+        var t = H.t[i]; if (t > end + 1) break;
+        var v = roleVal(i, l[0]);
+        if (v == null || (i > i0 && H.t[i] - H.t[i - step] > 3)) { pen = false; if (v == null) continue; }
+        var x = (t - t0) * kx, y = H2 - 4 - (v - r[0]) / (r[1] - r[0]) * (H2 - 8);
         if (pen) ctx.lineTo(x, y); else { ctx.moveTo(x, y); pen = true; }
       }
       ctx.stroke();
     });
+    // scales left, names (and the value at the cursor or now) right
+    var si = scrub != null ? frameAt(scrub) : n - 1, lx = 4, bx = 4;
+    ctx.font = "12px Arial, Helvetica, sans-serif";
+    lines.forEach(function (l, k) {
+      var r = gRange(l[0]); ctx.fillStyle = l[1];
+      var top = String(+(+r[1]).toFixed(l[3])), bot = String(+(+r[0]).toFixed(l[3]));
+      ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.fillText(top, lx, 3); lx += ctx.measureText(top).width + 6;
+      ctx.textBaseline = "bottom"; ctx.fillText(bot, bx, H2 - 2); bx += ctx.measureText(bot).width + 6;
+      var v = si >= 0 ? roleVal(si, l[0]) : null;
+      ctx.textAlign = "right"; ctx.textBaseline = "top"; ctx.fillText(l[2] + (v == null ? "" : "  " + fmt(v, l[3])), W - 4, 3 + k * 14);
+    });
+    if (scrub != null && scrub >= t0 && scrub <= end) {
+      var sx = Math.round((scrub - t0) * kx) + 0.5;
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, H2); ctx.stroke();
+      ctx.fillStyle = "#fff"; ctx.textAlign = sx > W - 90 ? "right" : "left"; ctx.textBaseline = "bottom";
+      ctx.fillText(new Date(scrub * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }), sx + (sx > W - 90 ? -4 : 4), H2 - 16);
+    }
+    ctx.textAlign = "left";
+    var sp = $(".ts-gspan"); if (sp) sp.textContent = view.span >= 120 ? Math.round(view.span / 60) + " min" : Math.round(view.span) + " s";
+    var lb = $(".ts-glive"); if (lb) lb.hidden = view.end == null && scrub == null;
   }
-
+  function gTotal() { return H.t.length ? Math.max(10, H.t[H.t.length - 1] - H.t[0] + 2) : 60; }
+  function gZoom(f, atX) {
+    var cv = $(".lt-chart canvas"), W = cv.clientWidth, latest = H.t.length ? H.t[H.t.length - 1] : Date.now() / 1000;
+    var end = view.end == null ? latest : view.end, frac = atX == null ? 1 : atX / W, anchor = end - view.span * (1 - frac);
+    view.span = Math.max(3, Math.min(gTotal(), view.span * f));
+    if (view.end != null || atX != null && frac < 0.95) { view.end = Math.min(latest, anchor + view.span * (1 - frac)); if (view.end >= latest - 0.2) view.end = null; }
+    gDirty = true; drawLive();
+  }
+  (function () {
+    var cv = $(".lt-chart canvas");
+    if (!cv) return;
+    var pts = {}, start = null;
+    cv.style.touchAction = "none";
+    cv.addEventListener("pointerdown", function (e) {
+      cv.setPointerCapture(e.pointerId); pts[e.pointerId] = [e.clientX, e.clientY];
+      var latest = H.t.length ? H.t[H.t.length - 1] : Date.now() / 1000;
+      var ids = Object.keys(pts);
+      start = { x: e.clientX, end: view.end == null ? latest : view.end, span: view.span, moved: false,
+                d: ids.length === 2 ? Math.abs(pts[ids[0]][0] - pts[ids[1]][0]) : 0 };
+    });
+    cv.addEventListener("pointermove", function (e) {
+      if (!start || !pts[e.pointerId]) return;
+      pts[e.pointerId] = [e.clientX, e.clientY];
+      var ids = Object.keys(pts), W = cv.clientWidth;
+      if (ids.length === 2 && start.d > 10) {
+        var d = Math.abs(pts[ids[0]][0] - pts[ids[1]][0]);
+        view.span = Math.max(3, Math.min(gTotal(), start.span * start.d / Math.max(10, d)));
+        start.moved = true;
+      } else if (ids.length === 1 && Math.abs(e.clientX - start.x) > 5) {
+        var latest = H.t.length ? H.t[H.t.length - 1] : Date.now() / 1000;
+        var end = start.end - (e.clientX - start.x) * view.span / W;
+        view.end = end >= latest - 0.2 ? null : Math.max((H.t[0] || end) + view.span * 0.2, end);
+        start.moved = true;
+      }
+      gDirty = true; drawLive();
+    });
+    function up(e) {
+      if (start && !start.moved && Object.keys(pts).length === 1) {  // a tap: that moment
+        var r = cv.getBoundingClientRect(), latest = H.t.length ? H.t[H.t.length - 1] : Date.now() / 1000;
+        var end = view.end == null ? latest : view.end;
+        scrub = end - view.span * (1 - (e.clientX - r.left) / r.width);
+        if (view.end == null) view.end = end;  // hold still while looking
+        gDirty = true; drawLive();
+      }
+      delete pts[e.pointerId];
+      if (!Object.keys(pts).length) start = null;
+    }
+    cv.addEventListener("pointerup", up);
+    cv.addEventListener("pointercancel", function (e) { delete pts[e.pointerId]; start = null; });
+    cv.addEventListener("wheel", function (e) { e.preventDefault(); var r = cv.getBoundingClientRect(); gZoom(e.deltaY > 0 ? 1.25 : 0.8, e.clientX - r.left); }, { passive: false });
+    cv.addEventListener("dblclick", function () { view.end = null; scrub = null; gDirty = true; drawLive(); });
+    root.addEventListener("click", function (e) {
+      var b = e.target.closest(".ts-gctl [data-g]");
+      if (!b) return;
+      if (b.dataset.g === "in") gZoom(0.5); else if (b.dataset.g === "out") gZoom(2);
+      else { view.end = null; scrub = null; gDirty = true; drawLive(); }
+    });
+  })();
+  /* the numbers a tuner watches, in one row: TPS and the rest, with target AFR beside AFR */
+  var READ = [["rpm", "RPM", 0], ["map", "MAP", 1], ["tps", "TPS", 1], ["afr", "AFR", 2], ["lambda_target", "Target", 2], ["ve", "VE", 1],
+              ["ego_corr", "EGO", 1], ["advance", "Timing", 1], ["clt", "CLT", 0], ["iat", "IAT", 0], ["batt", "Batt", 1]];
+  function drawRead() {
+    var box = $(".ts-read");
+    if (!box || !layout || !box.offsetParent) return;
+    var list = READ.filter(function (r) { return layout.roles && layout.roles[r[0]]; });
+    if (box.dataset.n !== String(list.length)) {
+      box.dataset.n = list.length;
+      box.innerHTML = list.map(function (r) {
+        var u = r[0] === "afr" || r[0] === "lambda_target" ? "" : showU((layout.outputs[layout.roles[r[0]]] || {}).units);
+        return '<span class="r-' + r[0] + '"><small>' + r[1] + '</small><b class="mono">–</b>' + (u && u.length < 5 ? "<i>" + esc(u) + "</i>" : "") + "</span>";
+      }).join("") + (scrub != null ? "" : "");
+    }
+    list.forEach(function (r, i) { var el = box.children[i] && box.children[i].querySelector("b"); if (el) el.textContent = fmt(gaugeValue(r[0]), r[2]); });
+    box.classList.toggle("past", scrub != null);
+  }
   /* ---------------------------------------------------------------- dials: TunerStudio's round gauges */
   // each dial's range, warning and danger zones come from the ECU's own .ini, like TunerStudio's
   var DEF = { rpm: [0, 8000, "RPM", "Engine Speed", 0], map: [0, 250, "kPa", "Engine MAP", 0], afr: [10, 20, "AFR", "Air:Fuel Ratio", 2],
@@ -676,7 +889,7 @@
     if (!ch) return null;
     var g = gaugeFor(ch), d = DEF[role] || [0, 100, "", role, 1];
     var cfg = g ? Object.assign({}, g) : { ch: ch, title: d[3], units: (layout.outputs[ch] || {}).units || d[2], lo: d[0], hi: d[1], vd: d[4], ld: d[4] };
-    if (role === "afr") cfg.title = "Air:Fuel Ratio";
+    if (role === "afr") { cfg.title = "Air:Fuel Ratio"; cfg.ch2 = layout.roles.lambda_target || null; }
     if (role === "rpm") cfg.title = "Engine Speed";
     if (role === "map") cfg.title = "Engine MAP";
     return showCfg(cfg);
@@ -692,7 +905,11 @@
     return c;
   }
   function frontDials() {
-    var gs = layout.gauges || {}, list = (layout.front || []).map(function (g) { return showCfg(gs[g]); });
+    var gs = layout.gauges || {}, list = (layout.front || []).map(function (g) {
+      var c = showCfg(gs[g]);
+      if (layout.roles && c.ch === layout.roles.afr) c.ch2 = layout.roles.lambda_target || null;  // target on the AFR gauge
+      return c;
+    });
     if (list.length) return list;
     return ["rpm", "clt", "tps", "map", "afr", "batt", "advance", "iat"].map(dialCfg).filter(Boolean);
   }
@@ -713,7 +930,9 @@
       }
       set.cvs.forEach(function (cv, i) {
         var g = set.cfgs[i], raw = och[g.ch], v = raw == null ? null : g.f ? g.f(raw) : raw;
-        set.faces[i] = dial(cv, g, v, set.faces[i]);
+        var t2 = g.ch2 != null ? och[g.ch2] : null;
+        if (t2 != null && t2 > 0 && t2 < 2) t2 *= STOICH;  // the target, as AFR
+        set.faces[i] = dial(cv, g, v, set.faces[i], t2);
       });
     });
   }
@@ -722,7 +941,7 @@
     return (n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10) * p;
   }
   // a round gauge: metal bezel, white face, warning (yellow) and danger (red) arcs, labelled ticks, red needle
-  function dial(cv, g, v, face) {
+  function dial(cv, g, v, face, v2) {
     var dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
     if (!W || !H) return face;
     var Wp = Math.round(W * dpr), Hp = Math.round(H * dpr);
@@ -767,14 +986,28 @@
       f.fillText(title, cx, cy - R * 0.2, R * 0.95);
       if (div > 1) { f.font = Math.max(7, R * 0.09).toFixed(1) + "px Arial, Helvetica, sans-serif"; f.fillText("x1000", cx, cy - R * 0.36); }
       f.font = Math.max(8, R * 0.12).toFixed(1) + "px Arial, Helvetica, sans-serif";
-      f.fillText(g.units || "", cx, cy + R * 0.52);
+      if (g.ch2 == null) f.fillText(g.units || "", cx, cy + R * 0.52);
     }
     var ctx = cv.getContext("2d");
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, Wp, Hp); ctx.drawImage(face, 0, 0);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = "#111"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.font = "bold " + Math.max(10, R * 0.17).toFixed(1) + "px Arial, Helvetica, sans-serif";
-    ctx.fillText(v == null ? "–" : fmt(v, g.vd || 0), cx, cy + R * 0.34);
+    var two = g.ch2 != null;
+    ctx.fillText(v == null ? "–" : fmt(v, g.vd || 0), cx - (two ? R * 0.22 : 0), cy + R * 0.34);
+    if (two) {  // the target: its own colour, needle and number
+      ctx.fillStyle = "#c08a00"; ctx.fillText(v2 == null ? "–" : fmt(v2, g.vd || 0), cx + R * 0.24, cy + R * 0.34);
+      ctx.font = Math.max(7, R * 0.085).toFixed(1) + "px Arial, Helvetica, sans-serif";
+      ctx.fillStyle = "#444"; ctx.fillText("actual", cx - R * 0.22, cy + R * 0.47); ctx.fillStyle = "#c08a00"; ctx.fillText("target", cx + R * 0.24, cy + R * 0.47);
+      if (v2 != null) {
+        var a2 = ang(v2), c2 = Math.cos(a2), s2 = Math.sin(a2), w2 = R * 0.035;
+        ctx.fillStyle = "#ffb000"; ctx.strokeStyle = "#7a5600"; ctx.lineWidth = 0.8; ctx.beginPath();
+        ctx.moveTo(cx + c2 * R * 0.86, cy + s2 * R * 0.86);
+        ctx.lineTo(cx - s2 * w2 + c2 * R * 0.3, cy + c2 * w2 + s2 * R * 0.3);
+        ctx.lineTo(cx + s2 * w2 + c2 * R * 0.3, cy - c2 * w2 + s2 * R * 0.3);
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+      }
+    }
     if (v != null) {
       var an = ang(v), ca = Math.cos(an), sa = Math.sin(an), w = R * 0.045;
       ctx.fillStyle = "#e01010"; ctx.beginPath();
@@ -877,6 +1110,20 @@
     }
     var tabb = e.target.closest("[data-view]");
     if (tabb) { showView(tabb.dataset.view); return; }
+    var cb = e.target.closest(".lt-chg");
+    if (cb) {
+      var li2 = cb.parentNode, open = li2.classList.toggle("open"), box2 = li2.querySelector(".lt-chg-d");
+      if (open && !box2) { box2 = document.createElement("div"); box2.className = "lt-chg-d"; box2.innerHTML = changeDetail(li2._m); li2.appendChild(box2); }
+      return;
+    }
+    var cs = e.target.closest("[data-chg-show]");
+    if (cs) {
+      var m3 = cs.closest("li")._m;
+      curTable = m3.table; sel = {}; Object.keys(m3.cells).forEach(function (k) { sel[k] = 1; });
+      if ((layout.editable || {})[curTable] === "setting") showView("settings"); else { showView("tune"); var s3 = $("[data-table]"); if (s3) s3.value = curTable; renderTable(); }
+      $(".lt-tablebox").scrollIntoView({ block: "nearest", behavior: "smooth" });
+      return;
+    }
     var gb = e.target.closest("[data-gadd]");
     if (gb) { pickGauge(); return; }
     gb = e.target.closest("[data-gdel]");
@@ -884,6 +1131,22 @@
     gb = e.target.closest("[data-pick]");
     if (gb) { if (extra.indexOf(gb.dataset.pick) < 0) extra.push(gb.dataset.pick); saveExtra(); $(".lt-pick").hidden = true; drawGauges(); return; }
     if (e.target.closest("[data-pick-close]") || e.target.classList.contains("lt-pick")) { $(".lt-pick").hidden = true; return; }
+    if (e.target.closest("[data-tpscal]")) { tpsNew = {}; $(".lt-tps").hidden = false; drawTps(); return; }
+    if (e.target.closest("[data-tps-close]") || e.target.classList.contains("lt-tps")) { $(".lt-tps").hidden = true; return; }
+    var tg = e.target.closest("[data-tps-grab]");
+    if (tg) {
+      if ((gaugeValue("rpm") || 0) > 50) { toast("Turn the engine off first (key on, engine off).", true); return; }
+      var v = och.rawTps1Primary;
+      if (!(v > 0.05 && v < 4.95)) { toast("The sensor reads " + fmt(v, 2) + " V: check it's connected.", true); return; }
+      tpsNew[tg.dataset.tpsGrab] = Math.round(v * 200); drawTps(); return;
+    }
+    if (e.target.closest("[data-tps-save]")) {
+      if (!(tpsNew.open - tpsNew.closed >= 100)) { toast("Wide open has to read well above closed (at least 0.5 V more). Grab them again.", true); return; }
+      queue.push({ kind: "set", m: { table: "tpsMin", cells: { 0: tpsNew.closed }, note: "TPS calibration" }, by: "driver" });
+      queue.push({ kind: "set", m: { table: "tpsMax", cells: { 0: tpsNew.open }, note: "TPS calibration" }, by: "driver" });
+      queue.push({ kind: "done", fn: function () { toast("TPS calibrated. Burn to keep it."); drawTps(); } });
+      $(".lt-tps").hidden = true; return;
+    }
     if (e.target.closest("[data-connect]")) connectEcu(false);
     else if (e.target.closest("[data-sim]")) connectEcu(true);
     else if (e.target.closest("[data-disconnect]")) disconnectEcu();
@@ -896,6 +1159,12 @@
     if (e.target.matches("[data-mode], [data-allow-burn]")) { pushState(); renderState(); }
     if (e.target.matches("[data-project]")) pickProject(e.target.files);
     if (e.target.matches("[data-files]")) pickProject(e.target.files);
+    if (e.target.matches("[data-loadmsq]") && e.target.files[0]) {
+      var f = e.target.files[0];
+      if (!running) { toast("Connect the ECU first.", true); return; }
+      f.text().then(function (t) { compareTune(t, f.name, true); });
+      e.target.value = "";
+    }
   });
   function showView(v) {
     $$("[data-view]").forEach(function (x) { x.classList.toggle("on", x.dataset.view === v); x.setAttribute("aria-selected", x.dataset.view === v ? "true" : "false"); });
@@ -977,10 +1246,27 @@
     if (!ul || !m.table) return;
     var n = Object.keys(m.cells || {}).length, at = new Date((m.at || Date.now() / 1000) * 1000);
     var li = document.createElement("li");
-    li.innerHTML = '<span class="mono">' + at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) + "</span> " +
-      esc(title(m.table)) + ": " + n + " cell" + (n === 1 ? "" : "s") + (m.note === "undo" ? " (undo)" : "") + ' <small class="dim">' + esc(m.by || "") + "</small>";
+    li.innerHTML = '<button type="button" class="lt-chg"><span class="mono">' + at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) + "</span> " +
+      esc(title(m.table)) + ": " + n + " cell" + (n === 1 ? "" : "s") + (m.note === "undo" ? " (undo)" : m.note === "load" ? " (tune loaded)" : "") +
+      ' <small class="dim">by the ' + esc(m.by === "driver" ? "driver" : "tuner") + "</small> <span class=\"lt-chg-more\">▸</span></button>";
+    li._m = m;
     ul.insertBefore(li, ul.firstChild);
-    while (ul.children.length > 40) ul.removeChild(ul.lastChild);
+    while (ul.children.length > 200) ul.removeChild(ul.lastChild);
+  }
+  // each cell of a change: where it is (RPM and load), from what to what
+  function changeDetail(m) {
+    var t = allDefs().filter(function (x) { return x.z === m.table; })[0], c = layout.constants[m.table] || {};
+    var d = c.digits == null ? 1 : c.digits, xs = t && tables[t.x], ys = t && t.y && tables[t.y], C = xs ? xs.length : 1;
+    var xu = t ? ((layout.constants[t.x] || {}).units || "") : "", yu = t && t.y ? ((layout.constants[t.y] || {}).units || "") : "";
+    var rows = Object.keys(m.cells || {}).map(Number).sort(function (a, b) { return a - b; }).map(function (k) {
+      var to = m.cells[k], from = m.was && m.was[k] != null ? +m.was[k] : null;
+      var where = t ? (xs ? bin(showT(xs[k % C], xu)) + " " + esc(showU(xu)) : "") + (ys ? " · " + bin(showT(ys[Math.floor(k / C)], yu)) + " " + esc(showU(yu)) : "") : "value";
+      var pct = from ? (to / from - 1) * 100 : null;
+      return "<tr><td>" + where + "</td><td>" + (from == null ? "–" : fmt(from, d)) + "</td><td>→ <b>" + fmt(to, d) + "</b></td><td class=\"" + (from != null && to > from ? "up" : "dn") + "\">" +
+        (pct == null || !isFinite(pct) ? "" : (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%") + "</td></tr>";
+    });
+    return '<table class="lt-chg-t"><thead><tr><th>Cell</th><th>Was</th><th>Now</th><th></th></tr></thead><tbody>' + rows.join("") + "</tbody></table>" +
+      (t && m.table !== curTable ? "" : "") + '<button type="button" class="btn sm" data-chg-show="' + esc(m.table) + '">Show in the table</button>';
   }
   function renderShare() {
     var box = $(".lt-share");

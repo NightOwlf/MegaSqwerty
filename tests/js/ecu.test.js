@@ -96,7 +96,11 @@ test("what a remote tuner may change, and by how much", () => {
   assert.strictEqual(ok("lambdaTable", { 2: 12.9 }), null);                  // richer/leaner within 1.0, in boost, under 15
   assert.match(ECU.checkChange(L, Object.assign({}, T, { lambdaTable: [14.7, 14.7, 14.5, 14.5] }), "lambdaTable", { 2: 15.3 }), /boost/);
   assert.match(ok("lambdaTable", { 0: 9.5 }), /10\.0 and 18\.0|1\.0 AFR/);
-  assert.match(ok("rpmHardLimit", { 0: 9000 }), /can't be changed remotely/); // protections: never remote
+  assert.match(ok("rpmHardLimit", { 0: 9000 }), /can't be changed remotely/); // not marked editable: never remote
+  const L2 = Object.assign({}, L, { editable: Object.assign({}, L.editable, { rpmHardLimit: "setting" }) });
+  assert.strictEqual(ECU.checkChange(L2, T, "rpmHardLimit", { 0: 7400 }), null);                 // rev limit: +400 is fine
+  assert.match(ECU.checkChange(L2, T, "rpmHardLimit", { 0: 8000 }), /500 RPM/);                  // +1000 in one go: no
+  assert.match(ECU.checkChange(L2, Object.assign({}, T, { rpmHardLimit: [1800] }), "rpmHardLimit", { 0: 1400 }), /1500/);
   assert.strictEqual(ok("idleP", { 0: 1.2 }), null);
   assert.match(ok("idleP", { 0: 11 }), /between 0 and 10/);
   assert.match(ok("boostTable", { 0: 60 }), /big jump/);                     // 40 -> 60 duty: smaller steps

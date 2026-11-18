@@ -36,6 +36,8 @@ MAX_INI = 4 * 1024 * 1024
 MAX_SESSIONS = 200
 SESSION_IDLE = 6 * 3600          # a session with nobody connected for this long is dropped
 VIEW_MSG_PER_SEC = 12            # what a tuner may send (edits, burn, undo); the car's stream is not limited
+HIST_EVERY = 0.2                 # session history kept for tuners who join later: 5 frames a second…
+HIST_MAX = 5 * 3600 * 2          # …for the last two hours (older is in the session log)
 
 
 def _roles(outputs: dict) -> dict:
@@ -77,6 +79,10 @@ class Session:
         self.touched = time.time()
         self.rate: dict = {}
         self.logs: dict = {}             # the session's recording: part number -> {slug, rows, seconds}
+        # what's been seen since the session started, for a tuner who joins later: (time, channel list id, frame)
+        self.hist: list = []
+        self.hist_chs: list = []
+        self.hist_last = 0.0
         self.log_lock = asyncio.Lock()
 
     def public_state(self) -> dict:
@@ -322,6 +328,40 @@ def register(app, store, templates, deps) -> None:
             store.add_version(s.tune, raw, "Auto-save")
         store.replace_tune(s.tune, new_raw, doc)
 
+    def sync_copy(s: Session, tables: dict) -> None:
+        """Make the session's tune copy hold what the ECU read back (only what differs, one backup first)."""
+        if not s.tune or not tables:
+            return
+        doc = store.get_doc(s.tune)
+        if doc is None:
+            return
+        changes = {}
+        for name, vals in tables.items():
+            have = doc.get(name)
+            if have is None or not isinstance(vals, list):
+                continue
+            old = list(have.values) if have.values is not None else []
+            diff = {}
+            for i, v in enumerate(vals):
+                try:
+                    o = float(str(old[i]).strip('"')) if i < len(old) else None
+                except ValueError:
+                    o = None
+                if isinstance(v, (int, float)) and (o is None or abs(o - v) > 1e-6 * max(1.0, abs(v))):
+                    diff[str(i)] = v
+            if diff:
+                changes[name] = diff
+        if not changes:
+            return
+        raw = store.read_raw(s.tune)
+        try:
+            new_raw, _ = editmod.apply_changes(raw, changes)
+            new_doc = parse_msq(new_raw)
+        except (editmod.EditError, MsqError):
+            return
+        store.add_version(s.tune, raw, "Before syncing with the ECU")
+        store.replace_tune(s.tune, new_raw, new_doc)
+
     @app.websocket("/live/{sid}/ws")
     async def live_ws(ws: WebSocket, sid: str, k: str = ""):
         s = sessions.get(sid) if ID_RE.match(sid or "") else None
@@ -352,7 +392,13 @@ def register(app, store, templates, deps) -> None:
             except ValueError:
                 och = None
         await send(ws, {"t": "hello", "role": role, "state": s.public_state(), "tables": s.tables, "och": och,
-                        "chs": s.chs, "changes": s.changes[-30:], "want": sorted({n for w in s.wants.values() for n in w})})
+                        "chs": s.chs, "changes": s.changes[-200:], "want": sorted({n for w in s.wants.values() for n in w})})
+        if role == "view" and s.hist:  # everything seen so far, so the graph starts where the session did
+            try:
+                parts = ",".join(f"[{t:.2f},{cid},{text}]" for t, cid, text in s.hist)
+                await ws.send_text('{"t":"hist","chs":' + json.dumps(s.hist_chs, separators=(",", ":")) + ',"f":[' + parts + "]}")
+            except Exception:
+                pass
         await announce(s)
         try:
             while True:
@@ -361,6 +407,14 @@ def register(app, store, templates, deps) -> None:
                     continue
                 if role == "car" and text.startswith('{"t":"o"'):  # a live frame: pass it on untouched, at once
                     s.frame = text
+                    now = time.time()
+                    if now - s.hist_last >= HIST_EVERY and s.chs:
+                        s.hist_last = now
+                        if not s.hist_chs or s.hist_chs[-1] is not s.chs:
+                            s.hist_chs.append(s.chs)
+                        s.hist.append((now, len(s.hist_chs) - 1, text))
+                        if len(s.hist) > HIST_MAX:
+                            del s.hist[: len(s.hist) - HIST_MAX]
                     if s.viewers:
                         for v in list(s.viewers):
                             try:
@@ -391,13 +445,16 @@ def register(app, store, templates, deps) -> None:
                     elif t == "tables":
                         s.tables.update(msg.get("tables") or {})
                         await to_viewers(s, {"t": "tables", "tables": msg.get("tables") or {}})
+                        # the tune copy follows what the ECU really has (it may differ from the project's file)
+                        await run_in_threadpool(sync_copy, s, msg.get("tables") or {})
                     elif t == "applied":
                         table, cells = msg.get("table"), msg.get("cells") or {}
                         if table in s.tables and isinstance(s.tables[table], list):
                             for kk, v in cells.items():
                                 if str(kk).isdigit() and int(kk) < len(s.tables[table]):
                                     s.tables[table][int(kk)] = v
-                        entry = {"id": msg.get("id"), "table": table, "cells": cells, "by": msg.get("by", "tuner"),
+                        was = msg.get("was") if isinstance(msg.get("was"), dict) else {}
+                        entry = {"id": msg.get("id"), "table": table, "cells": cells, "was": was, "by": msg.get("by", "tuner"),
                                  "at": int(time.time()), "note": msg.get("note", "")}
                         s.changes.append(entry)
                         del s.changes[:-200]

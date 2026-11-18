@@ -427,6 +427,11 @@
         continue;
       }
       if (ign && v - old > 5 + 1e-9) return "More than 5° more timing in one step. Add it in smaller steps.";
+      if (/rpm.*limit|revlimit|launchrpm/i.test(table)) {  // the rev limiter: 500 RPM at a time, never below 1500
+        if (Math.abs(v - old) > 500 + 1e-9) return "Move the rev limit 500 RPM at a time at most.";
+        if (v < 1500) return "The rev limit can't go below 1500 RPM.";
+        continue;
+      }
       if (ve && old > 0 && Math.abs(v / old - 1) > 0.25) return "More than 25% in one step on " + title(table) + ". Make it in smaller steps.";
       if (!ign && !ve) {
         var span = c.lo != null && c.hi != null ? c.hi - c.lo : Math.abs(old) || 1;

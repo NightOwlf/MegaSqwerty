@@ -113,7 +113,8 @@ def test_the_ecu_definition_is_read_like_tunerstudio_reads_it():
     # what a remote tuner may change: tables, curves, settings with a range; never a power-cycle or protection one
     assert live["editable"]["veTable"] == "table" and live["editable"]["cltFuelCorr"] == "curve"
     assert live["editable"]["idleRpmPid_pFactor"] == "setting" and live["constants"]["idleRpmPid_pFactor"]["label"] == "Idle P gain"
-    for blocked in ("boostPwmFrequency", "injector_flow", "rpmHardLimit"):
+    assert live["editable"]["rpmHardLimit"] == "setting"  # the rev limiter: allowed, approved by the driver, small steps
+    for blocked in ("boostPwmFrequency", "injector_flow"):
         assert blocked not in live["editable"]
     assert live["powerCycle"] == ["boostPwmFrequency"]
     assert live["curves"][0]["title"] == "Warmup fuel multiplier" and live["curves"][0]["xch"] == "coolant"
@@ -304,3 +305,25 @@ def test_log_viewers_on_the_same_link_play_together(client):
     with client.websocket_connect("/l/aaaaaaaaaa/together") as gone:
         with pytest.raises(Exception):
             gone.receive_json()                            # no such log: closed
+
+
+def test_a_tuner_who_joins_late_gets_the_session_so_far(client, fx):
+    """Frames the car streamed before the tuner opened the link arrive with the hello, and applied changes keep
+    what each cell was."""
+    import time as _t
+    s = start(client, fx)
+    sid, car, view = s["id"], s["car_key"], s["view_key"]
+    with client.websocket_connect(f"/live/{sid}/ws?k={car}") as cw:
+        assert cw.receive_json()["t"] == "hello"
+        cw.send_json({"t": "chs", "n": ["RPMValue", "MAPValue"]})
+        for i in range(3):
+            cw.send_text('{"t":"o","v":[%d,40],"ts":1}' % (1000 + i))
+            _t.sleep(0.25)
+        cw.send_json({"t": "applied", "id": 1, "table": "veTable", "cells": {"3": 51.0}, "was": {"3": 50.0}, "by": "tuner"})
+        _t.sleep(0.2)
+        with client.websocket_connect(f"/live/{sid}/ws?k={view}") as vw:
+            hello = vw.receive_json()
+            assert hello["changes"][-1]["was"] == {"3": 50.0}
+            hist = vw.receive_json()
+            assert hist["t"] == "hist" and hist["chs"][0] == ["RPMValue", "MAPValue"]
+            assert [f[2]["v"][0] for f in hist["f"]] == [1000, 1001, 1002]

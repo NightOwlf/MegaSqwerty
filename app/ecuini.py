@@ -329,8 +329,17 @@ NOT_REMOTE = re.compile(
     r"mapSampl|mapAverag|dead|lag", re.I)
 
 
+# Settings that look protective but that tuners change all the time: allowed, with the driver approving each
+# change and in limited steps (see checkChange in ecu.js).
+REMOTE_ANYWAY = {"rpmHardLimit", "rpmSoftLimit", "rpmLimit", "revLimit", "RevLimit", "launchRpm"}
+# Changed only at the car (the calibration buttons), never by a remote tuner.
+CAR_ONLY = ("tpsMin", "tpsMax")
+
+
 def remote_kind(name: str, c: dict, power_cycle: set) -> str | None:
     """How a remote tuner may change a constant: "table"/"curve" values, a "setting", or None (not at all)."""
+    if name in REMOTE_ANYWAY and name not in power_cycle and c["kind"] == "scalar":
+        return "setting"
     if name in power_cycle or NOT_REMOTE.search(name):
         return None
     if c["kind"] == "scalar" and c.get("lo") is not None and c.get("hi") is not None:
@@ -357,9 +366,9 @@ def layout_for_live(ini: dict) -> dict:
         curves.append({"id": cv["id"], "title": cv["title"], "x": cv["x"], "xch": cv["xch"], "y": None, "ych": None,
                        "z": cv["y"], "curve": True})
     labels = ini.get("labels") or {}
-    for name in ("stoichRatioPrimary",):  # read only: to show mixture as AFR with the tune's own stoich
+    for name in ("stoichRatioPrimary",) + CAR_ONLY:  # read only remotely: stoich for AFR, TPS calibration at the car
         if name in c and c[name]["kind"] == "scalar":
-            keep[name] = c[name]
+            keep[name] = dict(c[name], label=labels.get(name, ""))
     for name, k in c.items():
         kind = remote_kind(name, k, power)
         if kind and name not in keep:
@@ -382,7 +391,7 @@ def layout_for_live(ini: dict) -> dict:
     gauges = {k: g for k, g in (ini.get("gauges") or {}).items() if g["ch"] in ini["outputs"]}
     front = [g for g in (ini.get("front") or []) if g in gauges][:8]
     indicators = [i for i in (ini.get("indicators") or []) if i["ch"] in ini["outputs"]]
-    extra = ["stoichiometricRatio"] if "stoichiometricRatio" in ini["outputs"] else []
+    extra = [n for n in ("stoichiometricRatio", "rawTps1Primary") if n in ini["outputs"]]
     for ch in [gauges[g]["ch"] for g in gauges] + [i["ch"] for i in indicators] + extra:
         if ch not in outs:
             outs[ch] = dict(ini["outputs"][ch], label=ini["datalog"].get(ch) or ch)

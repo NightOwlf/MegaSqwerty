@@ -397,6 +397,28 @@ by a little for a smooth change, or tap cells first to move a selection together
 Tune a running car from anywhere: someone at the car connects the ECU to a page, and a tuner opens a link on
 a phone or computer to watch it run and change the tables, sent to the ECU in moments.
 
+The screen works like TunerStudio's: **Tuning** (RPM, MAP and AFR gauges, the target AFR as a second amber needle
+and number on the AFR gauge, a readout row with TPS, VE, EGO, timing and temperatures, the table with the
+operating point and its trail, and the graph), **Gauge Cluster** (the project's own front-page gauges with its
+ranges and warning zones, and its indicator lamps) and **Settings**.
+
+- **The ECU's tune is the one shown**: the tables are read from the ECU when it connects, not from the file. If
+  the project's tune (or a .msq you open with *Load a tune file into the ECU*) is different, a difference report
+  lists what differs and lets the driver keep the ECU's or write the file's in (then Burn). Tables, curves and
+  the settings this page handles are written; wiring, sensor and protection settings stay as the ECU has them.
+  The session's tune copy follows what the ECU really holds.
+- **Key on, engine off** shows MAP, temperatures, battery and 0 RPM like TunerStudio. *Calibrate TPS* (FOME /
+  rusEFI) grabs the sensor voltage at closed and wide-open throttle into tpsMin/tpsMax, then Burn.
+- **The session is recorded** as a log by itself (about 20 records a second, saved every 2 minutes) against the
+  session's tune copy: *Open session log* opens it in the log viewer, where VE Analyze and the Dyno use it.
+- **A tuner who joins late sees the whole session**: the graph starts where the session did. Drag the graph to
+  scroll back, pinch / wheel / − + to zoom, tap a moment to see the gauges, readouts and table dot as they were;
+  *Live ▶* follows the car again.
+- **Every change is listed**: tap one for each cell (RPM and load), what it was and what it is now, and *Show in
+  the table*.
+- **Rev limiter** can be changed remotely, approved by the driver, 500 RPM at a time, never below 1500.
+- The page remembers the project folder, so next time it's one button.
+
 - **At the car**, in Chrome or Edge on the laptop (Web Serial: no install): close TunerStudio (only one
   program can use the ECU's USB port), choose the TunerStudio project folder, and *Connect the ECU*. The
   project's own ECU definition (`projectCfg/mainController.ini`) says how to talk to it and where everything
@@ -454,6 +476,23 @@ shows it side by side: **Before**, **After** and **Change %** (red for more fuel
 three 3D surfaces on one height scale that turn together, with the changed cells dotted. Under them, every
 changed cell, biggest first, with its RPM, load, before, after, change and (after a run) how many seconds of
 the log it was built from; tap one to find it in all three. On a phone it shows one at a time.
+
+### Dyno: horsepower and torque from a log
+
+The **Dyno** tab (never opens by itself) finds the full-throttle pulls in a log (throttle above the line you set,
+RPM climbing in one gear for 1.5 s and 1,500 RPM), picks the cleanest and longest, and draws wheel or crank
+horsepower and torque against RPM with the peaks marked, plus AFR, MAP and timing along the pull. Pick another
+pull or overlay one to compare. It asks for what it needs: weight with driver and fuel, drivetrain (loss), and
+the gearing and tire only if the log has no working speed sensor (with one, the speed per RPM is read off the
+pull). Air density from outside temperature and elevation (or the log's baro), drag (Cd, frontal area), rolling
+resistance and SAE J1349 correction are under *Air, drag and rolling*. Power = (mass × acceleration + rolling
+resistance + drag) × speed; acceleration is the slope of a short moving fit of RPM-based speed, so noise doesn't
+become spikes. Checked against a synthetic pull with a known curve: within 1%.
+
+### Downloading the tune
+
+**Download** in the log viewer offers the **tune (.msq)** with every change you made (saved first, so the file
+has your values) to load in TunerStudio, or the original log file.
 
 ### Simulate: this drive with the new VE table
 

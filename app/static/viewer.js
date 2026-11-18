@@ -1520,6 +1520,20 @@
     if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(ok, fallback);
     else fallback();
   }
+  /* The tune as it is now, as a .msq for TunerStudio: unsaved edits are saved first (an original gets an edited
+     copy, so the file always has your values). */
+  function downloadTune(btn) {
+    var lab = btn.querySelector("small"), old = lab.textContent;
+    lab.textContent = editCount() ? "Saving your changes…" : "Getting the file…";
+    var ready = editCount() ? pushEdits("Downloaded") : Promise.resolve();
+    ready.then(function () {
+      var file = (idx.tune && idx.tune.file) || TUNE + ".msq", a = document.createElement("a");
+      a.href = "/t/" + TUNE + ".msq"; a.setAttribute("download", file);
+      document.body.appendChild(a); a.click(); a.remove();
+      lab.textContent = old;
+      toast("Downloaded " + file + (changedCells() ? " (" + plural(changedCells(), "cell") + " changed from the original)" : ""));
+    }, function (e) { lab.textContent = old; alert("Couldn't save your changes first: " + (e && e.message || "try again.")); });
+  }
   var shareFile = null;
   function openShare() {
     saveNow();
@@ -2552,14 +2566,234 @@
     if (idx) setTimeout(renderSections, 0);
     $$("[data-lv-tab]").forEach(function (x) { x.setAttribute("aria-selected", x.dataset.lvTab === tab ? "true" : "false"); });
     $$("[data-lv-panel]").forEach(function (x) { x.hidden = x.dataset.lvPanel !== tab; });
-    root.classList.toggle("tab-ve", tab === "ve");
+    root.classList.toggle("tab-ve", tab === "ve"); root.classList.toggle("tab-dyno", tab === "dyno");
     if (tab === "scatter") { load(sc.x); load(sc.y); load(sc.z); scatterDirty = true; }
     if (tab === "ve") {
       if (!vePane.el) { makePane(vePane, $(".lv-ve-graph")); vePane.el.classList.add("lv-pane-ve"); }
       if (!ve.grid && !$(".lv-ve-body").children.length) buildVE();
     }
     if (tab === "sim") openSim();
+    if (tab === "dyno") openDyno();
     invalidate(); saveSoon();
+  }
+  /* ---------------------------------------------------------------- virtual dyno
+     Power from acceleration, like a chassis dyno measures it: at every moment of a full-throttle pull,
+         wheel power = (mass × acceleration + rolling resistance + aero drag) × speed
+     Speed is taken from RPM (which the ECU logs smoothly), scaled to road speed by the speed sensor when there is
+     one (the ratio is read off the pull itself) or by the gearing and tire. Acceleration is the slope of a short
+     moving line fit, so sensor noise doesn't turn into power spikes. Results are binned by RPM. */
+  var dyno = { pulls: [], pick: 0, cmp: -1, show: "wheel", built: false };
+  var DYNO_KEY = "msq.lv.dyno";
+  function dynoForm() { return $(".lv-dyno-form"); }
+  function dynoOpts() {
+    var f = dynoForm(), g = function (n) { var v = parseFloat(f.elements[n].value); return v === v ? v : null; };
+    var dt = f.elements.dt.value;
+    return { lb: g("lb") || 3200, loss: (dt === "c" ? g("loss") : +dt) / 100, gear: g("gear"), fd: g("fd"), tire: f.elements.tire.value,
+             amb: g("amb"), elev: g("elev") || 0, cd: g("cd") || 0.32, area: g("area") || 22, crr: g("crr") || 0.015,
+             wot: g("wot") || 90, sm: +f.elements.sm.value || 0.3, sae: f.elements.sae.checked };
+  }
+  function tireDiamM(s) {  // "225/45R17" -> metres; or a plain diameter in inches
+    var m = /(\d{3})\s*\/\s*(\d{2})\s*[A-Za-z]*\s*(\d{2})/.exec(s || "");
+    if (m) return (+m[3] * 25.4 + 2 * (+m[1] * +m[2] / 100)) / 1000;
+    var d = parseFloat(s); return d > 10 && d < 50 ? d * 0.0254 : null;
+  }
+  function chanUnits(i) { return (idx.channels[i] && idx.channels[i].u) || ""; }
+  function openDyno() {
+    var f = dynoForm();
+    if (!dyno.built) {
+      dyno.built = true;
+      try { var saved = JSON.parse(localStorage.getItem(DYNO_KEY) || "null"); if (saved) Object.keys(saved).forEach(function (k) { var el = f.elements[k]; if (!el) return; if (el.type === "checkbox") el.checked = !!saved[k]; else el.value = saved[k]; }); } catch (e) { /* ignore */ }
+      f.addEventListener("input", function () { saveDyno(); dynoSoon(); });
+      f.addEventListener("change", function () { saveDyno(); dynoSoon(); });
+      $(".lv-dyno").addEventListener("click", function (e) {
+        var b = e.target.closest("[data-dshow]");
+        if (b) { dyno.show = b.dataset.dshow; $$("[data-dshow]").forEach(function (x) { x.classList.toggle("on", x === b); }); drawDyno(); return; }
+        b = e.target.closest("[data-pull]");
+        if (b) { var k = +b.dataset.pull; if (e.target.closest("[data-cmp]")) dyno.cmp = dyno.cmp === k ? -1 : k; else { dyno.pick = k; if (dyno.cmp === k) dyno.cmp = -1; } renderPulls(); drawDyno(); goTo(dyno.pulls[k]); }
+      });
+      dynoHover();
+      window.addEventListener("resize", function () { if (tab === "dyno") drawDyno(); });
+    }
+    var R = idx.roles || {}, vs = R.vss != null && idx.channels[R.vss], hasV = !!(vs && vs.hi > 5);
+    f.querySelector(".lv-dyno-gear").classList.toggle("has-vss", hasV);
+    f.querySelector(".lv-dyno-vssnote").textContent = hasV ? "from the speed sensor in this log: gearing not needed" : (vs ? "the speed sensor in this log reads 0" : "this log has no speed sensor") + ": give the gearing of the pull";
+    f.querySelector(".lv-dyno-loss").hidden = f.elements.dt.value !== "c";
+    runDyno();
+  }
+  function saveDyno() {
+    var f = dynoForm(), o = {};
+    Array.prototype.forEach.call(f.elements, function (el) { if (el.name) o[el.name] = el.type === "checkbox" ? el.checked : el.value; });
+    f.querySelector(".lv-dyno-loss").hidden = f.elements.dt.value !== "c";
+    try { localStorage.setItem(DYNO_KEY, JSON.stringify(o)); } catch (e) { /* ignore */ }
+  }
+  var dynoT = 0;
+  function dynoSoon() { clearTimeout(dynoT); dynoT = setTimeout(runDyno, 250); }
+  function goTo(p) { if (!p) return; cur = p.i0; invalidate(); }
+  function runDyno() {
+    var R = idx.roles || {}, peaks = $(".lv-dyno-peaks");
+    if (R.rpm == null) { peaks.textContent = "This log has no RPM channel, so there's no dyno."; return; }
+    var vsOk = R.vss != null && idx.channels[R.vss] && idx.channels[R.vss].hi > 5;
+    var need = [load(R.rpm), R.tps != null ? load(R.tps) : Promise.resolve(null), vsOk ? load(R.vss) : Promise.resolve(null)];
+    ["map", "afr", "advance", "iat"].forEach(function (r) { var c = channelFor(r); need.push(c != null && c >= 0 ? load(c) : Promise.resolve(null)); });
+    var baroI = idx.channels.findIndex(function (c) { return /baro/i.test(c.n) && /kpa/i.test(c.u || ""); });
+    need.push(baroI >= 0 ? load(baroI) : Promise.resolve(null));
+    peaks.textContent = "Measuring…";
+    Promise.all(need).then(function (r) {
+      var o = dynoOpts(), rpm = r[0].v, tps = r[1] && r[1].v, vss = r[2] && r[2].v, n = rpm.length;
+      dyno.extra = { map: r[3] && r[3].v, afr: r[4] && r[4].v, adv: r[5] && r[5].v, iat: r[6] && r[6].v, baro: r[7] && r[7].v };
+      // 1. full-throttle pulls: throttle held, RPM climbing, one gear
+      var pulls = [], i = 0;
+      while (i < n) {
+        if (!(rpm[i] > 1200) || (tps && !(tps[i] >= o.wot))) { i++; continue; }
+        var j = i;
+        while (j + 1 < n && rpm[j + 1] > 1000 && (!tps || tps[j + 1] >= o.wot - 3) && T[j + 1] - T[j] < 0.5) j++;
+        // keep the climbing part: from the lowest RPM to the highest after it
+        var lo = i, hi = i;
+        for (var k = i; k <= j; k++) { if (rpm[k] > rpm[hi]) hi = k; }
+        for (k = i; k < hi; k++) if (rpm[k] < rpm[lo]) lo = k;
+        // a shift shows as RPM falling sharply: cut there
+        for (k = lo + 1; k <= hi; k++) if (rpm[k] < rpm[k - 1] - 250) { hi = k - 1; break; }
+        if (T[hi] - T[lo] >= 1.5 && rpm[hi] - rpm[lo] >= 1500) pulls.push(measure(lo, hi, o, rpm, vss));
+        i = j + 1;
+      }
+      pulls = pulls.filter(Boolean).sort(function (a, b) { return b.score - a.score; });
+      dyno.pulls = pulls; dyno.pick = 0; dyno.cmp = -1;
+      renderPulls(); drawDyno();
+    });
+  }
+  function measure(i0, i1, o, rpm, vss) {
+    // speed per RPM: from the speed sensor over the pull (median ratio), else gearing and tire
+    var k = null, note = "";
+    if (vss) {
+      var u = /mph/i.test(chanUnits(idx.roles.vss)) ? 0.44704 : 1 / 3.6, ratios = [];
+      for (var i = i0; i <= i1; i++) if (vss[i] > 5 && rpm[i] > 500) ratios.push(vss[i] * u / rpm[i]);
+      if (ratios.length > 5) { ratios.sort(function (a, b) { return a - b; }); k = ratios[Math.floor(ratios.length / 2)]; note = "speed sensor"; }
+    }
+    if (k == null) {
+      var d = tireDiamM(o.tire);
+      if (!d || !(o.gear > 0) || !(o.fd > 0)) return null;
+      k = Math.PI * d / 60 / (o.gear * o.fd); note = "gearing";
+    }
+    var m = o.lb * 0.45359237 + 4 * 9;  // plus a little for the spinning wheels and tires
+    var tK = (o.amb != null ? (o.amb - 32) / 1.8 : 25) + 273.15;
+    var baro = dyno.extra.baro && dyno.extra.baro[i0] > 60 && dyno.extra.baro[i0] < 110 ? dyno.extra.baro[i0] : 101.325 * Math.pow(1 - 2.25577e-5 * o.elev * 0.3048, 5.25588);
+    var rho = baro * 1000 / (287.05 * tK), area = o.area * 0.092903;
+    var cf = o.sae ? 1.18 * (99 / Math.max(50, baro - 1)) * Math.sqrt(tK / 298) - 0.18 : 1;
+    // acceleration: slope of a moving line fit over ±half the smoothing window
+    var w = o.sm, pts = [];
+    for (i = i0; i <= i1; i++) {
+      var a0 = i, a1 = i;
+      while (a0 > i0 && T[i] - T[a0 - 1] <= w) a0--;
+      while (a1 < i1 && T[a1 + 1] - T[i] <= w) a1++;
+      if (a1 - a0 < 3) continue;
+      var sx = 0, sy = 0, sxx = 0, sxy = 0, cnt = a1 - a0 + 1;
+      for (var q = a0; q <= a1; q++) { var x = T[q] - T[i], y = rpm[q] * k; sx += x; sy += y; sxx += x * x; sxy += x * y; }
+      var den = cnt * sxx - sx * sx; if (!den) continue;
+      var acc = (cnt * sxy - sx * sy) / den, v = sy / cnt;
+      var f = m * acc + o.crr * m * 9.81 + 0.5 * rho * o.cd * area * v * v;
+      var pw = f * v / 745.7 * cf;  // wheel hp
+      pts.push([sy / cnt / k, pw]);
+    }
+    if (pts.length < 10) return null;
+    // bin by 100 RPM, then a light smooth
+    var bins = {};
+    pts.forEach(function (p) { var b = Math.round(p[0] / 100) * 100; (bins[b] = bins[b] || []).push(p[1]); });
+    var curve = Object.keys(bins).map(Number).sort(function (a, b) { return a - b; }).map(function (b) { var s = bins[b]; return [b, s.reduce(function (x, y) { return x + y; }, 0) / s.length]; });
+    curve = curve.map(function (p, j) { var a = curve[j - 1] || p, c = curve[j + 1] || p; return [p[0], (a[1] + 2 * p[1] + c[1]) / 4]; });
+    // how clean is it: how much the raw points scatter around the curve
+    var err = 0; pts.forEach(function (p) { var b = Math.round(p[0] / 100) * 100, c = curve.filter(function (x) { return x[0] === b; })[0]; if (c) err += Math.abs(p[1] - c[1]) / Math.max(20, c[1]); });
+    var noise = err / pts.length, span = rpm[i1] - rpm[i0];
+    var mph = function (r) { return r * k / 0.44704; };
+    return { i0: i0, i1: i1, t: T[i1] - T[i0], r0: rpm[i0], r1: rpm[i1], curve: curve, loss: o.loss, cf: cf, baro: baro, rho: rho,
+             src: note, mph0: mph(rpm[i0]), mph1: mph(rpm[i1]), rpmPerMph: 0.44704 / k, noise: noise, score: span * (1 - Math.min(0.8, noise * 2)) };
+  }
+  function crankOf(p, hp) { return dyno.show === "crank" ? hp / (1 - p.loss) : hp; }
+  function peak(p) {
+    var hp = [0, 0], tq = [0, 0];
+    p.curve.forEach(function (c) { var h = crankOf(p, c[1]), t = h * 5252 / c[0]; if (h > hp[0]) hp = [h, c[0]]; if (c[0] >= 1500 && t > tq[0]) tq = [t, c[0]]; });
+    return { hp: hp, tq: tq };
+  }
+  function renderPulls() {
+    var box = $(".lv-dyno-pulls"), peaks = $(".lv-dyno-peaks"), P = dyno.pulls;
+    if (!P.length) {
+      peaks.innerHTML = "<b>No full-throttle pull found.</b> The dyno needs the throttle above " + dynoOpts().wot + "% with RPM climbing for at least 1.5 seconds and 1,500 RPM in one gear." +
+        (idx.roles.vss == null ? " This log has no speed sensor, so also check the gearing and tire size." : "");
+      box.innerHTML = ""; return;
+    }
+    var p = P[dyno.pick], pk = peak(p), lbl = dyno.show === "crank" ? "crank" : "wheel";
+    peaks.innerHTML = '<div class="lv-dyno-big"><span><small>Peak power</small><b>' + pk.hp[0].toFixed(1) + '</b> hp <small>' + lbl + " @ " + pk.hp[1] + ' RPM</small></span>' +
+      '<span class="tq"><small>Peak torque</small><b>' + pk.tq[0].toFixed(1) + '</b> lb-ft <small>' + lbl + " @ " + pk.tq[1] + " RPM</small></span></div>" +
+      '<p class="fine">' + Math.round(p.r0) + "–" + Math.round(p.r1) + " RPM in " + p.t.toFixed(1) + " s, " + Math.round(p.mph0) + "–" + Math.round(p.mph1) + " mph (" + Math.round(p.rpmPerMph) + " RPM per mph, from the " + p.src + ")" +
+      (dynoOpts().sae ? " · SAE factor " + p.cf.toFixed(3) : "") + " · air " + p.rho.toFixed(3) + " kg/m³ · " + (p.noise < 0.04 ? "clean pull" : p.noise < 0.08 ? "a little noisy" : "noisy: try more smoothing") + "</p>";
+    box.innerHTML = "<small class=\"dim\">Pulls in this log (best first). Tap to use one; ⊕ to overlay it.</small>" + P.slice(0, 12).map(function (q, k) {
+      var pq = peak(q);
+      return '<div class="lv-dyno-pull' + (k === dyno.pick ? " on" : "") + (k === dyno.cmp ? " cmp" : "") + '" data-pull="' + k + '"><span>' + (k === 0 ? "★ " : "") + fmtTime(T[q.i0]) + " · " + Math.round(q.r0) + "–" + Math.round(q.r1) + " RPM · " + q.t.toFixed(1) + " s</span><b>" + pq.hp[0].toFixed(0) + " hp</b>" +
+        (k === dyno.pick ? "" : '<button type="button" class="btn sm" data-cmp title="Overlay this pull">⊕</button>') + "</div>";
+    }).join("");
+  }
+  function fmtTime(s) { var m = Math.floor(s / 60), r = s - m * 60; return m + ":" + (r < 10 ? "0" : "") + r.toFixed(0); }
+  function drawDyno() {
+    var cv = $(".lv-dyno-cv"), cv2 = $(".lv-dyno-cv2");
+    if (!cv || !cv.offsetParent) return;
+    var f = fit(cv), ctx = f.ctx, W = f.w, H = f.h, P = dyno.pulls;
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+    var f2 = fit(cv2), c2 = f2.ctx; c2.fillStyle = "#000"; c2.fillRect(0, 0, f2.w, f2.h);
+    if (!P.length) return;
+    var list = [P[dyno.pick]].concat(dyno.cmp >= 0 ? [P[dyno.cmp]] : []);
+    var r0 = Infinity, r1 = 0, hpMax = 10, tqMax = 10;
+    list.forEach(function (p) { p.curve.forEach(function (c) { var h = crankOf(p, c[1]); r0 = Math.min(r0, c[0]); r1 = Math.max(r1, c[0]); hpMax = Math.max(hpMax, h); if (c[0] >= 1500) tqMax = Math.max(tqMax, h * 5252 / c[0]); }); });
+    var top = Math.ceil(Math.max(hpMax, tqMax) * 1.12 / 50) * 50, L = 44, Rm = 44, Tp = 12, B = 26;
+    r0 = Math.floor(r0 / 500) * 500; r1 = Math.ceil(r1 / 500) * 500;
+    var X = function (r) { return L + (r - r0) / (r1 - r0) * (W - L - Rm); }, Y = function (v) { return Tp + (1 - v / top) * (H - Tp - B); };
+    dyno.geo = { X: X, r0: r0, r1: r1, L: L, Rm: Rm, W: W };
+    ctx.strokeStyle = "rgba(255,255,255,.18)"; ctx.lineWidth = 1; ctx.font = "11px Arial, sans-serif"; ctx.fillStyle = "#aaa";
+    for (var r = r0; r <= r1; r += 500) { var x = Math.round(X(r)) + 0.5; ctx.beginPath(); ctx.moveTo(x, Tp); ctx.lineTo(x, H - B); ctx.stroke(); ctx.textAlign = "center"; ctx.fillText(r % 1000 ? "" : r / 1000 + "k", x, H - 8); }
+    for (var v = 0; v <= top; v += top / 5) { var y = Math.round(Y(v)) + 0.5; ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(W - Rm, y); ctx.stroke(); ctx.textAlign = "right"; ctx.fillStyle = "#ff6b5c"; ctx.fillText(Math.round(v), L - 4, y + 4); ctx.textAlign = "left"; ctx.fillStyle = "#6fa8ff"; ctx.fillText(Math.round(v), W - Rm + 4, y + 4); }
+    ctx.fillStyle = "#ff6b5c"; ctx.textAlign = "left"; ctx.fillText("hp", 4, Tp + 2); ctx.fillStyle = "#6fa8ff"; ctx.textAlign = "right"; ctx.fillText("lb-ft", W - 4, Tp + 2);
+    list.forEach(function (p, j) {
+      [["hp", "#ff3b2f"], ["tq", "#3b82ff"]].forEach(function (s) {
+        ctx.strokeStyle = s[1]; ctx.lineWidth = j ? 1.6 : 2.6; ctx.setLineDash(j ? [6, 4] : []); ctx.beginPath();
+        p.curve.forEach(function (c, i) { var h = crankOf(p, c[1]), val = s[0] === "hp" ? h : h * 5252 / c[0]; if (s[0] === "tq" && c[0] < 1500) return; var x = X(c[0]), y = Y(val); if (i && (s[0] === "hp" || c[0] > 1500)) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+        ctx.stroke();
+      });
+      ctx.setLineDash([]);
+      if (!j) {  // peak markers
+        var pk = peak(p);
+        [[pk.hp, "#ff3b2f", " hp"], [[pk.tq[0], pk.tq[1]], "#3b82ff", " lb-ft"]].forEach(function (m) {
+          var x = X(m[0][1]), y = Y(m[0][0]); ctx.fillStyle = m[1]; ctx.beginPath(); ctx.arc(x, y, 4, 0, 7); ctx.fill();
+          ctx.font = "bold 12px Arial, sans-serif"; ctx.textAlign = x > W - 120 ? "right" : "left"; ctx.fillText(m[0][0].toFixed(1) + m[2], x + (x > W - 120 ? -8 : 8), y - 8);
+        });
+      }
+    });
+    // along the pull: AFR, boost (MAP) and timing against RPM
+    var p0 = list[0], ex = dyno.extra, H2 = f2.h, W2 = f2.w, rpmV = store[idx.roles.rpm] && store[idx.roles.rpm].v;
+    var tr = [["afr", "#22dd22", 10, 16, "AFR"], ["map", "#00e5ff", 0, 0, "MAP kPa"], ["adv", "#ffe600", 0, 45, "timing °"]];
+    var mapMax = 0; if (ex.map) for (var q = p0.i0; q <= p0.i1; q++) mapMax = Math.max(mapMax, ex.map[q]); tr[1][3] = Math.max(110, Math.ceil(mapMax / 50) * 50);
+    c2.font = "11px Arial, sans-serif";
+    tr.forEach(function (t, k) {
+      var a = ex[t[0]]; if (!a || !rpmV) return;
+      c2.strokeStyle = t[1]; c2.lineWidth = 1.4; c2.beginPath(); var pen = false;
+      for (var q = p0.i0; q <= p0.i1; q++) {
+        var val = a[q]; if (t[0] === "afr" && val > 0 && val < 2) val *= stoich;
+        if (!(val === val)) { pen = false; continue; }
+        var x = X(rpmV[q]), y = 4 + (1 - (val - t[2]) / (t[3] - t[2])) * (H2 - 8);
+        if (pen) c2.lineTo(x, y); else { c2.moveTo(x, y); pen = true; }
+      }
+      c2.stroke(); c2.fillStyle = t[1]; c2.textAlign = "left"; c2.fillText(t[4] + " (" + t[2] + "–" + t[3] + ")", L + 4 + k * 120, 13);
+    });
+  }
+  function dynoHover() {
+    var g = $(".lv-dyno-graph"), tip = $(".lv-dyno-tip");
+    var show = function (e) {
+      var p = dyno.pulls[dyno.pick], geo = dyno.geo; if (!p || !geo) return;
+      var rect = g.getBoundingClientRect(), x = e.clientX - rect.left, r = geo.r0 + (x - geo.L) / (geo.W - geo.L - geo.Rm) * (geo.r1 - geo.r0);
+      var c = p.curve.reduce(function (b, c) { return Math.abs(c[0] - r) < Math.abs(b[0] - r) ? c : b; }, p.curve[0]);
+      var h = crankOf(p, c[1]);
+      tip.hidden = false; tip.style.left = Math.min(rect.width - 150, Math.max(0, x + 10)) + "px";
+      tip.textContent = c[0] + " RPM  " + h.toFixed(1) + " hp  " + (h * 5252 / c[0]).toFixed(1) + " lb-ft";
+    };
+    g.addEventListener("pointermove", show); g.addEventListener("pointerdown", show);
+    g.addEventListener("pointerleave", function () { tip.hidden = true; });
   }
   var simPanes = null;
   function openSim() {
@@ -2625,6 +2859,11 @@
     if (b) { if (confirm("Throw away VE Analyze's suggestion? The tune stays as it is.")) { var vt = ve.table; delete edits[vt.name]; setVePending(false); editsChanged(vt); } return; }
     b = e.target.closest("[data-ve-undo]");
     if (b) { undoVE(b); return; }
+    b = e.target.closest("[data-lv-dl]");
+    if (b) { var mn = $(".lv-dl-menu"); mn.hidden = !mn.hidden; return; }
+    b = e.target.closest("[data-dl-tune]");
+    if (b) { $(".lv-dl-menu").hidden = true; downloadTune(b); return; }
+    if (!e.target.closest(".lv-dl") && $(".lv-dl-menu")) $(".lv-dl-menu").hidden = true;
     b = e.target.closest("[data-goto-sim]");
     if (b) { setTab("sim"); window.scrollTo(0, 0); return; }
     b = e.target.closest("[data-sim-run]");

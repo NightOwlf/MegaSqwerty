@@ -1644,3 +1644,101 @@ body.page-live .main { max-width: 1200px; }
 .ts .lt-grid { overflow: hidden; }
 .ts .lt-tt { width: 100%; table-layout: fixed; }
 .ts-burn.primary:disabled { opacity: .55; }
+/* readouts: the numbers a tuner watches, TPS included, target AFR next to AFR */
+.ts-read { grid-column: 2; display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 2px; padding: 2px; border: 2px inset #9a9a9a; background: #000; }
+.ts-read span { display: grid; padding: 1px 4px; background: #111; color: #fff; line-height: 1.15; }
+.ts-read small { color: #9aa0a6; font: 10.5px Tahoma, Arial, sans-serif; }
+.ts-read b { color: #22dd22; font-size: 15px; }
+.ts-read i { color: #9aa0a6; font: normal 10px Tahoma, Arial, sans-serif; }
+.ts-read .r-lambda_target b { color: #ffb000; }
+.ts-read .r-rpm b { color: #00e5ff; } .ts-read .r-map b { color: #ff6b5c; } .ts-read .r-tps b { color: #ff66ff; }
+.ts-read.past { outline: 2px solid #fff; outline-offset: -2px; }
+.ts-tune { grid-template-areas: "dials read" "dials panel" "dials graph"; }
+.ts-tune .ts-read { grid-area: read; }
+/* graph controls */
+.ts-graph.lt-chart { position: relative; }
+.ts-gctl { position: absolute; right: 6px; bottom: 6px; display: flex; align-items: center; gap: 4px; }
+.ts-gctl button { min-width: 34px; height: 30px; border: 1px solid #777; border-radius: 3px; background: rgba(40, 40, 40, .85); color: #fff; font: 700 15px Arial, sans-serif; cursor: pointer; }
+.ts-gctl .ts-glive { padding: 0 10px; background: #1f8f4e; border-color: #2fbf6c; font-size: 13px; }
+.ts-gctl .ts-glive[hidden] { display: none; }
+.ts-gspan { color: #ccc; font-size: 11px; padding: 0 4px; }
+/* the change log: tap for each cell's before and after */
+.ts .lt-log ul { max-height: 260px; }
+.lt-chg { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; width: 100%; padding: 5px 2px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.lt-chg-more { margin-left: auto; color: var(--muted); transition: transform .15s; }
+li.open .lt-chg-more { transform: rotate(90deg); }
+.lt-chg-d { display: grid; gap: 6px; padding: 4px 0 8px 10px; }
+.lt-chg-t { border-collapse: collapse; font: 12px var(--mono); }
+.lt-chg-t th, .lt-chg-t td { padding: 2px 8px 2px 0; text-align: left; }
+.lt-chg-t th { color: var(--muted); font: 600 11px var(--ui); }
+.lt-chg-t td.up { color: #d00000; } .lt-chg-t td.dn { color: #2a5cff; }
+/* the car's dialogs: difference report, TPS calibration */
+.lt-modal { position: fixed; inset: 0; z-index: 85; display: grid; place-items: center; padding: 16px; background: rgba(0, 0, 0, .55); }
+.lt-modal[hidden] { display: none; }
+.lt-modal-in { display: grid; gap: 10px; width: min(520px, 100%); max-height: 86vh; overflow-y: auto; padding: 14px; border: 1px solid #8e8e8e; border-radius: 4px; background: #eeeeee; color: #000; font: 13px Tahoma, Arial, sans-serif; box-shadow: var(--shadow); }
+.lt-modal-in p { margin: 0; }
+.lt-dlist { margin: 0; padding-left: 18px; max-height: 40vh; overflow-y: auto; }
+.lt-tps-live, .lt-tps-new { white-space: pre-line; font-size: 13px; }
+.lt-tps-new { color: #0018a8; font-weight: 700; }
+.lt:not(.ecu-on) .lt-need-ecu { display: none; }
+.lt-need-ecu { display: grid; gap: 6px; }
+.lt-tunesrc { font-weight: 700; }
+@media (max-width: 759px) {
+  .ts-tune { grid-template-areas: "dials" "read" "panel" "graph"; }
+  .ts-read { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .ts-read b { font-size: 14px; }
+}
+/* phones on their side (and the Duo open): dials beside, everything else in one column, nothing cut off */
+@media (max-height: 500px) and (orientation: landscape), (min-width: 760px) and (max-width: 1000px) {
+  .ts-tune { grid-template-columns: 150px minmax(0, 1fr); }
+}
+
+/* ---------- download menu: the tune or the log ---------- */
+.lv-dl { position: relative; display: inline-flex; }
+.lv-dl-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 60; display: grid; min-width: 230px; padding: 4px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--win); box-shadow: var(--shadow); }
+.lv-dl-menu[hidden] { display: none; }
+.lv-dl-menu > * { display: grid; gap: 1px; padding: 8px 10px; border: 0; border-radius: 4px; background: none; color: var(--text); font: 13px var(--ui); text-align: left; text-decoration: none; cursor: pointer; }
+.lv-dl-menu > *:hover { background: var(--sel-soft); }
+.lv-dl-menu small { color: var(--muted); font-size: 11.5px; }
+
+/* ---------- virtual dyno ---------- */
+.lv-dyno[hidden] { display: none; }
+.lv-dyno { display: grid; gap: 8px; }
+.lv-dyno-top { display: grid; grid-template-columns: minmax(250px, 320px) minmax(0, 1fr); gap: 10px; align-items: start; }
+.lv-dyno-form { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--win); font-size: 13px; }
+.lv-dyno-form label:not(.check) { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.lv-dyno-form input:not([type=checkbox]), .lv-dyno-form select { width: 92px; min-height: 30px; padding: 0 6px; border: 1px solid var(--line-2); border-radius: 4px; background: var(--field); color: var(--text); font: 13px var(--mono); }
+.lv-dyno-form select { width: auto; font-family: var(--ui); }
+.lv-dyno-form input[name=tire] { width: 110px; }
+.lv-dyno-form fieldset { display: grid; gap: 6px; margin: 0; padding: 4px 8px 8px; border: 1px solid var(--line); border-radius: 4px; }
+.lv-dyno-gear.has-vss label { opacity: .5; }
+.lv-dyno-form details { display: grid; gap: 6px; }
+.lv-dyno-form details > label { margin-top: 6px; }
+.lv-dyno-form summary { cursor: pointer; color: var(--link); }
+.lv-dyno-loss[hidden] { display: none !important; }
+.lv-dyno-show { display: flex; gap: 2px; }
+.lv-dyno-show button { flex: 1; min-height: 32px; border: 1px solid var(--line-2); background: var(--win-2); color: var(--text); font: 600 13px var(--ui); cursor: pointer; }
+.lv-dyno-show button.on { background: var(--sel); color: #fff; border-color: var(--sel); }
+.lv-dyno-res { display: grid; gap: 8px; min-width: 0; }
+.lv-dyno-big { display: flex; flex-wrap: wrap; gap: 8px; }
+.lv-dyno-big span { flex: 1; min-width: 150px; display: grid; padding: 8px 12px; border-radius: 6px; background: #000; color: #fff; }
+.lv-dyno-big b { color: #ff3b2f; font: 800 34px/1.1 var(--mono); }
+.lv-dyno-big .tq b { color: #3b82ff; }
+.lv-dyno-big small { color: #aaa; font-size: 11.5px; }
+.lv-dyno-peaks .fine { margin: 6px 0 0; }
+.lv-dyno-pulls { display: grid; gap: 3px; max-height: 210px; overflow-y: auto; }
+.lv-dyno-pull { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--win); font-size: 12.5px; cursor: pointer; }
+.lv-dyno-pull span { flex: 1; min-width: 0; }
+.lv-dyno-pull.on { border-color: var(--sel); box-shadow: inset 3px 0 0 var(--sel); }
+.lv-dyno-pull.cmp { border-style: dashed; border-color: #ff9f40; }
+.lv-dyno-graph { position: relative; display: grid; gap: 2px; border: 1px solid var(--line); background: #000; }
+.lv-dyno-cv { width: 100%; height: max(300px, min(52vh, 460px)); display: block; touch-action: pan-y; }
+.lv-dyno-cv2 { width: 100%; height: 120px; display: block; }
+.lv-dyno-tip { position: absolute; top: 4px; padding: 3px 8px; border-radius: 4px; background: rgba(255, 255, 255, .9); color: #000; font-size: 12px; pointer-events: none; white-space: nowrap; }
+.lv-dyno-tip[hidden] { display: none; }
+.lv.tab-dyno .lv-side { display: none; }
+@media (max-width: 759px) {
+  .lv-dyno-top { grid-template-columns: minmax(0, 1fr); }
+  .lv-dyno-cv { height: 280px; }
+  .lv-dyno-big b { font-size: 28px; }
+}

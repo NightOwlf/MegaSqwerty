@@ -37,6 +37,7 @@
       <button type="button" role="tab" data-lv-tab="scatter" aria-selected="false">Scatter Plot</button>
       <button type="button" role="tab" data-lv-tab="ve" aria-selected="false">VE Analyze</button>
       <button type="button" role="tab" data-lv-tab="sim" aria-selected="false" title="This drive, simulated with the VE table as it is now">Simulate</button>
+      <button type="button" role="tab" data-lv-tab="dyno" aria-selected="false" title="Horsepower and torque from a full-throttle pull in this log">Dyno</button>
     </div>
     <div class="lv-actions">
       <button class="btn sm" type="button" data-lv-tune title="Choose the tune to read this log with">{{ icon('folder') }}<span>{{ 'Change tune' if tune_slug else 'Add tune' }}</span></button>
@@ -48,7 +49,13 @@
         <select data-lv-count><option>1</option><option>2</option><option>3</option><option>4</option></select>
       </label>
       <button class="btn sm primary" type="button" data-lv-share title="Copy a link that opens at this exact moment, with these channels">{{ icon('link') }}<span>Copy link</span></button>
-      <a class="btn sm" href="/l/{{ log_slug }}/download" title="Download the original log file">{{ icon('download') }}<span class="lv-wide">Download</span></a>
+      <span class="lv-dl">
+        <button class="btn sm" type="button" data-lv-dl aria-haspopup="true" title="Download the tune (.msq, with your changes) or the log">{{ icon('download') }}<span class="lv-wide">Download</span></button>
+        <span class="lv-dl-menu" hidden>
+          {% if tune_slug %}<button type="button" data-dl-tune><b>Tune (.msq)</b><small>with every change you made, for TunerStudio</small></button>{% endif %}
+          <a href="/l/{{ log_slug }}/download" data-dl-log><b>Log file</b><small>the original datalog</small></a>
+        </span>
+      </span>
       {% if tune_slug %}<button class="btn sm" type="button" data-lv-history title="Backups of this tune: restore or download any of them">History</button>{% endif %}
       <button class="btn sm" type="button" data-lv-opts title="Display options" aria-label="Display options">⚙</button>
       <button class="btn sm" type="button" data-lv-help title="Keyboard shortcuts and help">?</button>
@@ -66,6 +73,38 @@
           <label class="check sm"><input type="checkbox" data-sc-range checked><span>Only the zoomed range</span></label>
         </div>
         <canvas class="lv-scatter-cv"></canvas>
+      </div>
+      <div class="lv-dyno" data-lv-panel="dyno" hidden>
+        <div class="lv-dyno-top">
+          <form class="lv-dyno-form" autocomplete="off">
+            <b>About the car</b> <small class="dim">the more of this is right, the closer the numbers</small>
+            <label>Weight with driver &amp; fuel <span><input name="lb" inputmode="decimal" value="3200"> lb</span></label>
+            <label>Drivetrain <select name="dt"><option value="15">FWD (15% loss)</option><option value="18">RWD (18% loss)</option><option value="22">AWD (22% loss)</option><option value="c">My own loss %</option></select></label>
+            <label class="lv-dyno-loss" hidden>Drivetrain loss <span><input name="loss" inputmode="decimal" value="15"> %</span></label>
+            <fieldset class="lv-dyno-gear"><legend>Speed <small class="dim lv-dyno-vssnote"></small></legend>
+              <label>Gear ratio of the pull <span><input name="gear" inputmode="decimal" value="1.00"></span></label>
+              <label>Final drive <span><input name="fd" inputmode="decimal" value="4.10"></span></label>
+              <label>Tire size <span><input name="tire" value="225/45R17"></span></label>
+            </fieldset>
+            <details><summary>Air, drag and rolling</summary>
+              <label>Outside temperature <span><input name="amb" inputmode="decimal" value="77"> °F</span></label>
+              <label>Elevation <span><input name="elev" inputmode="decimal" value="0"> ft</span></label>
+              <label>Drag coefficient (Cd) <span><input name="cd" inputmode="decimal" value="0.32"></span></label>
+              <label>Frontal area <span><input name="area" inputmode="decimal" value="22"> ft²</span></label>
+              <label>Rolling resistance <span><input name="crr" inputmode="decimal" value="0.015"></span></label>
+              <label>Full throttle from <span><input name="wot" inputmode="decimal" value="90"> % TPS</span></label>
+              <label>Smoothing <select name="sm"><option value="0.15">Light</option><option value="0.3" selected>Normal</option><option value="0.55">Heavy</option></select></label>
+            </details>
+            <label class="check sm"><input type="checkbox" name="sae" checked><span>SAE J1349 correction (standard day, so runs compare)</span></label>
+            <div class="lv-dyno-show" role="group"><button type="button" class="on" data-dshow="wheel">Wheel</button><button type="button" data-dshow="crank">Crank</button></div>
+          </form>
+          <div class="lv-dyno-res">
+            <div class="lv-dyno-peaks"></div>
+            <div class="lv-dyno-pulls"></div>
+          </div>
+        </div>
+        <div class="lv-dyno-graph"><canvas class="lv-dyno-cv"></canvas><canvas class="lv-dyno-cv2"></canvas><div class="lv-dyno-tip mono" hidden></div></div>
+        <p class="fine lv-dyno-how">How it works: the dyno finds full-throttle pulls in this log (throttle above the line you set, RPM climbing in one gear for at least 1.5 seconds) and picks the cleanest, longest one. Speed comes from RPM (smooth) scaled by the speed sensor when the log has one, or by your gearing and tire. Power = (weight × acceleration + rolling resistance + air drag) × speed, at the wheels; crank adds the drivetrain loss back. Torque = power × 5252 ÷ RPM. Flat, straight road, one gear, no wheelspin, gives the best result; a hill or wind changes it.</p>
       </div>
       <div class="lv-sim" data-lv-panel="sim" hidden>
         <div class="lv-sim-head"><b>Simulated log</b><span class="dim">this drive's AFR as it would have been with the VE table as it is now (your edits, 3D changes or a VE Analyze suggestion)</span>
@@ -217,6 +256,7 @@
       <dt>↶ Undo</dt><dd>Steps back the last change to a table (a 3D drag, a typed value, any button), one at a time, for as long as the page is open; Ctrl/Cmd+Z does the same. Older versions are in History.</dd>
       <dt>“now 48.5 %” by a table</dt><dd>What the engine was using at the cursor: the table read at that moment's RPM and load (the dot), blended between the four cells around it.</dd>
       <dt>Shape (3D)</dt><dd>With a table in 3D, tap <b>Shape</b>, then drag a point up or down to raise or lower it; its neighbours follow a little, for a smooth change. Tap cells first (or Range) to move a whole area together, e.g. to change a slope. Tap Shape again to go back to turning the map.</dd>
+      <dt>Dyno</dt><dd>A virtual dyno: horsepower and torque against RPM from the best full-throttle pull in the log (pick another, or overlay two), with AFR, boost and timing along the pull. Fill in the car's weight and drivetrain (and gearing if the log has no speed sensor) for accurate numbers.</dd>
       <dt>Simulate</dt><dd>This drive replayed with the VE table as it is now: the recorded AFR and target, and below it the AFR your changes would have given, with how close each gets to target. Open it after editing cells or running VE Analyze; it updates as you edit.</dd>
       <dt>Compare</dt><dd>Before, after and the % change of every table you or VE Analyze changed, side by side as tables or 3D, with a list of every changed cell.</dd>
       <dt>3D</dt><dd>Shows a table as a surface. Drag to turn it, pinch or scroll to zoom, double-click to reset, tap a point to select that cell.</dd>
