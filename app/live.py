@@ -185,6 +185,14 @@ def register(app, store, templates, deps) -> None:
 
     @app.get("/live/{sid}", response_class=HTMLResponse)
     def live_view_page(request: Request, sid: str, k: str = ""):
+        if ID_RE.match(sid or "") and sid not in sessions and len(k) >= 12:
+            # the server restarted moments ago and the car hasn't brought the session back yet: wait for it
+            return HTMLResponse(
+                '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+                '<meta http-equiv="refresh" content="4"><title>Live tuning · waiting for the car</title>'
+                '<body style="font:16px system-ui;padding:24px;background:#16181c;color:#e8eaed">'
+                "<h2>Waiting for the car…</h2><p>This live session will be back in a moment: the car's laptop reconnects "
+                "by itself. This page keeps checking.</p></body>", status_code=503, headers={"Retry-After": "4"})
         s = get(sid)
         role = "car" if secrets.compare_digest(k, s.car_key) else "view" if secrets.compare_digest(k, s.view_key) else None
         if role is None:
