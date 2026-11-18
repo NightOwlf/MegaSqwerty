@@ -263,6 +263,16 @@
     if (!("serial" in navigator)) return Promise.reject(new Error("This browser can't reach USB devices. Use Chrome or Edge on a computer."));
     return navigator.serial.requestPort({}).then(openPort);
   }
+  /* The ports this site was allowed before (TunerStudio's "remember this ECU"): Chrome hands them back
+     without asking, so a known ECU is opened the moment it's plugged in. The one last used comes first.
+     -> [port] */
+  function grantedPorts(known) {
+    if (!("serial" in navigator) || !navigator.serial.getPorts) return Promise.resolve([]);
+    return navigator.serial.getPorts().then(function (ports) {
+      var same = function (p) { var i = p.getInfo ? p.getInfo() : {}; return known && i.usbVendorId === known.usbVendorId && i.usbProductId === known.usbProductId; };
+      return ports.filter(same).concat(ports.filter(function (p) { return !same(p); }));
+    }, function () { return []; });
+  }
   /* After the USB link drops (the ECU reset while cranking, a loose cable): open the same device again
      without asking, once it's back. -> a new pipe, or null if it isn't there yet. */
   function reopenSerial(old) {
@@ -460,5 +470,5 @@
 
   return { crc32: crc32, frame: frame, template: template, build: build, Link: Link, Ecu: Ecu, decodeConstants: decodeConstants,
            decodeOutputs: decodeOutputs, encodeCells: encodeCells, rawFor: rawFor, count: count, SIZE: SIZE,
-           soon: soon, checkChange: checkChange, connectSerial: connectSerial, reopenSerial: reopenSerial, simPipe: simPipe, pageFromMsq: pageFromMsq };
+           soon: soon, checkChange: checkChange, connectSerial: connectSerial, reopenSerial: reopenSerial, grantedPorts: grantedPorts, openPort: openPort, simPipe: simPipe, pageFromMsq: pageFromMsq };
 });

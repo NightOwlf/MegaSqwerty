@@ -193,8 +193,10 @@ def register(app, store, templates, deps) -> None:
                 '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
                 '<meta http-equiv="refresh" content="4"><title>Live tuning · waiting for the car</title>'
                 '<body style="font:16px system-ui;padding:24px;background:#16181c;color:#e8eaed">'
-                "<h2>Waiting for the car…</h2><p>This live session will be back in a moment: the car's laptop reconnects "
-                "by itself. This page keeps checking.</p></body>", status_code=503, headers={"Retry-After": "4"})
+                "<h2>Waiting for the car…</h2><p>This page goes live by itself when the car's laptop is on and the ECU "
+                "is plugged in. The link stays the same: keep it.</p>"
+                # the car's own laptop, reloaded after a server restart: back to the start page, which resumes the session
+                '<script src="/static/livewait.js"></script></body>', status_code=503, headers={"Retry-After": "4"})
         s = get(sid)
         role = "car" if secrets.compare_digest(k, s.car_key) else "view" if secrets.compare_digest(k, s.view_key) else None
         if role is None:
@@ -258,6 +260,8 @@ def register(app, store, templates, deps) -> None:
             s = old
             s.layout = layout
             s.layout_gz = Session(sid, "", "", layout, "", "").layout_gz
+            if tune and tune != s.tune:  # another project under the same link: its own tune copy
+                s.tune, s.original, s.based, s.tables = tune, original, False, {}
         else:
             car_key = car_key if len(car_key) >= 16 else secrets.token_urlsafe(18)
             view_key = str(form.get("view_key") or "")
@@ -448,6 +452,8 @@ def register(app, store, templates, deps) -> None:
                     o = float(str(old[i]).strip('"')) if i < len(old) else None
                 except ValueError:
                     o = None
+                    if i < len(old):  # an option by name ("Off"): the ECU sends its number; the file keeps the name
+                        continue
                 if isinstance(v, (int, float)) and (o is None or abs(o - v) > 1e-6 * max(1.0, abs(v))):
                     diff[str(i)] = v
             if diff:
@@ -459,8 +465,24 @@ def register(app, store, templates, deps) -> None:
         raw = store.read_raw(s.tune)
         try:
             new_raw, _ = editmod.apply_changes(raw, changes)
+        except editmod.EditError:
+            # one value the file can't take mustn't stop the rest following the ECU
+            ok = {}
+            for name, d in changes.items():
+                try:
+                    editmod.apply_changes(raw, {name: d})
+                    ok[name] = d
+                except editmod.EditError:
+                    pass
+            if not ok:
+                return
+            try:
+                new_raw, _ = editmod.apply_changes(raw, ok)
+            except editmod.EditError:
+                return
+        try:
             new_doc = parse_msq(new_raw)
-        except (editmod.EditError, MsqError):
+        except MsqError:
             return
         store.add_version(s.tune, raw, "The project's tune file, before syncing with the ECU")
         store.replace_tune(s.tune, new_raw, new_doc)

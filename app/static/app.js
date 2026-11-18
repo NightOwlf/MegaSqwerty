@@ -6,6 +6,20 @@
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
   var slice = function (list, from) { return Array.prototype.slice.call(list, from || 0); };
+  /* The app's two main tabs, like TunerStudio and its log viewer: Live tuning and the Log viewer each keep a
+     browser tab of their own (the menu's links target them by name), so opening a log never drops the ECU's link.
+     On the car's laptop (a live project is remembered) the app opens on Live tuning, once per browser session. */
+  (function () {
+    var path = location.pathname;
+    try {
+      if (/^\/(logs|l\/)|\/log\//.test(path)) window.name = "msq-logs";
+      if (path === "/" && !location.search && localStorage.getItem("msq.live.car") && !sessionStorage.getItem("msq.opened")) {
+        sessionStorage.setItem("msq.opened", "1");
+        location.replace("/live");
+      }
+      sessionStorage.setItem("msq.opened", "1");
+    } catch (e) { /* storage blocked: no shortcuts */ }
+  })();
   var bubble = $(".bubble");
   var selected = [];
   var plots = [];

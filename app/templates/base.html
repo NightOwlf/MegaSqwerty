@@ -26,11 +26,14 @@
 <header class="menubar">
   <div class="wrap menubar-in">
     <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="brand-word">MSQ Viewer</span></a>
+    {% set path = request.url.path if request else '' %}
     <nav class="menu" aria-label="Main">
+      {# TunerStudio's way: live tuning is the main tab, the log viewer its own (each keeps its own browser tab, so
+         opening logs never drops the ECU's USB link) #}
+      <a class="menu-tab" href="/live" target="msq-live" data-shell="live" aria-label="Live tuning" title="Live tuning: the ECU, plugged in"{% if path.startswith('/live') %} aria-current="page"{% endif %}>{{ icon('gauge') }}<span>Live tuning</span></a>
+      <a class="menu-tab" href="/logs" target="msq-logs" data-shell="logs" aria-label="Log viewer" title="Log viewer: open a datalog (in its own tab)"{% if path.startswith('/logs') or path.startswith('/l/') or '/log/' in path %} aria-current="page"{% endif %}>{{ icon('curve') }}<span>Log viewer</span></a>
       <a href="/" aria-label="Open tune" title="Open tune">{{ icon('folder') }}<span>Open tune</span></a>
-      <a href="/logs" aria-label="Open log" title="Open log">{{ icon('curve') }}<span>Open log</span></a>
       <a href="/compare" aria-label="Compare" title="Compare">{{ icon('compare') }}<span>Compare</span></a>
-      <a href="/live" aria-label="Live tuning" title="Live tuning: connect to a running car">{{ icon('gauge') }}<span>Live</span></a>
       <button type="button" class="menu-theme" data-theme-toggle hidden title="Switch between dark and light theme" aria-label="Switch between dark and light theme">{{ icon('sun', 'ic-sun') }}{{ icon('moon', 'ic-moon') }}</button>
     </nav>
   </div>

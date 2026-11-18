@@ -169,7 +169,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
 
     templates = Jinja2Templates(directory=HERE / "templates")
     asset_v = hashlib.sha1(b"".join((HERE / "static" / f).read_bytes()
-                                    for f in ("app.css", "app.js", "theme.js", "edit.js", "viewer.js", "veal.js", "ecu.js", "live.js", "codes.js"))).hexdigest()[:8]
+                                    for f in ("app.css", "app.js", "theme.js", "edit.js", "viewer.js", "veal.js", "ecu.js", "live.js", "codes.js", "tunediff.js"))).hexdigest()[:8]
     templates.env.globals.update(asset_v=asset_v, max_mb=MAX_MB, max_bytes=MAX_BYTES, icons=views.ICONS,
                                  log_max_mb=LOG_MAX_MB, log_max_bytes=LOG_MAX_BYTES,
                                  tab_names=views.TAB_NAMES, cat_labels=views.CATEGORY_LABELS,

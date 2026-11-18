@@ -1681,6 +1681,31 @@ li.open .lt-chg-more { transform: rotate(90deg); }
 .lt-modal-in { display: grid; gap: 10px; width: min(520px, 100%); max-height: 86vh; overflow-y: auto; padding: 14px; border: 1px solid #8e8e8e; border-radius: 4px; background: #eeeeee; color: #000; font: 13px Tahoma, Arial, sans-serif; box-shadow: var(--shadow); }
 .lt-modal-in p { margin: 0; }
 .lt-dlist { margin: 0; padding-left: 18px; max-height: 40vh; overflow-y: auto; }
+/* the difference report: ECU against the app's tune, one row per table or setting, ECU's / App's per row */
+.lt-modal-in.lt-diffbox { width: min(720px, 100%); }
+.lt-dl2 { margin: 0; padding: 0; list-style: none; max-height: 52vh; overflow-y: auto; border: 1px solid #a8a8a8; background: #fff; }
+.lt-dl2 > li { padding: 5px 8px; border-bottom: 1px solid #ddd; }
+.lt-dl2 > li:last-child { border-bottom: 0; }
+.lt-di-h { display: flex; align-items: center; gap: 8px; }
+.lt-di-t { flex: 1; min-width: 0; padding: 2px 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.lt-di-t:disabled { cursor: default; }
+.lt-di-t small { color: #555; }
+.lt-dl2 > li.open .lt-chg-more { display: inline-block; transform: rotate(90deg); }
+.lt-seg { display: inline-flex; flex: none; border: 1px solid #8e8e8e; border-radius: 4px; overflow: hidden; }
+.lt-seg label { display: inline-flex; cursor: pointer; }
+.lt-seg input { position: absolute; opacity: 0; pointer-events: none; }
+.lt-seg span { padding: 3px 10px; background: #f6f6f6; font-weight: 600; }
+.lt-seg label + label span { border-left: 1px solid #8e8e8e; }
+.lt-seg input:checked + span { background: #2f6fd0; color: #fff; }
+.lt-seg input:disabled + span { color: #aaa; cursor: not-allowed; }
+.lt-seg input:focus-visible + span { outline: 2px solid #2f6fd0; outline-offset: -2px; }
+.lt-dl2 .lt-chg-t { margin: 4px 0 2px 14px; color: #000; }
+.lt-dl2 .lt-chg-t th { color: #555; }
+.lt-tunesrc .btn { margin-left: 6px; vertical-align: middle; }
+.lt.ecu-known [data-connect] { font-size: 12.5px; }
+/* the app's two main tabs: Live tuning (the ECU) and the Log viewer, each in its own browser tab */
+.menu a.menu-tab { font-weight: 600; }
+.menu a.menu-tab[aria-current=page] { background: var(--win-3); box-shadow: inset 0 -2px 0 var(--sel); }
 .lt-tps-live, .lt-tps-new { white-space: pre-line; font-size: 13px; }
 .lt-tps-new { color: #0018a8; font-weight: 700; }
 .lt:not(.ecu-on) .lt-need-ecu { display: none; }

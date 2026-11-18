@@ -88,9 +88,9 @@
           else $(".lt-status").textContent = "The session needs starting again: choose the project folder (the ECU stays connected).";
           return;
         }
-        // the server restarted and the car hasn't started the session again yet: keep trying
-        $(".lt-mode-note").textContent = "Waiting for the car to come back online…";
-        setTimeout(connectWs, 5000);
+        // the server restarted and the car hasn't started the session again yet: wait for it (the page reloads)
+        $(".lt-mode-note").textContent = "Waiting for the car: this page goes live by itself when the ECU is plugged in at the car.";
+        setTimeout(function () { location.reload(); }, 5000);
         return;
       }
       if (e.code === 4000) { toast("This session was opened on another computer; this page stopped sending.", true); return; }
@@ -175,12 +175,14 @@
     var fd = new FormData();
     fd.append("ini", ini, "mainController.ini");
     if (msq) fd.append("msq", msq, msq.name || "CurrentTune.msq");
-    if (sess) { fd.append("sid", sess.id); fd.append("car_key", sess.car_key); fd.append("view_key", sess.view_key); fd.append("tune", sess.tune || ""); }
+    // the same link for good (TunerStudio's project): a different project keeps the link but gets its own tune copy
+    var sameProject = sess && (!sess.project || !files.name || sess.project === files.name);
+    if (sess) { fd.append("sid", sess.id); fd.append("car_key", sess.car_key); fd.append("view_key", sess.view_key); fd.append("tune", sameProject ? sess.tune || "" : ""); }
     $(".lt-status").textContent = "Reading the ECU definition…";
     var resumed = !!(SID && sess && sess.id === SID);
     return fetch("/live/start", { method: "POST", body: fd }).then(function (r) { return r.json(); }).then(function (j) {
       if (j.error) throw new Error(j.error);
-      sess = { id: j.id, car_key: j.car_key, view_key: j.view_key, tune: j.tune };
+      sess = { id: j.id, car_key: j.car_key, view_key: j.view_key, tune: j.tune, project: files.name || (sess && sess.project) || "" };
       try { localStorage.setItem("msq.live.car", JSON.stringify(sess)); } catch (e) { /* ignore */ }
       if (!root.dataset.sid) { location.replace(j.car_url); return new Promise(function () { /* the page is moving */ }); }
       SID = j.id; KEY = j.car_key;
@@ -192,26 +194,76 @@
       renderShare(); renderTablePicker();
       if (!ws || ws.readyState > 1) connectWs();
       $(".lt-status").textContent = running ? "Session reconnected. ECU connected: " + (state.ecuSignature || "")
-        : "Ready. Connect the ECU (TunerStudio must be closed: only one program can use the ECU's USB port).";
+        : "Not connected. Plug the ECU in (TunerStudio must be closed: only one program can use the ECU's USB port).";
+      if (!running) autoEcu();
     });
   }
   var carFiles = null;
   function restartSession() {
     if (!carFiles) return;
-    (carFiles.last ? useLast(carFiles.last) : startSession(carFiles)).catch(function (e) { toast(e.message, true); });
+    (carFiles.last ? useLast(carFiles.last) : startSession(carFiles)).then(function () { if (!running) autoEcu(); }, function (e) { toast(e.message, true); });
   }
 
-  function connectEcu(sim) {
-    if (!layout) return;
+  /* Like TunerStudio: the ECU is opened by itself. Chrome needs a person to allow a USB device once (the "Allow
+     this ECU" button); after that this site may open it without asking, so a known ECU goes live the moment it's
+     plugged in, and a reload with it plugged in goes straight to live. */
+  var connecting = false, ecuOff = false, KNOWN = "msq.live.port", LASTKIND = "msq.live.ecu";
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
+  function knownPort() { try { return JSON.parse(lsGet(KNOWN) || "null"); } catch (e) { return null; } }
+  var autoT = 0;
+  function autoEcu() {
+    clearTimeout(autoT);
+    if (ROLE !== "car" || !layout || running || connecting || ecuOff) return;
+    if (!("serial" in navigator)) { if (lsGet(LASTKIND) === "sim") connectEcu(true); return; }
+    ECU.grantedPorts(knownPort()).then(function (ports) {
+      renderAllow(ports.length > 0);
+      if (running || connecting || ecuOff) return;
+      if (ports.length) return connectEcu(false, ports[0]);
+      if (lsGet(LASTKIND) === "sim") return connectEcu(true);
+      $(".lt-status").textContent = "Not connected. Plug the ECU in (USB) and allow it once: then it connects by itself.";
+    });
+  }
+  function renderAllow(known) {
+    var b = $("[data-connect]");
+    if (!b) return;
+    b.textContent = known ? "Use another ECU…" : "Allow this ECU (USB): first time only";
+    b.classList.toggle("primary", !known);
+    root.classList.toggle("ecu-known", !!known);
+  }
+  if (ROLE === "car" && "serial" in navigator) {
+    navigator.serial.addEventListener("connect", function () {
+      if (running && pipe && pipe.isDead && pipe.isDead()) reconnectEcu();
+      else if (!running) { $(".lt-status").textContent = "ECU plugged in: connecting…"; autoT = setTimeout(autoEcu, 400); }
+    });
+    navigator.serial.addEventListener("disconnect", function (e) {
+      if (pipe && e.target === pipe.port) $(".lt-status").textContent = "ECU unplugged: it goes live again by itself when it's plugged back in.";
+    });
+  }
+  /* This app's copy of the tune: the session's (it holds every change made here), else the project's file. Read
+     before the ECU's tables reach the server, which then makes the copy follow what the ECU has. */
+  function appTune() {
+    var slug = state.tune || (sess && sess.tune);
+    var proj = carFiles && (carFiles.msqText || (carFiles.last && carFiles.last.msq)) || "";
+    var pname = carFiles && (carFiles.msq ? carFiles.msq.name : carFiles.last ? (carFiles.last.msqName || "the project's tune") : "") || "the project's tune";
+    var fromFile = { text: proj, name: pname };
+    if (!slug) return Promise.resolve(fromFile);
+    return fetch("/t/" + slug + ".msq").then(function (r) { return r.ok ? r.text() : ""; }, function () { return ""; })
+      .then(function (t) { return t ? { text: t, name: "this app's tune" } : fromFile; });
+  }
+  function connectEcu(sim, port) {
+    if (!layout || connecting || running) return Promise.resolve();
+    connecting = true; ecuOff = false;
+    var app = appTune();
     // the simulated ECU starts from the project's tune (after a reload, the session's tune copy)
     var tuneSlug = state.tune || (sess && sess.tune);
     var msqText = carFiles && carFiles.msqText ? Promise.resolve(carFiles.msqText)
       : carFiles && carFiles.last ? Promise.resolve(carFiles.last.msq || "")
       : tuneSlug ? fetch("/t/" + tuneSlug + ".msq").then(function (r) { return r.ok ? r.text() : ""; }, function () { return ""; }) : Promise.resolve("");
     var p = sim ? msqText.then(function (t) { return ECU.simPipe(layout, t ? ECU.pageFromMsq(layout, t) : null); })
-                : ECU.connectSerial();
-    $(".lt-status").textContent = sim ? "Starting the simulated ECU…" : "Choose the ECU's USB port in the box Chrome shows…";
-    p.then(function (pp) {
+                : port ? ECU.openPort(port) : ECU.connectSerial();
+    $(".lt-status").textContent = sim ? "Starting the simulated ECU…" : port ? "ECU found: connecting…" : "Choose the ECU's USB port in the box Chrome shows…";
+    return p.then(function (pp) {
       pipe = pp;
       ecu = new ECU.Ecu(new ECU.Link(pipe, layout.comms.blockReadTimeout || 3000), layout);
       return ecu.signature();
@@ -223,19 +275,25 @@
       $(".lt-status").textContent = "Reading the tune from the ECU…";
       return ecu.readPage(function (f) { $(".lt-status").textContent = "Reading the tune from the ECU… " + Math.round(f * 100) + "%"; });
     }).then(function (page) {
-      tables = ECU.decodeConstants(layout, page, ecu.little);
-      snapBase(); updateStoich(); keepStart();
-      send({ t: "tables", tables: tables }); emit("tables", tables);
-      running = true; root.classList.add("ecu-on"); root.classList.toggle("is-sim", !!sim);
-      $(".lt-status").textContent = (sim ? "Simulated ECU" : "ECU") + " connected: " + state.ecuSignature;
-      pushState(); renderAll(); pollLoop(); keepAwake();
-      $("[data-tpscal]").hidden = !canCalTps();
-      var proj = carFiles && (carFiles.msqText || (carFiles.last && carFiles.last.msq));
-      var pname = carFiles && (carFiles.msq ? carFiles.msq.name : carFiles.last ? (carFiles.last.msqName || "the project's tune") : "");
-      if (proj) compareTune(proj, pname || "the project's tune", false); else tuneSrc("The ECU's own tune (read from it just now).");
+      var ecuTables = ECU.decodeConstants(layout, page, ecu.little);
+      return app.then(function (a) {
+        tables = ecuTables;
+        snapBase(); updateStoich(); keepStart();
+        send({ t: "tables", tables: tables }); emit("tables", tables);
+        running = true; connecting = false; root.classList.add("ecu-on"); root.classList.toggle("is-sim", !!sim);
+        lsSet(LASTKIND, sim ? "sim" : "usb");
+        if (!sim && pipe.port && pipe.port.getInfo) { lsSet(KNOWN, JSON.stringify(pipe.port.getInfo())); renderAllow(true); }
+        $(".lt-status").textContent = (sim ? "Simulated ECU" : "ECU") + " connected: " + state.ecuSignature;
+        pushState(); renderAll(); pollLoop(); keepAwake();
+        $("[data-tpscal]").hidden = !canCalTps();
+        if (a.text) compareTune(a.text, a.name, false); else tuneSrc("The ECU's own tune (read from it just now).");
+      });
     }).catch(function (e) {
+      connecting = false;
+      if (pipe && !running) { try { pipe.close(); } catch (err) { /* ignore */ } pipe = null; ecu = null; }
       if (e && e.name === "NotFoundError") { $(".lt-status").textContent = "No port chosen."; return; }
-      $(".lt-status").textContent = "Couldn't connect: " + (e && e.message || e);
+      $(".lt-status").textContent = "Couldn't connect: " + (e && e.message || e) + (port ? " Trying again in a few seconds…" : "");
+      if (port) autoT = setTimeout(autoEcu, 5000);  // TunerStudio still open, or the ECU still starting: keep trying
     });
   }
   /* keep the laptop's screen (and so the USB link and this page) awake while the ECU is connected */
@@ -350,6 +408,16 @@
     if (el.dataset.h !== html) { el.innerHTML = html; el.dataset.h = html; }
   }
   setInterval(renderRec, 1000);
+  /* The menu's two main tabs: here, Live tuning stays put (leaving would drop the ECU), and the Log viewer opens
+     this session's log in its own browser tab (or the log list, before the first save). */
+  document.addEventListener("click", function (e) {
+    if (e.target.closest('a[data-shell="live"]')) e.preventDefault();
+  });
+  function shellLink() {
+    var a = document.querySelector('a[data-shell="logs"]'), logs = state.logs || [], l = logs[logs.length - 1];
+    if (a && l) { var h = "/l/" + l.slug + (state.tune ? "?tune=" + state.tune : ""); if (a.getAttribute("href") !== h) a.setAttribute("href", h); }
+  }
+  setInterval(shellLink, 2000);
   window.addEventListener("pagehide", function () { if (ROLE === "car") flushLog(); });
   document.addEventListener("visibilitychange", function () { if (ROLE === "car" && document.hidden) flushLog(); });
   window.MSQLive.flush = function () { return ROLE === "car" ? flushLog() : Promise.resolve(); };
@@ -359,7 +427,8 @@
     if (wake) { wake.release().catch(function () { /* ignore */ }); wake = null; }
     running = false; root.classList.remove("ecu-on");
     if (pipe) pipe.close(); pipe = null; ecu = null;
-    pushState(); $(".lt-status").textContent = "ECU disconnected.";
+    ecuOff = true; lsSet(LASTKIND, null);  // not by itself again on this page, until Connect
+    pushState(); renderAll(); $(".lt-status").textContent = "Not connected (disconnected here). Connect again with the button, or reload the page.";
   }
   /* Read the ECU as fast as it answers (up to ~60 times a second, the way TunerStudio does), and send the
      tuners a compact frame about 30 times a second: just the numbers, in the order of a channel list sent
@@ -382,6 +451,7 @@
     if (queue.length) return work().then(function () { ECU.soon(pollLoop); });
     var started = Date.now();
     ecu.och().then(function (block) {
+      if (!running || !ecu) return;  // disconnected while this read was on its way
       och = ECU.decodeOutputs(layout, block, ecu.little);
       if (och.stoichiometricRatio) updateStoich();
       record();
@@ -453,7 +523,6 @@
     };
     attempt(0);
   }
-  if ("serial" in navigator) navigator.serial.addEventListener("connect", function () { if (running && pipe && pipe.isDead && pipe.isDead()) reconnectEcu(); });
 
   /* Every change goes through here, one at a time, between live-data reads. */
   function carRequest(m) {
@@ -624,65 +693,92 @@
      the file's into it (then Burn), the way TunerStudio asks. Only tables, curves and the settings this page
      handles are written; wiring, sensor and protection settings stay as the ECU has them. */
   function tuneSrc(text) { var el = $(".lt-tunesrc"); if (el) el.textContent = text; }
-  function msqValues(text) {
-    var doc = new DOMParser().parseFromString(text, "application/xml"), out = {};
-    Array.prototype.forEach.call(doc.getElementsByTagName("constant"), function (el) {
-      var name = el.getAttribute("name"), c = layout.constants[name];
-      if (!c || !tables[name]) return;
-      var vals = el.textContent.trim().split(/\s+/).map(Number);
-      if (vals.length === tables[name].length && vals.every(function (v) { return v === v; })) out[name] = vals;
-    });
-    return out;
+  /* The difference report, TunerStudio's way: every setting and table cell where the ECU's burned tune and the
+     app's copy differ, both values side by side, and per item (or all at once) keep the ECU's or write the app's
+     into the ECU (then it's burned). Until the driver picks, the ECU's stays: the engine runs what's in it. */
+  function optLabel(c, v) { var o = (c.options || [])[Math.round(v)]; return o != null ? String(o).replace(/^"|"$/g, "") : String(v); }
+  function diffVal(c, v) { return c.kind === "bits" ? esc(optLabel(c, v)) : fmt(showT(v, c.units), c.digits == null ? 2 : c.digits) + (c.units ? " " + esc(showU(c.units)) : ""); }
+  function diffWhere(name, i) {
+    var at = TuneDiff.cellAt(layout, name, i, tables), c = layout.constants[name] || {}, parts = [];
+    if (at.x != null) { var xu = (layout.constants[at.xName] || {}).units; parts.push(bin(showT(at.x, xu)) + " " + esc(showU(xu))); }
+    if (at.y != null) { var yu = (layout.constants[at.yName] || {}).units; parts.push(bin(showT(at.y, yu)) + " " + esc(showU(yu))); }
+    if (!parts.length) return ECU.count(c) > 1 ? "row " + (at.row + 1) + (c.cols > 1 ? ", col " + (at.col + 1) : "") : "value";
+    return parts.join(" · ");
   }
-  // constants that share ECU memory under two names, and what the firmware sets itself, can't be compared
-  var shared = null;
-  function sharedMem() {
-    if (shared) return shared;
-    shared = {};
-    var list = Object.keys(layout.constants).map(function (n) { var c = layout.constants[n]; return [c.offset, c.offset + ECU.count(c) * ECU.SIZE[c.type], n]; })
-      .sort(function (a, b) { return a[0] - b[0]; });
-    for (var i = 0; i < list.length; i++) for (var j = i + 1; j < list.length && list[j][0] < list[i][1]; j++) { shared[list[i][2]] = 1; shared[list[j][2]] = 1; }
-    return shared;
-  }
-  function diffTune(vals) {
-    var out = [], sh = sharedMem();
-    Object.keys(vals).forEach(function (name) {
-      if (sh[name] || /firmware|version|signature/i.test(name)) return;
-      var c = layout.constants[name], tol = Math.pow(10, -(c.digits == null ? 2 : c.digits)) * 0.6 + Math.abs(c.scale || 0) * 0.51, cells = {}, n = 0;
-      vals[name].forEach(function (v, i) { if (Math.abs(v - tables[name][i]) > tol) { cells[i] = v; n++; } });
-      if (n) out.push({ name: name, cells: cells, n: n });
-    });
-    return out;
-  }
+  var lastDiff = null;
+  var KINDS = { table: "table", curve: "curve", axis: "axis bins", setting: "setting" };
   function compareTune(text, fname, asked) {
-    var d = diffTune(msqValues(text)), box = $(".lt-diff");
+    var d = TuneDiff.diff(layout, tables, TuneDiff.msqValues(text, layout)), box = $(".lt-diff");
     if (!d.length) { tuneSrc("ECU tune: the same as " + fname + "."); if (asked) toast("The ECU already has " + fname + "."); return; }
-    tuneSrc("ECU tune: different from " + fname + " in " + d.length + " table" + (d.length === 1 ? "" : "s") + "/setting" + (d.length === 1 ? "" : "s") + " (using the ECU's).");
+    var nv = d.reduce(function (s, x) { return s + x.cells.length; }, 0), choice = d.map(function () { return "ecu"; });
+    tuneSrc("ECU tune: different from " + fname + " in " + d.length + " place" + (d.length === 1 ? "" : "s") + " (the ECU's is running). ");
+    lastDiff = { text: text, fname: fname };
+    var ts = $(".lt-tunesrc"); if (ts) ts.insertAdjacentHTML("beforeend", '<button class="btn sm" type="button" data-diff-again>Difference report</button>');
     box.hidden = false;
-    $(".lt-modal-in", box).innerHTML = "<b>Difference report</b><p>The ECU and <b>" + esc(fname) + "</b> are different. The engine runs what's in the ECU.</p><ul class=\"lt-dlist\">" +
-      d.slice(0, 40).map(function (x) { return "<li>" + esc(title(x.name)) + ' <small class="dim">' + x.n + " value" + (x.n === 1 ? "" : "s") + "</small></li>"; }).join("") + "</ul>" +
-      '<div class="lt-row"><button class="btn" type="button" data-diff="ecu">Use the ECU\'s tune</button><button class="btn primary" type="button" data-diff="file">Write ' + esc(fname) + " to the ECU</button></div>" +
-      '<p class="fine">Writing puts these tables and settings into the ECU\'s working memory; Burn makes it permanent. Wiring, sensor and protection settings aren\'t written from here.</p>';
+    var inner = $(".lt-modal-in", box);
+    inner.classList.add("lt-diffbox");
+    inner.innerHTML = '<div class="lt-row"><b>Difference report: the ECU and ' + esc(fname) + '</b><span class="st-grow"></span><button class="btn sm" type="button" data-diff-close>Decide later</button></div>' +
+      "<p>What's burned in the ECU and <b>" + esc(fname) + "</b> differ in " + d.length + " table" + (d.length === 1 ? "" : "s") + " or setting" + (d.length === 1 ? "" : "s") +
+      " (" + nv + " value" + (nv === 1 ? "" : "s") + "). The engine runs what's in the ECU. For each, keep the ECU's, or write this app's into the ECU (it's burned after).</p>" +
+      '<div class="lt-row"><button class="btn sm" type="button" data-diff-all="ecu">All: keep the ECU\'s</button><button class="btn sm" type="button" data-diff-all="app">All: write ' + esc(fname) + "'s</button></div>" +
+      '<ul class="lt-dl2">' + d.map(function (x, k) {
+        var c = layout.constants[x.name] || {}, canApp = c.kind !== "bits";
+        var one = x.cells.length === 1 && ECU.count(c) === 1;
+        return '<li data-di="' + k + '"><div class="lt-di-h"><button type="button" class="lt-di-t" data-di-open' + (one ? " disabled" : "") + ">" + (one ? "" : '<span class="lt-chg-more">▸</span> ') + "<b>" + esc(title(x.name)) + "</b> " +
+          '<small class="dim">' + esc(KINDS[x.kind] || x.kind) + (one ? ": ECU " + diffVal(c, x.cells[0].ecu) + " · app " + diffVal(c, x.cells[0].app) : " · " + x.cells.length + " value" + (x.cells.length === 1 ? "" : "s")) + "</small></button>" +
+          '<span class="lt-seg" role="radiogroup"><label><input type="radio" name="dk' + k + '" value="ecu" checked><span>ECU\'s</span></label>' +
+          "<label" + (canApp ? "" : ' title="An option setting: change it in TunerStudio"') + '><input type="radio" name="dk' + k + '" value="app"' + (canApp ? "" : " disabled") + "><span>App's</span></label></span></div></li>";
+      }).join("") + "</ul>" +
+      '<div class="lt-row"><small class="dim" data-diff-sum></small><span class="st-grow"></span><button class="btn primary" type="button" data-diff-go></button></div>' +
+      '<p class="fine">Writing goes to the ECU\'s working memory, then it\'s burned so it stays when the key goes off. What you keep from the ECU becomes this app\'s tune too.</p>';
+    function sum() {
+      var n = choice.filter(function (v) { return v === "app"; }).length;
+      $("[data-diff-sum]", inner).textContent = n ? n + " to write, " + (d.length - n) + " kept from the ECU" : "Keeping everything as the ECU has it";
+      $("[data-diff-go]", inner).textContent = n ? "Write " + n + " to the ECU and burn" : "Keep the ECU's tune";
+    }
+    sum();
+    box.onchange = function (e) {
+      var li = e.target.closest("[data-di]");
+      if (li && e.target.type === "radio") { choice[+li.dataset.di] = e.target.value; sum(); }
+    };
     box.onclick = function (e) {
-      var b = e.target.closest("[data-diff]");
-      if (!b) return;
-      box.hidden = true;
-      if (b.dataset.diff === "file") loadTune(d, fname);
+      var all = e.target.closest("[data-diff-all]");
+      if (all) {
+        $$("[data-di]", inner).forEach(function (li) {
+          var r = li.querySelector('input[value="' + all.dataset.diffAll + '"]');
+          if (r && !r.disabled) { r.checked = true; choice[+li.dataset.di] = r.value; }
+        });
+        sum(); return;
+      }
+      var op = e.target.closest("[data-di-open]");
+      if (op) {
+        var li = op.closest("[data-di]"), x = d[+li.dataset.di], c = layout.constants[x.name] || {}, tb = li.querySelector("table");
+        if (!tb) {
+          tb = document.createElement("table"); tb.className = "lt-chg-t";
+          tb.innerHTML = "<thead><tr><th>Cell</th><th>ECU</th><th>App</th></tr></thead><tbody>" + x.cells.slice(0, 400).map(function (cl) {
+            return "<tr><td>" + diffWhere(x.name, cl.i) + "</td><td>" + diffVal(c, cl.ecu) + "</td><td><b>" + diffVal(c, cl.app) + "</b></td></tr>";
+          }).join("") + (x.cells.length > 400 ? '<tr><td colspan="3" class="dim">and ' + (x.cells.length - 400) + " more</td></tr>" : "") + "</tbody>";
+          li.appendChild(tb); tb.hidden = true;
+        }
+        tb.hidden = !tb.hidden; li.classList.toggle("open", !tb.hidden);
+        return;
+      }
+      if (e.target.closest("[data-diff-close]") || e.target === box) { box.hidden = true; return; }
+      if (e.target.closest("[data-diff-go]")) {
+        box.hidden = true;
+        loadTune(d.filter(function (x, k) { return choice[k] === "app"; }), fname, d.length);
+      }
     };
   }
-  function loadTune(d, fname) {
-    tuneSrc("Writing " + fname + " to the ECU…");
-    d.forEach(function (x) {
-      var ks = Object.keys(x.cells);
-      for (var i = 0; i < ks.length; i += 128) {
-        var part = {}; ks.slice(i, i + 128).forEach(function (k) { part[k] = x.cells[k]; });
-        queue.push({ kind: "set", m: { table: x.name, cells: part, note: "load" }, by: "driver" });
-      }
-    });
+  function loadTune(items, fname, total) {
+    if (!items.length) { tuneSrc("ECU tune: kept as the ECU has it (this app's copy follows it)."); return; }
+    if (!running) { toast("Connect the ECU first.", true); return; }
+    tuneSrc("Writing " + items.length + " from " + fname + " to the ECU…");
+    TuneDiff.writes(items, 128).forEach(function (w) { queue.push({ kind: "set", m: { table: w.name, cells: w.cells, note: "load" }, by: "driver" }); });
+    queue.push({ kind: "burn", m: { auto: true } });
     queue.push({ kind: "done", fn: function () {
-      tuneSrc("ECU tune: " + fname + " (written, not burned yet).");
-      toast(fname + " is in the ECU now. Burn to keep it after the key goes off.");
-      send({ t: "tables", tables: tables });
+      tuneSrc("ECU tune: " + items.length + " of " + total + " written from " + fname + " and burned; the rest kept as the ECU had it.");
+      send({ t: "notice", text: "The driver wrote " + items.length + " table(s)/setting(s) from " + fname + " into the ECU and burned it." });
     } });
   }
   /* TPS calibration at the car (key on, engine off), like TunerStudio's: store the sensor voltage at closed and
@@ -1361,7 +1457,8 @@
       queue.push({ kind: "done", fn: function () { toast("TPS calibrated. Burn to keep it."); drawTps(); } });
       $(".lt-tps").hidden = true; return;
     }
-    if (e.target.closest("[data-connect]")) connectEcu(false);
+    if (e.target.closest("[data-diff-again]") && lastDiff) { compareTune(lastDiff.text, lastDiff.fname, true); return; }
+    if (e.target.closest("[data-connect]")) { if (running) toast("The ECU is connected already: Disconnect first to use another.", true); else connectEcu(false); }
     else if (e.target.closest("[data-sim]")) connectEcu(true);
     else if (e.target.closest("[data-disconnect]")) disconnectEcu();
     else if (e.target.closest("[data-copy-view]")) copy(location.origin + "/live/" + SID + "?k=" + encodeURIComponent(sess.view_key));
@@ -1407,15 +1504,21 @@
   function lastProject() { return idb(function (st, ok) { var g = st.get("last"); g.onsuccess = function () { ok(g.result || null); }; g.onerror = function () { ok(null); }; }).catch(function () { return null; }); }
   function useLast(p) {
     var ini = new File([p.ini], "mainController.ini"), msq = p.msq ? new File([p.msq], p.msqName || "CurrentTune.msq") : null;
-    return startSession({ ini: ini, msq: msq, msqText: p.msq || "" });
+    return startSession({ ini: ini, msq: msq, msqText: p.msq || "", name: p.name || "" });
   }
-  if (ROLE === "car") lastProject().then(function (p) {
+  /* TunerStudio opens the last project by itself: so does this page (the share link stays the same). */
+  var projectP = ROLE === "car" ? lastProject() : Promise.resolve(null);
+  if (ROLE === "car") projectP.then(function (p) {
     var li = $(".lt-last");
     if (!p || !li) return;
     li.hidden = false;
     $("[data-last]", li).textContent = "Use " + (p.name || "my project") + " (from " + new Date(p.at).toLocaleDateString() + ")";
     li.querySelector("[data-last]").onclick = function () { useLast(p).catch(function (e) { toast(e.message, true); }); };
     if (SID && !carFiles) carFiles = { last: p };  // a reload: the session can restart by itself
+    if (!SID && !/[?&]new\b/.test(location.search)) {
+      $(".lt-status").textContent = "Opening " + (p.name || "the project") + "…";
+      useLast(p).catch(function (e) { $(".lt-status").textContent = e.message; });
+    }
   });
 
   /* the project folder: projectCfg/mainController.ini and the tune (CurrentTune.msq) */
@@ -1431,7 +1534,7 @@
       return ini.text().then(function (iniText) {
         var path = (ini.webkitRelativePath || "").split("/"), name = path.length > 2 ? path[0] : (msq ? msq.name.replace(/\.msq$/i, "") : "my project");
         saveProject({ ini: iniText, msq: msqText, msqName: msq ? msq.name : "", name: name, at: Date.now() });
-        return startSession({ ini: ini, msq: msq, msqText: msqText });
+        return startSession({ ini: ini, msq: msq, msqText: msqText, name: name });
       });
     }).catch(function (e) { $(".lt-status").textContent = e.message; toast(e.message, true); });
   }
@@ -1442,14 +1545,14 @@
     if (!p) return;
     var car = state.car, live = state.ecu;
     p.className = "lt-pill " + (!wsOpen ? "off" : live ? "on" : car ? "warn" : "off");
-    p.textContent = !wsOpen ? "Reconnecting…" : ROLE === "car" ? (live ? "Live · " + (state.ecuHz || 0) + " reads/s · " + (state.viewers || 0) + " tuner" + (state.viewers === 1 ? "" : "s") + " watching" : "Waiting for the ECU")
-      : live ? "Live · " + fps + "/s" + (rtt != null ? " · " + rtt + " ms" : "") : car ? "Car connected, ECU not" : "Car offline";
+    p.textContent = !wsOpen ? "Reconnecting…" : ROLE === "car" ? (live ? "Live · " + (state.ecuHz || 0) + " reads/s · " + (state.viewers || 0) + " tuner" + (state.viewers === 1 ? "" : "s") + " watching" : "Not connected")
+      : live ? "Live · " + fps + "/s" + (rtt != null ? " · " + rtt + " ms" : "") : car ? "Waiting for the ECU at the car" : "Waiting for the car";
     p.title = ROLE === "view" ? "Updates per second from the car, and the round trip to the server" : "";
   }
   function renderState() {
     pill();
     var mode = state.mode || "ask", m = $(".lt-mode-note");
-    if (m) m.textContent = ROLE === "view" ? ({ off: "The driver has remote changes off: you can watch, not change.", ask: "The driver approves each change you send.", auto: "Your changes go to the ECU straight away." }[mode]) : "";
+    if (m) m.textContent = ROLE === "view" && !state.ecu ? "Not connected: this page goes live by itself when the ECU is plugged in at the car." : ROLE === "view" ? ({ off: "The driver has remote changes off: you can watch, not change.", ask: "The driver approves each change you send.", auto: "Your changes go to the ECU straight away." }[mode]) : "";
     var burn = $("[data-act=burn]");
     if (burn) { burn.disabled = ROLE === "view" && !state.burn; burn.classList.toggle("primary", !!state.needBurn); burn.textContent = state.needBurn ? "Burn to ECU •" : "Burn to ECU"; }
     var tl = $("[data-tune-link]");
@@ -1492,6 +1595,7 @@
   function renderSettings() {
     var box = $(".lt-set ul"), q = ($(".lt-set input[type=search]") || {}).value || "";
     if (!box || !layout) return;
+    if (layout.ui && layout.ui.menus && layout.ui.menus.length) { box.hidden = true; return; }  // the settings dialogs (dialogs.js) instead
     var words = q.trim().toLowerCase().split(/\s+/).filter(Boolean), ed = layout.editable || {};
     var names = Object.keys(ed).filter(function (n) { return ed[n] === "setting" && tables[n]; });
     var rows = names.map(function (n) { return [n, layout.constants[n].label || n]; })
@@ -1509,16 +1613,25 @@
 
   /* ---------------------------------------------------------------- start */
   if (ROLE === "car" && !("serial" in navigator)) root.classList.add("no-serial");
+  try { window.name = "msq-live"; } catch (e) { /* ignore */ }  // the app's Live tuning tab (the log viewer opens in its own)
   if (SID) {
     fetch("/live/" + SID + "/layout?k=" + encodeURIComponent(KEY)).then(function (r) {
       if (!r.ok) throw new Error("gone");
       return r.json();
     }).then(function (l) {
       layout = l; root.classList.add("has-session");
-      if (ROLE === "car") { renderShare(); $(".lt-status").textContent = "Choose the project folder again to reconnect the ECU, or connect it now."; }
+      if (ROLE === "car") { renderShare(); $(".lt-status").textContent = "Not connected. Plug the ECU in: it connects by itself."; }
       renderTablePicker(); connectWs(); renderAll();
+      if (ROLE === "car") projectP.then(function () { autoEcu(); });
     }).catch(function () {
-      $(".lt-status").textContent = ROLE === "car" ? "This session isn't running any more. Choose the project folder to start a new one." : "This live session has ended. Ask for a new link.";
+      if (ROLE === "car") {  // the server restarted: start the session again under the same link, then the ECU
+        return projectP.then(function (p) {
+          if (p && sess && sess.id === SID) { $(".lt-status").textContent = "Starting the session again…"; return useLast(p); }
+          $(".lt-status").textContent = "This session isn't running any more. Choose the project folder to start it again.";
+        }).catch(function (e) { $(".lt-status").textContent = e.message; });
+      }
+      $(".lt-status").textContent = "Waiting for the car: this page goes live by itself.";
+      setTimeout(function () { location.reload(); }, 5000);
     });
   }
   (function () { var v = null; try { v = localStorage.getItem("msq.live.view"); } catch (e) { /* ignore */ } if (v && v !== "tune" && $('[data-view="' + v + '"]')) showView(v); })();

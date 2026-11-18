@@ -1,5 +1,6 @@
 """Live tuning: reading the ECU definition, and the session relay between the car page and tuners."""
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -470,3 +471,54 @@ def test_live_session_logs_are_written_the_way_tunerstudio_writes_them(client, f
     rows = [ln.split("\t") for ln in lines[4:]]
     assert len(rows) == 40 and rows[0][1] == "900" and rows[0][3] == "" and rows[20][1] == "2000" and rows[20][3] == "1.5"
     assert float(rows[20][0]) == pytest.approx(10.0, abs=0.01)  # the second part, 10 s later on the same clock
+
+
+def test_the_tuners_link_is_for_good(tmp_path, fx):
+    """The car page keeps its session id and keys: after a server restart (sessions are in memory) it starts the
+    session again under the same link, and a tuner's page waits for it meanwhile."""
+    files = {"ini": ("mainController.ini", INI.encode(), "text/plain"), "msq": ("CurrentTune.msq", fx("fome_vthpnp.msq"), "application/xml")}
+    with TestClient(create_app(tmp_path)) as c:
+        s = c.post("/live/start", files=files).json()
+    with TestClient(create_app(tmp_path)) as c:  # the server restarted
+        wait = c.get(f"/live/{s['id']}?k={s['view_key']}")
+        assert wait.status_code == 503 and "Waiting for the car" in wait.text and "/static/livewait.js" in wait.text
+        again = c.post("/live/start", files=files, data={"sid": s["id"], "car_key": s["car_key"], "view_key": s["view_key"], "tune": s["tune"]}).json()
+        assert (again["id"], again["car_key"], again["view_key"], again["tune"]) == (s["id"], s["car_key"], s["view_key"], s["tune"])
+        assert c.get(f"/live/{s['id']}?k={s['view_key']}").status_code == 200
+        # another project under the same link gets a tune copy of its own
+        other = c.post("/live/start", files=files, data={"sid": s["id"], "car_key": s["car_key"], "view_key": s["view_key"]}).json()
+        assert other["id"] == s["id"] and other["view_key"] == s["view_key"] and other["tune"] != s["tune"]
+        assert c.get(f"/live/{s['id']}/status.json?k={s['view_key']}").json()["state"]["tune"] == other["tune"]
+
+
+def test_live_tuning_and_the_log_viewer_are_the_apps_main_tabs(client, fx):
+    s = start(client, fx)
+    for url, current in (("/live", "live"), (f"/live/{s['id']}?k={s['car_key']}", "live"), ("/logs", "logs"), ("/", None)):
+        page = client.get(url).text
+        tabs = re.findall(r'<a class="menu-tab"[^>]*data-shell="(\w+)"[^>]*>', page)
+        assert tabs == ["live", "logs"], url
+        cur = re.findall(r'data-shell="(\w+)"[^>]*aria-current="page"', page)
+        assert cur == ([current] if current else []), url
+        assert 'target="msq-live"' in page and 'target="msq-logs"' in page
+    car = client.get(f"/live/{s['id']}?k={s['car_key']}").text
+    assert "/static/tunediff.js" in car and "Allow this ECU" in car
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node isn't installed")
+def test_the_difference_report_logic():
+    r = subprocess.run(["node", "--test", str(Path(__file__).parent / "js" / "tunediff.test.js")], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_the_tune_copy_follows_the_ecu_even_with_option_settings(client, fx):
+    """Keep the ECU's (the difference report): the session's copy takes what the ECU has. An option setting comes
+    from the ECU as its number while the file keeps its name: that mustn't stop the rest following."""
+    s = start(client, fx)
+    with client.websocket_connect(f"/live/{s['id']}/ws?k={s['car_key']}") as cw:
+        cw.receive_json()
+        cw.send_json({"t": "tables", "tables": {"injectionMode": [1], "fuelAlgorithm": [0], "rpmHardLimit": [6900], "injector_flow": [123.4]}})
+        cw.send_json({"t": "state", "ecu": True})
+        while cw.receive_json()["t"] != "state":
+            pass
+    doc = parse_msq(client.get(f"/t/{s['tune']}.msq").content)
+    assert float(doc.get("rpmHardLimit").values[0]) == 6900 and float(doc.get("injector_flow").values[0]) == pytest.approx(123.4)

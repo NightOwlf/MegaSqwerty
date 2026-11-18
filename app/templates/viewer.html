@@ -8,7 +8,7 @@
 <meta property="og:description" content="{{ og_desc }}">
 {% endblock %}
 {% block bodyclass %}page-viewer{% if live %} page-live-lv{% endif %}{% endblock %}
-{% block scripts %}{% if live %}<script src="/static/ecu.js?v={{ asset_v }}" defer></script><script src="/static/live.js?v={{ asset_v }}" defer></script>{% endif %}<script src="/static/codes.js?v={{ asset_v }}" defer></script><script src="/static/veal.js?v={{ asset_v }}" defer></script><script src="/static/viewer.js?v={{ asset_v }}" defer></script>{% endblock %}
+{% block scripts %}{% if live %}<script src="/static/ecu.js?v={{ asset_v }}" defer></script><script src="/static/tunediff.js?v={{ asset_v }}" defer></script><script src="/static/live.js?v={{ asset_v }}" defer></script><script src="/static/dialogs.js?v={{ asset_v }}" defer></script>{% endif %}<script src="/static/codes.js?v={{ asset_v }}" defer></script><script src="/static/veal.js?v={{ asset_v }}" defer></script><script src="/static/viewer.js?v={{ asset_v }}" defer></script>{% endblock %}
 {% set led = {'ok': 'on', 'warn': 'warn', 'error': 'bad', 'info': ''} %}
 {% block main %}
 {% if keys or tune_key %}

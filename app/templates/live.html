@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Start live tuning · MSQ Viewer{% endblock %}
 {% block bodyclass %}page-live{% endblock %}
-{% block scripts %}<script src="/static/ecu.js?v={{ asset_v }}" defer></script><script src="/static/live.js?v={{ asset_v }}" defer></script>{% endblock %}
+{% block scripts %}<script src="/static/ecu.js?v={{ asset_v }}" defer></script><script src="/static/tunediff.js?v={{ asset_v }}" defer></script><script src="/static/live.js?v={{ asset_v }}" defer></script>{% endblock %}
 {% block main %}
 <div class="lt" id="live" data-role="{{ role }}" data-sid="{{ sid }}" data-key="{{ key }}" data-v="{{ asset_v }}">
 {% include "_live_head.html" %}
