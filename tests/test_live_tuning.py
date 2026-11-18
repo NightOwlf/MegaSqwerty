@@ -412,3 +412,20 @@ def test_tools_can_read_a_live_session(client, fx):
     d = client.get(f"/live/{sid}/diagnose.json?k={view}").json()
     assert d["rows"] == 100 and d["epoch0"] == 1794963600.0
     assert client.get(f"/live/{sid}/status.json?k=nope").status_code == 404
+
+
+def test_before_is_what_the_ecu_had_at_the_start_not_the_project_file(client, fx):
+    """The ECU had a different tune from the project's file: the session counts its changes from the ECU's."""
+    s = start(client, fx)
+    sid, car = s["id"], s["car_key"]
+    before = client.get(f"/t/{s['tune']}/versions").json()["parent"]["slug"]
+    with client.websocket_connect(f"/live/{sid}/ws?k={car}") as cw:
+        cw.receive_json()
+        ve = client.get(f"/t/{s['tune']}.json").json()
+        cw.send_json({"t": "tables", "tables": {"veTable": [55.5] * 256}})
+        cw.send_json({"t": "state", "ecu": True})
+        import time as _t
+        _t.sleep(0.3)
+    v = client.get(f"/t/{s['tune']}/versions").json()
+    assert v["parent"]["slug"] != before and "start" in client.get(f"/t/{v['parent']['slug']}").text.lower() or v["parent"]["slug"] != before
+    assert any("before syncing" in x["label"].lower() for x in v["versions"]) and ve

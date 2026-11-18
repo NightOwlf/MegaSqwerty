@@ -107,3 +107,15 @@ test("what a remote tuner may change, and by how much", () => {
   assert.strictEqual(ok("boostTable", { 0: 48 }), null);
   assert.match(ok("veTable", {}), /1 and 64/);
 });
+
+test("a session's limit stops a table drifting far from where it started", () => {
+  const L = { constants: { veTable: { units: "%", lo: 0, hi: 999 }, ignitionTable: { units: "deg", lo: -20, hi: 60 } },
+              tables: [{ z: "veTable", x: "r", y: "l" }, { z: "ignitionTable", x: "r", y: "l" }],
+              editable: { veTable: "table", ignitionTable: "table" } };
+  const T = { veTable: [120, 100], ignitionTable: [20, 20], r: [1000, 2000], l: [50] };
+  const lim = { base: { veTable: [100, 100], ignitionTable: [14, 20] }, maxPct: 30, maxDeg: 8 };
+  assert.strictEqual(ECU.checkChange(L, T, "veTable", { 0: 128 }, 14.7, null, lim), null);          // +28% from the start: fine
+  assert.match(ECU.checkChange(L, T, "veTable", { 0: 140 }, 14.7, null, lim), /30% away/);         // +40% in small steps: no
+  assert.match(ECU.checkChange(L, T, "ignitionTable", { 0: 23 }, 14.7, null, lim), /8° above/);     // +9° from the start
+  assert.strictEqual(ECU.checkChange(L, T, "veTable", { 0: 140 }, 14.7, null, null), null === null ? ECU.checkChange(L, T, "veTable", { 0: 140 }) : null);
+});

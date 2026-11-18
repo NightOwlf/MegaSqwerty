@@ -163,7 +163,7 @@
       emit("applied", m);
       if (ROLE === "view" && m.by === "driver") toast("The driver changed " + Object.keys(m.cells).length + " cell(s) in " + title(m.table));
     } else if (m.t === "rejected") { clearPending(m.id); renderTable(); if (bus.rejected) emit("rejected", m); else toast("Not changed: " + (m.why || "refused"), true); }
-    else if (m.t === "burned") { toast("Burned to the ECU: the changes are now permanent."); state.needBurn = false; snapBase(); renderTable(); renderState(); }
+    else if (m.t === "burned") { toast(m.verified ? "Burned and read back from the ECU: it holds every value." : m.bad ? "Burned, but reading it back " + m.bad + " value(s) differ: ask the driver to burn again." : "Burned to the ECU: the changes are now permanent.", !!m.bad); state.needBurn = false; snapBase(); renderTable(); renderState(); emit("state"); }
     else if (m.t === "notice") { toast(m.text || ""); $(".lt-mode-note") && ($(".lt-mode-note").textContent = m.text || ""); }
     else if (ROLE === "car" && (m.t === "set" || m.t === "undo" || m.t === "burn")) carRequest(m);
   }
@@ -224,7 +224,7 @@
       return ecu.readPage(function (f) { $(".lt-status").textContent = "Reading the tune from the ECU… " + Math.round(f * 100) + "%"; });
     }).then(function (page) {
       tables = ECU.decodeConstants(layout, page, ecu.little);
-      snapBase(); updateStoich();
+      snapBase(); updateStoich(); keepStart();
       send({ t: "tables", tables: tables }); emit("tables", tables);
       running = true; root.classList.add("ecu-on"); root.classList.toggle("is-sim", !!sim);
       $(".lt-status").textContent = (sim ? "Simulated ECU" : "ECU") + " connected: " + state.ecuSignature;
@@ -444,7 +444,43 @@
   /* What a remote change may do. The car page is the only thing that writes to the ECU, so this is the rule:
      only what the layout marks editable (tables, curves, settings; never what needs a power cycle, or that
      sets how the engine is wired, timed, measured or protected), inside the ECU's range, in moderate steps. */
-  function check(table, cells) { return ECU.checkChange(layout, tables, table, cells, STOICH, title); }
+  function check(table, cells) { return ECU.checkChange(layout, tables, table, cells, STOICH, title, limits()); }
+  /* What the ECU had when this session started (kept in this browser, so a reload doesn't move it), and how far
+     the driver lets any cell move from it. */
+  var startTables = (function () { try { var s = JSON.parse(localStorage.getItem("msq.live.start") || "null"); return s && s.sid === SID ? s.t : null; } catch (e) { return null; } })();
+  function keepStart() {
+    if (startTables || !layout) return;
+    startTables = {};
+    Object.keys(layout.editable || {}).forEach(function (n) { if (tables[n]) startTables[n] = tables[n].slice(); });
+    try { localStorage.setItem("msq.live.start", JSON.stringify({ sid: SID, t: startTables })); } catch (e) { /* too big or private: kept for this page only */ }
+  }
+  function limits() {
+    var sel = $("[data-maxpct]"), pct = sel ? +sel.value : 30;
+    return { base: startTables, maxPct: pct, maxDeg: pct >= 50 ? 12 : pct >= 30 ? 8 : 5 };
+  }
+  (function () {
+    var sel = $("[data-maxpct]");
+    if (!sel) return;
+    try { var v = localStorage.getItem("msq.live.maxpct"); if (v) sel.value = v; } catch (e) { /* ignore */ }
+    sel.addEventListener("change", function () { try { localStorage.setItem("msq.live.maxpct", sel.value); } catch (e) { /* ignore */ } });
+  })();
+  /* Put every table back to what the ECU had when the session started (then Burn keeps it). */
+  function revertToStart() {
+    if (!startTables || !running) { toast("Connect the ECU first.", true); return; }
+    var jobs = 0;
+    Object.keys(startTables).forEach(function (n) {
+      var cur = tables[n], was = startTables[n], cells = {};
+      if (!cur) return;
+      was.forEach(function (v, i) { if (Math.abs(v - cur[i]) > 1e-6) cells[i] = v; });
+      var ks = Object.keys(cells);
+      for (var i = 0; i < ks.length; i += 128) {
+        var part = {}; ks.slice(i, i + 128).forEach(function (k) { part[k] = cells[k]; });
+        queue.push({ kind: "set", m: { table: n, cells: part, note: "back to the start" }, by: "driver" }); jobs++;
+      }
+    });
+    if (!jobs) { toast("The ECU already has what it started with."); return; }
+    queue.push({ kind: "done", fn: function () { toast("Back to how the ECU started. Burn to keep it."); send({ t: "notice", text: "The driver put the ECU back to how it was at the start of the session." }); } });
+  }
   var asks = [];
   function askDriver(m) {
     asks.push(m);
@@ -487,7 +523,15 @@
     if (!job || !ecu) return Promise.resolve();
     if (job.kind === "done") { job.fn(); return Promise.resolve(); }
     if (job.kind === "burn") {
-      return ecu.burn().then(function () { state.needBurn = false; snapBase(); send({ t: "burned" }); pushState(); toast(job.m.auto ? "Kept: burned to the ECU." : "Burned: the changes are permanent."); renderTable(); renderState(); emit("state"); },
+      return ecu.burn().then(function () {
+        state.needBurn = false; snapBase(); pushState(); renderTable(); renderState(); emit("state");
+        return verifyEcu().then(function (bad) {
+          state.verified = { at: Date.now(), bad: bad };
+          var msg = bad ? "Burned, but reading it back " + bad + " value(s) differ from what was sent: burn again." : (job.m.auto ? "Kept: burned to the ECU and read back: it holds every value." : "Burned and read back: the ECU holds every value.");
+          send({ t: "burned", verified: !bad, bad: bad }); send({ t: "notice", text: msg });
+          toast(msg, !!bad); emit("state");
+        });
+      },
         function (e) { send({ t: "rejected", id: job.m.id, why: "Burn failed: " + e.message }); });
     }
     if (job.kind === "undo") {
@@ -499,6 +543,18 @@
       send({ t: "rejected", id: job.m.id, why: "Writing to the ECU failed: " + e.message });
       if (job.by === "driver") emit("rejected", { id: job.m.id, why: "Writing to the ECU failed: " + e.message });
     });
+  }
+  /* After a burn: read the whole page back from the ECU and check it holds what this session thinks it does. */
+  function verifyEcu() {
+    return ecu.readPage().then(function (page) {
+      var fresh = ECU.decodeConstants(layout, page, ecu.little), bad = 0;
+      Object.keys(layout.editable || {}).forEach(function (n) {
+        if (!tables[n] || !fresh[n]) return;
+        var c = layout.constants[n], tol = Math.abs(c.scale || 0) * 0.51 + 1e-6;
+        fresh[n].forEach(function (v, i) { if (Math.abs(v - tables[n][i]) > tol) bad++; });
+      });
+      return bad;
+    }, function () { return -1; });
   }
   /* Keep every change: burn by itself once changes have stopped for 10 s (the driver can turn this off). */
   var burnT = 0;
@@ -1260,6 +1316,10 @@
     gb = e.target.closest("[data-pick]");
     if (gb) { if (extra.indexOf(gb.dataset.pick) < 0) extra.push(gb.dataset.pick); saveExtra(); $(".lt-pick").hidden = true; drawGauges(); return; }
     if (e.target.closest("[data-pick-close]") || e.target.classList.contains("lt-pick")) { $(".lt-pick").hidden = true; return; }
+    if (e.target.closest("[data-revert-start]")) {
+      if (confirm("Put every table back to what the ECU had when this session started? (Then Burn keeps it.)")) revertToStart();
+      return;
+    }
     if (e.target.closest("[data-tpscal]")) { tpsNew = {}; $(".lt-tps").hidden = false; drawTps(); return; }
     if (e.target.closest("[data-tps-close]") || e.target.classList.contains("lt-tps")) { $(".lt-tps").hidden = true; return; }
     var tg = e.target.closest("[data-tps-grab]");

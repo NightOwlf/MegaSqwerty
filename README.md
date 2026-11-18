@@ -422,6 +422,13 @@ ranges and warning zones, and its indicator lamps) and **Settings**.
   page is hidden) against the session's tune copy, including the cut codes and warning codes. A reload of the car
   page carries on the same log on the same clock; the log grows in place and is never deleted while it's saved,
   so a server restart can't lose it. *⬇ Download log* gets the whole session as one .msl.
+- **Before is what the ECU had**: when the ECU's tune differs from the project's file, the session keeps what the ECU
+  had at the start as its own tune and counts every change from it (Compare's *Before*). The file stays in History.
+- **Burns are checked**: after every burn the car reads the whole page back from the ECU and confirms it holds every
+  value (History labels the burn "read back: OK"); if anything differs it says so.
+- **Most any cell may move this session** (car setting, 15 / 30 / 50%, timing +5 / +8 / +12°): measured from what
+  the ECU had at the start, so a table can't drift far in many small steps. *↺ Back to how the ECU started* writes
+  every table back.
 - **Keep every change** (on by default at the car): the ECU burns by itself 10 seconds after changes stop, so
   nothing is lost when the key goes off. If the ECU restarts and loses unburned changes, the car page puts them back.
 - **VE Analyze Live**: in the VE Analyze tab, *● Run live* corrects the VE table in the ECU every 15 seconds from

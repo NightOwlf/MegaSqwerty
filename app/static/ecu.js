@@ -413,7 +413,7 @@
   }
 
   /* What a remote change may do (the car page applies this to every request). -> null, or why not. */
-  function checkChange(layout, tables, table, cells, STOICH, title) {
+  function checkChange(layout, tables, table, cells, STOICH, title, limits) {
     STOICH = STOICH || 14.7;
     title = title || function (n) { return n; };
     var tableDef = function (z) { return (layout.tables || []).concat(layout.curves || []).filter(function (t) { return t.z === z; })[0]; };
@@ -424,8 +424,15 @@
     var nm = table + " " + (c.units || ""), ign = /ign|timing|advance|spark/i.test(table) && /deg/i.test(c.units || "");
     var ve = /ve/i.test(table) && c.units === "%", afr = /lambda|afr/i.test(nm) && kind === "table";
     var toAfr = /lambda/i.test(c.units || "") ? STOICH : 1, def = tableDef(table), loads = def && def.y ? tables[def.y] : null;
+    var start = limits && limits.base && limits.base[table];
     for (var i = 0; i < ks.length; i++) {
-      var k = +ks[i], v = +cells[ks[i]], old = vals[k];
+      var k = +ks[i], v = +cells[ks[i]], old = vals[k], was = start ? start[k] : null;
+      if (was != null && was === was && kind !== "setting") {  // how far from what the ECU had when the session started
+        if (ign && limits.maxDeg != null && v - was > limits.maxDeg + 1e-9)
+          return "That's more than " + limits.maxDeg + "° above what " + title(table) + " had at the start of the session (" + was + "°). The driver can raise the limit.";
+        if (!ign && !afr && limits.maxPct != null && Math.abs(was) > 1e-9 && Math.abs(v / was - 1) * 100 > limits.maxPct + 1e-6)
+          return "That's more than " + limits.maxPct + "% away from what " + title(table) + " had at the start of the session (" + was + " → " + v + "). The driver can raise the limit.";
+      }
       if (!(k >= 0 && k < vals.length) || !(v === v)) return "That cell isn't in " + title(table) + ".";
       if ((c.lo != null && v < c.lo - 1e-9) || (c.hi != null && v > c.hi + 1e-9)) return title(table) + " must stay between " + c.lo + " and " + c.hi + ".";
       if (afr) {

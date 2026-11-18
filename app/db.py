@@ -226,6 +226,12 @@ class Store:
             c.execute("UPDATE tunes SET notes=? WHERE slug=?", (text, slug))
         self._rev_cache.pop(slug, None)
 
+    def set_parent(self, slug: str, parent: str) -> None:
+        """Point an edited copy at the tune it counts its changes from."""
+        with self.conn() as c:
+            c.execute("UPDATE tunes SET parent=? WHERE slug=?", (parent, slug))
+        self._rev_cache.pop(slug, None)
+
     def replace_tune(self, slug: str, raw: bytes, doc: TuneDoc) -> None:
         """Overwrite an edited copy in place (its owner saving again), so its link shows the latest edits."""
         path = self.raw_path(slug)

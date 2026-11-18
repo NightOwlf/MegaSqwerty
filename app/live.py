@@ -79,6 +79,7 @@ class Session:
         self.touched = time.time()
         self.rate: dict = {}
         self.logs: dict = {}             # the session's recording: part number -> {slug, rows, seconds}
+        self.based = False               # the tune copy's "before" is what the ECU had when the session started
         # what's been seen since the session started, for a tuner who joins later: (time, channel list id, frame)
         self.hist: list = []
         self.hist_chs: list = []
@@ -444,6 +445,8 @@ def register(app, store, templates, deps) -> None:
                     diff[str(i)] = v
             if diff:
                 changes[name] = diff
+        first = not s.based and bool(s.original)
+        s.based = True
         if not changes:
             return
         raw = store.read_raw(s.tune)
@@ -452,8 +455,15 @@ def register(app, store, templates, deps) -> None:
             new_doc = parse_msq(new_raw)
         except (editmod.EditError, MsqError):
             return
-        store.add_version(s.tune, raw, "Before syncing with the ECU")
+        store.add_version(s.tune, raw, "The project's tune file, before syncing with the ECU")
         store.replace_tune(s.tune, new_raw, new_doc)
+        if first:
+            # The ECU had a different tune from the project's file. What it had is the session's real starting point:
+            # keep it as its own tune and count every change from it (Compare's "Before"), not from the file.
+            start, _ = store.create_tune(new_raw, new_doc)
+            store.set_notes(start, "What the ECU had when the live session started " + time.strftime("%d %b %Y %H:%M UTC", time.gmtime()))
+            store.set_parent(s.tune, start)
+            s.original = start
 
     @app.websocket("/live/{sid}/ws")
     async def live_ws(ws: WebSocket, sid: str, k: str = ""):
@@ -558,7 +568,8 @@ def register(app, store, templates, deps) -> None:
                             s.state["needBurn"] = False
                             raw = store.read_raw(s.tune) if s.tune else None
                             if raw:
-                                store.add_version(s.tune, raw, "Burned to the ECU " + time.strftime("%d %b %H:%M UTC", time.gmtime()))
+                                checked = " · read back: OK" if msg.get("verified") else (" · read back: %s value(s) differ" % msg.get("bad") if msg.get("bad") else "")
+                                store.add_version(s.tune, raw, "Burned to the ECU " + time.strftime("%d %b %H:%M UTC", time.gmtime()) + checked)
                         await to_viewers(s, msg)
                         if t == "burned":
                             await announce(s)
