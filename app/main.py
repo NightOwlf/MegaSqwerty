@@ -1215,7 +1215,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         raw = store.read_log_raw(log_slug)
         if raw is None:
             raise HTTPException(404)
-        text = await run_in_threadpool(log_as_msl, raw, row["name"], ranges)
+        text = await run_in_threadpool(log_as_msl, raw, row["name"], ranges, False, log_signature(row))
         base = re.sub(r"[^A-Za-z0-9._-]+", "-", re.sub(r"\.(msl|mlg|csv|tsv|log)$", "", row["name"], flags=re.I)).strip("-._")[:50] or log_slug
         return Response(text.encode("latin-1", "replace"), media_type="text/plain; charset=iso-8859-1",
                         headers={"Content-Disposition": f'attachment; filename="{base}-section.msl"'})
@@ -1237,7 +1237,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         raw = store.read_log_raw(log_slug)
         if raw is None:
             raise HTTPException(404)
-        text = await run_in_threadpool(log_as_msl, raw, row["name"], ranges, cut)
+        text = await run_in_threadpool(log_as_msl, raw, row["name"], ranges, cut, log_signature(row))
         if text.count("\n") < 5:
             return JSONResponse({"error": "That would leave the log empty."}, status_code=400)
         tune = str(body.get("tune") or row["tune_slug"] or "")
@@ -1253,6 +1253,12 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         set_key_cookie(resp, request, slug, key)
         return resp
 
+    def log_signature(row: dict) -> str:
+        """The ECU signature of the tune a log is read with (for a log that didn't bring TunerStudio's header)."""
+        slug = row["tune_slug"] if "tune_slug" in row.keys() else ""
+        doc = store.get_doc(slug) if slug else None
+        return (getattr(doc, "signature", "") or "") if doc is not None else ""
+
     def parse_ranges(s: str) -> list[tuple[float, float]]:
         out = []
         for part in (s or "").split(",")[:50]:
@@ -1261,10 +1267,13 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
                 out.append((float(m.group(1)), float(m.group(2))))
         return out
 
-    def log_as_msl(raw: bytes, name: str, ranges: list[tuple[float, float]], cut: bool = False) -> str:
+    def log_as_msl(raw: bytes, name: str, ranges: list[tuple[float, float]], cut: bool = False, signature: str = "") -> str:
         """Any log the viewer reads, cut to the given stretches of time (or, with cut, with them taken out),
-        written as a TunerStudio .msl."""
+        written as a TunerStudio .msl that reads back exactly like the original: the log's own header lines (the
+        ECU signature TunerStudio picks its field names by, and the capture date), its time column, every channel
+        with its name, units and number of decimals."""
         import io
+        import time as _time
         import numpy as np
         parsed = logsmod.parse_log(raw, name)
         roles = logsmod.resolve(parsed)
@@ -1277,35 +1286,69 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             keep = ~keep
         tc = roles.get("time")
         chans = [c for c in parsed.channels if c is not tc]
-        cols = [t[keep] - (t[keep][0] if keep.any() else 0)] + [np.asarray(c.arr, dtype=float)[keep] for c in chans]
+        tcol = np.asarray(tc.arr, dtype=float)[keep] if tc is not None else t[keep]
+        cols = [tcol] + [np.asarray(c.arr, dtype=float)[keep] for c in chans]
         buf = io.StringIO()
-        what = ("without " if cut else "") + ", ".join(f"{a:.1f} to {b:.1f} s" for a, b in ranges)
-        buf.write(f'"{name} ({what})"\n')
-        buf.write("\t".join(["Time"] + [c.name for c in chans]) + "\n")
-        buf.write("\t".join(["s"] + [c.units or "" for c in chans]) + "\n")
+        head = list(parsed.header)
+        if not head:  # a log without TunerStudio's header: give it one, from the tune's ECU signature if there is one
+            if signature:
+                head.append('"' + signature.replace('"', "") + '"')
+            what = ("without " if cut else "") + ", ".join(f"{a:.1f} to {b:.1f} s" for a, b in ranges)
+            head.append('"Capture Date: ' + _time.strftime("%a %b %d %H:%M:%S UTC %Y", _time.gmtime()) +
+                        ", File author: MSQ Viewer (" + name.replace('"', "") + ", " + what + ')"')
+        for ln in head:
+            buf.write(ln + "\n")
+        buf.write("\t".join([tc.name if tc is not None else "Time"] + [c.name for c in chans]) + "\n")
+        buf.write("\t".join([(tc.units or "s") if tc is not None else "s"] + [c.units or "" for c in chans]) + "\n")
         if keep.any():
-            np.savetxt(buf, np.column_stack(cols), fmt="%.6g", delimiter="\t")
-        return buf.getvalue().replace("nan", "")
+            def fmt(c, default="%.6g"):
+                d = getattr(c, "digits", None)
+                return f"%.{d}f" if isinstance(d, int) and 0 <= d <= 6 else default
+            fmts = [fmt(tc, "%.3f") if tc is not None else "%.3f"] + [fmt(c) for c in chans]
+            body = io.StringIO()
+            np.savetxt(body, np.column_stack(cols), fmt=fmts, delimiter="\t")
+            buf.write(re.sub(r"(?<![^\t\n])-?nan(?![^\t\n])", "", body.getvalue()))
+        return buf.getvalue()
 
     # The live session's log, all of it: every part, in order, as one .msl (optionally just some stretches, as
     # epoch seconds, since the live viewer's clock is the wall clock).
     def session_msl(s, eranges: list[tuple[float, float]]) -> tuple[str, str]:
+        """Every part of the session's log as one .msl, written like TunerStudio writes one: the ECU signature, the
+        capture date, the channel names and units, then the records. Parts recorded with different channels (a car
+        page that updated mid-session) go in together, each channel in its own column."""
         import datetime as _dt
         parts = sorted((r for r in store.logs_for(s.tune) if r["name"].startswith("Live session")), key=lambda r: r["created_at"])
-        out, head, names = [], None, None
+        heads, plan = [], []
         for r in parts:
             raw = store.read_log_raw(r["slug"])
             if not raw:
                 continue
             lines = raw.decode("latin-1").split("\n")
-            m = re.search(r"(\d{4}-\d\d-\d\dT[\d:.]+)Z", lines[0] if lines else "")
+            ni = next((i for i, ln in enumerate(lines[:12]) if ln.startswith("Time\t")), None)
+            if ni is None or ni + 1 >= len(lines):
+                continue
+            quoted = [ln for ln in lines[:ni] if ln.startswith('"')]
+            m = next((re.search(r"(\d{4}-\d\d-\d\dT[\d:.]+)Z", q) for q in quoted if re.search(r"\d{4}-\d\d-\d\dT", q)), None)
             t0 = _dt.datetime.fromisoformat(m.group(1)).replace(tzinfo=_dt.timezone.utc).timestamp() if m else None
-            if head is None:
-                head, names = lines[:3], lines[1] if len(lines) > 1 else ""
-            elif len(lines) > 1 and lines[1] != names:
-                continue  # a part with other channels can't go in the same file
+            names, units = lines[ni].split("\t"), lines[ni + 1].split("\t")
+            heads.append((quoted, names, units))
+            plan.append((lines, ni + 2, t0, names))
+        if not heads:
+            return "", ""
+        # the columns: the widest part's, in its order, then anything only older parts had
+        quoted, cols, units0 = max(heads, key=lambda h: len(h[1]))
+        unit_of = dict(zip(cols, units0))
+        for _, names, units in heads:
+            for n, u in zip(names, units):
+                if n not in unit_of:
+                    cols.append(n)
+                    unit_of[n] = u
+        out = []
+        for lines, body_at, t0, names in plan:
+            same = names == cols
+            where = None if same else [cols.index(n) for n in names[1:]]
             shift, prev = 0.0, None
-            for ln in lines[3:]:
+            for ln in lines[body_at:]:
                 if not ln.strip():
                     continue
                 tab = ln.find("\t")
@@ -1319,9 +1362,13 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
                 at = (t0 or 0) + tt + shift
                 if eranges and not any(a <= at <= b for a, b in eranges):
                     continue
-                out.append((at, ln[tab:]))
-        if head is None:
-            return "", ""
+                if not same:
+                    vals, row = ln.split("\t"), [""] * len(cols)
+                    for k, v in zip(where, vals[1:]):
+                        row[k] = v
+                    out.append((at, "\t" + "\t".join(row[1:])))
+                else:
+                    out.append((at, ln[tab:]))
         out.sort(key=lambda x: x[0])
         first = out[0][0] if out else 0
         body, last = [], None
@@ -1330,8 +1377,14 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
                 continue
             last = at
             body.append(f"{at - first:.3f}{rest}")
-        start = _dt.datetime.fromtimestamp(first, _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ") if out else ""
-        return "\n".join(['"MSQ Viewer live session ' + start + '"', head[1], head[2]] + body) + "\n", start[:16]
+        when = _dt.datetime.fromtimestamp(first, _dt.timezone.utc) if out else _dt.datetime.now(_dt.timezone.utc)
+        start = when.strftime("%Y-%m-%dT%H:%M:%S.%fZ") if out else ""
+        sig = next((q for q in quoted if not q.startswith('"Capture Date') and not q.startswith('"MSQ Viewer')), "")
+        if not sig and s.layout.get("comms", {}).get("signature"):
+            sig = '"' + s.layout["comms"]["signature"].replace('"', "") + ': MSQ Viewer live tuning"'
+        head = ([sig] if sig else []) + ['"Capture Date: ' + when.strftime("%a %b %d %H:%M:%S UTC %Y") +
+                                         ", File author: MSQ Viewer live tuning " + start + '"']
+        return "\n".join(head + ["\t".join(cols), "\t".join(unit_of[c] for c in cols)] + body) + "\n", start[:16]
     app.state.session_msl = session_msl
 
     def session_diagnose(s) -> dict:
@@ -1340,7 +1393,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         text, _ = session_msl(s, [])
         if not text:
             return {"findings": [], "rows": 0, "seconds": 0, "epoch0": None}
-        m = re.search(r"(\d{4}-\d\d-\d\dT[\d:.]+)Z", text[:120])
+        m = re.search(r"(\d{4}-\d\d-\d\dT[\d:.]+)Z", text[:1000])
         epoch0 = _dt.datetime.fromisoformat(m.group(1)).replace(tzinfo=_dt.timezone.utc).timestamp() if m else None
         doc = store.get_doc(s.tune) if s.tune else None
         out = diagmod.diagnose(logsmod.parse_log(text.encode("latin-1", "replace"), "session.msl"), stoich_of(doc) if doc is not None else 14.7)

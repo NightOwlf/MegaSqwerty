@@ -18,6 +18,7 @@ import logging
 import re
 import secrets
 import time
+import zlib
 
 from fastapi import HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -288,6 +289,12 @@ def register(app, store, templates, deps) -> None:
         if not secrets.compare_digest(k, s.car_key):
             raise HTTPException(404)
         body = await request.body()
+        if body and request.headers.get("x-body-encoding") == "gzip":  # the car page compresses what it sends
+            try:
+                z = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                body = z.decompress(body, LOG_PART_MAX + 1)
+            except zlib.error:
+                return JSONResponse({"error": "That upload didn't come through."}, status_code=400)
         if not body or len(body) > LOG_PART_MAX:
             return JSONResponse({"error": "empty or too big"}, status_code=400)
         part = max(1, min(int(part), 999))
@@ -322,7 +329,7 @@ def register(app, store, templates, deps) -> None:
         again: shift its rows by when it started (t0, epoch ms) against when the log did (its first line), or at
         least to just after the last row."""
         import datetime as _dt
-        tail = raw[-4000:].decode("latin-1").strip().split("\n")
+        tail = raw[-60000:].decode("latin-1").strip().split("\n")
         try:
             last = float(tail[-1].split("\t", 1)[0])
         except (ValueError, IndexError):
@@ -336,7 +343,7 @@ def register(app, store, templates, deps) -> None:
         except ValueError:
             return body
         shift = 0.0
-        head = raw[:200].decode("latin-1")
+        head = raw[:1000].decode("latin-1")
         m = re.search(r"(\d{4}-\d\d-\d\dT[\d:.]+)Z", head)
         if m and t0 > 0:
             log_t0 = _dt.datetime.fromisoformat(m.group(1)).replace(tzinfo=_dt.timezone.utc).timestamp() * 1000

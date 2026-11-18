@@ -347,10 +347,14 @@ def test_a_reloaded_car_page_carries_on_the_same_log_and_clock(client, fx):
     assert times == sorted(times) and abs(times[40] - 600.0) < 0.01  # carried on, ten minutes later
     whole = client.get(f"/live/{sid}/session.msl?k={car}")
     assert whole.status_code == 200 and "attachment" in whole.headers["content-disposition"]
-    assert len(whole.text.strip().split("\n")) == 3 + 80
+    wl = whole.text.strip().split("\n")
+    # written like TunerStudio writes a log: the ECU's signature first (TunerStudio names the fields by it), then the date
+    layout = client.get(f"/live/{sid}/layout?k={car}").json()
+    assert wl[0].startswith('"' + layout["comms"]["signature"]) and wl[1].startswith('"Capture Date: ')
+    assert wl[2].startswith("Time\t") and len(wl) == 4 + 80
     epoch0 = 1_794_963_600.0
     part = client.get(f"/live/{sid}/session.msl?k={car}&e={epoch0 + 600 - 0.01}-{epoch0 + 601}").text.strip().split("\n")
-    assert len(part) == 3 + 21 and part[3].startswith("0.000\t")
+    assert len(part) == 4 + 21 and part[4].startswith("0.000\t")
     # any log, trimmed to a stretch of the viewer's time
     sec = client.get(f"/l/{slug}/download?s=0.5-1.0")
     assert sec.status_code == 200 and "-section.msl" in sec.headers["content-disposition"]
@@ -368,7 +372,7 @@ def test_a_session_part_whose_clock_restarted_downloads_in_order(client, fx):
     raw = (head + body).encode()
     from app.main import create_app  # noqa: F401
     slug = client.post(f"/live/{sid}/log?k={car}&part=1", content=raw).json()["slug"]
-    lines = client.get(f"/live/{sid}/session.msl?k={car}").text.strip().split("\n")[3:]
+    lines = client.get(f"/live/{sid}/session.msl?k={car}").text.strip().split("\n")[4:]
     rpms = [int(float(x.split("\t")[1])) for x in lines]
     assert rpms[:30] == list(range(1000, 1030)) and rpms[30:] == list(range(2000, 2030)) and slug
 
@@ -443,3 +447,26 @@ def test_a_log_trims_to_a_new_one(client, fx):
     assert cut["rows"] == 200 and client.get(f"/l/{cut['slug']}/data.json?ch=RPM").json()["channels"]["RPM"][0] == 1100
     assert client.get(f"/l/{slug}/data.json").json()["rows"] == 300  # the original is as it was
     assert client.post(f"/l/{slug}/trim", json={"mode": "keep", "s": ""}).status_code == 400
+
+
+def test_live_session_logs_are_written_the_way_tunerstudio_writes_them(client, fx):
+    """The car page's log has TunerStudio's header (ECU signature, capture date) and every channel of the .ini's
+    [Datalog] in its order; parts written with other channels still download as one log; the upload can be gzip."""
+    import gzip
+    s = start(client, fx)
+    sid, car = s["id"], s["car_key"]
+    layout = client.get(f"/live/{sid}/layout?k={car}").json()
+    assert layout["datalog"] and all(n in layout["outputs"] for n, _ in layout["datalog"])
+    sig = layout["comms"]["signature"]
+    old = '"MSQ Viewer live session 2026-11-18T01:00:00.000Z"\nTime\tRPM\tMAP\ns\tRPM\tkPa\n' + "".join(f"{i * 0.05:.3f}\t{900 + i}\t40\n" for i in range(20))
+    client.post(f"/live/{sid}/log?k={car}&part=1", content=old)
+    new = (f'"{sig}: MSQ Viewer live tuning"\n"Capture Date: Wed Nov 18 01:00:10 UTC 2026, File author: MSQ Viewer live tuning 2026-11-18T01:00:10.000Z"\n'
+           "Time\tRPM\tMAP\tFuel: Trim bank 1\ns\tRPM\tkPa\t%\n" + "".join(f"{i * 0.05:.3f}\t{2000 + i}\t50\t1.5\n" for i in range(20)))
+    r = client.post(f"/live/{sid}/log?k={car}&part=2", content=gzip.compress(new.encode()), headers={"X-Body-Encoding": "gzip"})
+    assert r.status_code == 200 and r.json()["rows"] == 20
+    lines = client.get(f"/live/{sid}/session.msl?k={car}").text.strip().split("\n")
+    assert lines[0] == f'"{sig}: MSQ Viewer live tuning"' and lines[1].startswith('"Capture Date: ')
+    assert lines[2] == "Time\tRPM\tMAP\tFuel: Trim bank 1" and lines[3] == "s\tRPM\tkPa\t%"
+    rows = [ln.split("\t") for ln in lines[4:]]
+    assert len(rows) == 40 and rows[0][1] == "900" and rows[0][3] == "" and rows[20][1] == "2000" and rows[20][3] == "1.5"
+    assert float(rows[20][0]) == pytest.approx(10.0, abs=0.01)  # the second part, 10 s later on the same clock

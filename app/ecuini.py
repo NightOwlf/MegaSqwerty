@@ -165,6 +165,7 @@ def parse(text: str, defined: set[str] | None = None, values: dict | None = None
     constants: dict = {}
     outputs: dict = {}
     datalog: dict = {}
+    datalog_digits: dict = {}  # how TunerStudio writes each logged channel: decimals from the entry's format
     tables: dict = {}
     curves: dict = {}
     labels: dict = {}
@@ -252,6 +253,10 @@ def parse(text: str, defined: set[str] | None = None, values: dict | None = None
                 f = _fields(rhs)
                 if len(f) >= 2:
                     datalog.setdefault(f[0], _unq(f[1]))  # the first label is the one logs use
+                    if f[0] not in datalog_digits:
+                        fm = re.search(r"%\.?(\d*)([dfi])", _unq(f[3])) if len(f) > 3 else None
+                        kind = f[2].strip().lower() if len(f) > 2 else ""
+                        datalog_digits[f[0]] = (0 if fm.group(2) in "di" else int(fm.group(1) or 6)) if fm else (0 if kind == "int" else None)
         elif section == "ConstantsExtensions":
             if key == "requiresPowerCycle":
                 power_cycle.add(rhs.strip())
@@ -321,7 +326,7 @@ def parse(text: str, defined: set[str] | None = None, values: dict | None = None
     good_curves = {cid: c for cid, c in curves.items()
                    if c["x"] in constants and c["y"] in constants and constants[c["x"]]["kind"] == "array"
                    and constants[c["y"]]["kind"] == "array"}
-    return {"comms": comms, "constants": constants, "outputs": outputs, "datalog": datalog, "tables": good,
+    return {"comms": comms, "constants": constants, "outputs": outputs, "datalog": datalog, "datalogDigits": datalog_digits, "tables": good,
             "curves": good_curves, "labels": labels, "powerCycle": sorted(power_cycle), "gauges": gauges,
             "front": [g for _, g in sorted(front)], "indicators": indicators, "codeLists": code_lists}
 
@@ -408,6 +413,10 @@ def layout_for_live(ini: dict) -> dict:
     for ch in [gauges[g]["ch"] for g in gauges] + [i["ch"] for i in indicators] + extra:
         if ch not in outs:
             outs[ch] = dict(ini["outputs"][ch], label=ini["datalog"].get(ch) or ch)
-    return {"comms": ini["comms"], "constants": keep, "outputs": outs, "tables": list(ini["tables"].values()),
+    # what TunerStudio's own datalog holds, in its order, with its decimals: the session log is written the same way,
+    # so it loads into TunerStudio (and its VE Analyze finds every field) like a log TunerStudio recorded
+    digits = ini.get("datalogDigits") or {}
+    datalog = [[n, digits.get(n)] for n in ini["datalog"] if n in outs]
+    return {"comms": ini["comms"], "constants": keep, "outputs": outs, "datalog": datalog, "tables": list(ini["tables"].values()),
             "curves": curves, "editable": editable, "powerCycle": sorted(power), "gauges": gauges, "front": front,
             "indicators": indicators}

@@ -257,6 +257,12 @@
   try { recSaved = JSON.parse(localStorage.getItem("msq.live.rec") || "null"); if (recSaved && recSaved.sid === SID) { rec.part = recSaved.part || 1; rec.slug = recSaved.slug || ""; rec.t0 = recSaved.t0 || 0; rec.partT0 = recSaved.partT0 || 0; } else recSaved = null; } catch (e) { /* ignore */ }
   function recSave() { try { localStorage.setItem("msq.live.rec", JSON.stringify({ sid: SID, part: rec.part, slug: rec.slug, t0: rec.t0, partT0: rec.partT0, cols: (rec.cols || []).join(",") })); } catch (e) { /* ignore */ } }
   function recCols() {
+    // every channel TunerStudio's own datalog has (the .ini's [Datalog]), in its order: the log loads into
+    // TunerStudio, and its VE Analyze finds its fields, exactly like a log TunerStudio recorded
+    if (layout.datalog && layout.datalog.length) {
+      rec.dig = layout.datalog.map(function (d) { return d[1]; });
+      return layout.datalog.map(function (d) { return d[0]; });
+    }
     var keep = [], seen = {}, add = function (n) { if (n && layout.outputs[n] && !seen[n]) { seen[n] = 1; keep.push(n); } };
     Object.keys(layout.roles || {}).forEach(function (r) { add(layout.roles[r]); });
     allDefs().forEach(function (t) { add(t.xch); add(t.ych); });
@@ -278,7 +284,11 @@
     }
     var r = new Array(rec.cols.length + 1);
     r[0] = ((now - rec.t0) / 1000).toFixed(3);
-    for (var i = 0; i < rec.cols.length; i++) { var v = och[rec.cols[i]]; r[i + 1] = v == null || v !== v ? "" : +(+v).toPrecision(6); }
+    var dig = rec.dig || [];
+    for (var i = 0; i < rec.cols.length; i++) {
+      var v = och[rec.cols[i]], dd = dig[i];
+      r[i + 1] = v == null || v !== v ? "" : dd != null ? (+v).toFixed(Math.min(6, dd)) : +(+v).toPrecision(6);
+    }
     rec.rows.push(r.join("\t"));
     if (!rec.timer) rec.timer = setInterval(flushLog, 60000);
     renderRec();
@@ -287,25 +297,40 @@
     if (rec.busy || !SID || rec.rows.length <= rec.sent) return Promise.resolve();
     rec.busy = true;
     var upto = rec.rows.length, first = !rec.slug;
-    var head = first ? '"MSQ Viewer live session ' + new Date(rec.t0).toISOString() + '"\n' +
+    // TunerStudio's header: the ECU's signature (TunerStudio picks the field names by it), then the capture date
+    var d0 = new Date(rec.t0), p2 = function (n) { return ("0" + n).slice(-2); };
+    var when = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d0.getUTCDay()] + " " + ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d0.getUTCMonth()] +
+      " " + p2(d0.getUTCDate()) + " " + p2(d0.getUTCHours()) + ":" + p2(d0.getUTCMinutes()) + ":" + p2(d0.getUTCSeconds()) + " UTC " + d0.getUTCFullYear();
+    var sig = String(state.ecuSignature || layout.comms.signature || "").replace(/"/g, "").trim();
+    var head = first ? (sig ? '"' + sig + ': MSQ Viewer live tuning"\n' : "") +
+      '"Capture Date: ' + when + ", File author: MSQ Viewer live tuning " + d0.toISOString() + '"\n' +
       ["Time"].concat(rec.cols.map(function (n) { return layout.outputs[n].label || n; })).join("\t") + "\n" +
       ["s"].concat(rec.cols.map(function (n) { return layout.outputs[n].units || ""; })).join("\t") + "\n" : "";
     var body = head + rec.rows.slice(rec.sent, upto).join("\n") + "\n";
     var secs = (rec.last - rec.partT0) / 1000;
     var url = "/live/" + SID + "/log?k=" + encodeURIComponent(KEY) + "&part=" + rec.part + "&slug=" + encodeURIComponent(rec.slug) + "&secs=" + secs.toFixed(1) + "&t0=" + rec.t0;
-    return fetch(url, { method: "POST", body: body, headers: { "Content-Type": "text/plain" } }).then(function (r) {
+    return gzipText(body).then(function (gz) {
+      return fetch(url, { method: "POST", body: gz || body, headers: gz ? { "Content-Type": "application/octet-stream", "X-Body-Encoding": "gzip" } : { "Content-Type": "text/plain" } });
+    }).then(function (r) {
       return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; });
     }).then(function (res) {
       rec.busy = false;
       if (res.ok) {
-        rec.slug = res.j.slug; rec.sent = upto;
+        rec.slug = res.j.slug; rec.sent = upto; rec.partBytes = (rec.partBytes || 0) + body.length;
         // keep only what's still to send (the server has the rest), and start a new part after ~30 minutes
         rec.rows = rec.rows.slice(upto); rec.sent = 0;
-        if (secs > 1800) { rec.part++; rec.slug = ""; rec.partT0 = rec.last; }
+        if (secs > 1800 || rec.partBytes > 40e6) { rec.part++; rec.slug = ""; rec.partT0 = rec.last; rec.partBytes = 0; }
         recSave();
-      } else if (res.status === 409) { rec.part++; rec.slug = ""; recSave(); }
+      } else if (res.status === 409) { rec.part++; rec.slug = ""; rec.partBytes = 0; recSave(); }
       renderRec();
     }, function () { rec.busy = false; });
+  }
+  // what goes to the server, compressed (a full datalog row is a few kB: ten times less over a phone's hotspot)
+  function gzipText(text) {
+    if (typeof CompressionStream === "undefined") return Promise.resolve(null);
+    try {
+      return new Response(new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer().catch(function () { return null; });
+    } catch (e) { return Promise.resolve(null); }
   }
   // a new part also starts from the header again
   function renderRec() {

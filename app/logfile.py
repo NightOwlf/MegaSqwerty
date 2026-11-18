@@ -81,9 +81,12 @@ class Channel:
 
 class LogDoc:
     def __init__(self, channels=None, rows: int = 0, source: str = "text", truncated: bool = False,
-                 title: str = "", markers=None):
+                 title: str = "", markers=None, header=None):
         self.channels: list[Channel] = channels or []
         self.rows, self.source, self.truncated, self.title = rows, source, truncated, title
+        # the log's own header lines, as TunerStudio wrote them (the ECU signature, then the capture date): a log
+        # written back out keeps them, because TunerStudio picks the ECU's field names from that first line
+        self.header: list[str] = header or []
         self.markers: list[tuple[int, str]] = markers or []  # (record it comes before, its note)
 
     def by_name(self, name: str) -> Channel | None:
@@ -183,9 +186,10 @@ def parse_text(data: bytes) -> LogDoc:
     del chunks
     table[~np.isfinite(table)] = np.nan
     title = lines[0].strip().strip('"') if head_i > 0 else ""
+    header = [ln.strip() for ln in lines[:head_i] if ln.strip().startswith('"')][:4]
     return LogDoc([Channel(name or f"Channel {i + 1}", units[i] if i < len(units) else "",
                            np.ascontiguousarray(table[:, i]), digits[i])
-                   for i, name in enumerate(names)], rows, "text", truncated, title)
+                   for i, name in enumerate(names)], rows, "text", truncated, title, header=header)
 
 
 # type code -> (numpy format, bytes). 10–12 are bit fields, which are stored like the unsigned types.
@@ -277,12 +281,14 @@ def parse_mlg(data: bytes) -> LogDoc:
             return out
         return load
 
-    title = ""
+    title, header = "", []
     if 0 < info < begin:
-        title = data[info:begin].split(b"\0")[0].decode("latin-1", "replace").strip().split("\n")[0].strip('"')
+        text = data[info:begin].split(b"\0")[0].decode("latin-1", "replace").replace("\r", "")
+        header = [ln.strip() for ln in text.split("\n") if ln.strip().startswith('"')][:4]  # (the tune follows)
+        title = header[0].strip('"') if header else ""
     return LogDoc([Channel(name, units, None, digits, loader(fmt, off, scale, transform))
                    for name, units, fmt, off, scale, transform, digits in fields], rows, "mlg", truncated, title,
-                  [(min(r, rows - 1), n) for r, n in markers])
+                  [(min(r, rows - 1), n) for r, n in markers], header=header)
 
 
 def parse_log(data: bytes, filename: str = "") -> LogDoc:

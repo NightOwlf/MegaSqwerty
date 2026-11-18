@@ -702,3 +702,48 @@ def test_every_shared_tune_keeps_backups_to_go_back_to(client):
     dl = client.get(f"/t/{copy}/versions/{vid}.msq")
     assert dl.status_code == 200 and "-backup-" in dl.headers["content-disposition"] and parse_msq(dl.content)
     assert client.post(f"/t/{copy}/restore", json={"id": 999999}).status_code == 404
+
+
+def _sections(text: str):
+    lines = text.strip().split("\n")
+    head = [ln for ln in lines if ln.startswith('"')]
+    names = lines[len(head)].split("\t")
+    units = lines[len(head) + 1].split("\t")
+    return head, names, units, lines[len(head) + 2:]
+
+
+def test_a_downloaded_section_reads_in_tunerstudio_like_the_original(client):
+    """TunerStudio picks the ECU's field names (and so VE Analyze's EGO, lambda… channels) from a log's first
+    line, the ECU signature: a section downloaded from the viewer keeps the original's header, channel names,
+    units and decimals, so it loads back into TunerStudio the same."""
+    rows = drive()
+    names = [n for n, _ in CHANNELS] + ["Fuel: Trim bank 1"]
+    chans = CHANNELS + [("Fuel: Trim bank 1", "%")]
+    raw = msl([r + [1.5] for r in rows], chans).replace(b'"speeduino 202501"', b'"rusEFI (FOME) Vthpnp.2026.05.01.vthpnp.2982106365: FOME vthpnp"')
+    url = client.post("/logs", files={"file": ("drive.msl", raw, "text/plain")}).headers["location"]
+    assert client.get(f"{url}/download").content == raw  # the whole log: byte for byte what was uploaded
+    sec = client.get(f"{url}/download?s=2-4").text
+    head, n2, u2, body = _sections(sec)
+    assert head == ['"rusEFI (FOME) Vthpnp.2026.05.01.vthpnp.2982106365: FOME vthpnp"', '"Capture Date: Tue Sep 15 12:00:00 2026"']
+    assert n2 == names and u2 == [u for _, u in chans]
+    first = body[0].split("\t")
+    assert 2.0 <= float(first[0]) <= 2.06  # the log's own clock, not restarted
+    assert first[names.index("Fuel: Trim bank 1")] == "1.5"
+    assert "nan" not in sec
+    # it reads back exactly as the original does
+    a, b = logs.parse_log(raw, "a.msl"), logs.parse_log(sec.encode(), "b.msl")
+    assert [c.name for c in a.channels] == [c.name for c in b.channels]
+    assert [c.units for c in a.channels] == [c.units for c in b.channels]
+
+
+def test_a_section_of_an_mlg_keeps_tunerstudios_header():
+    data = bytearray(mlg(CHANNELS, drive(), 2))
+    info = b'"rusEFI (FOME) Vthpnp.2026: FOME"\n"Capture Date: Mon Oct 05 20:53:35 CDT 2026, File author: TunerStudio"\nNEW_INFO_PROVIDER\n<msq>\0'
+    begin = struct.unpack_from(">I", data, 16)[0]
+    data[begin:begin] = info  # the info block (TunerStudio puts the tune in it too), just before the records
+    data[12:16] = struct.pack(">I", begin)
+    data[16:20] = struct.pack(">I", begin + len(info))
+    log = logs.parse_log(bytes(data), "x.mlg")
+    assert log.rows == len(drive())
+    assert log.header == ['"rusEFI (FOME) Vthpnp.2026: FOME"', '"Capture Date: Mon Oct 05 20:53:35 CDT 2026, File author: TunerStudio"']
+    assert begin > 0
