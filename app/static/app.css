@@ -1011,6 +1011,9 @@ body.page-viewer .main { max-width: none; padding-block: 8px 12px; padding-inlin
 .lv-gadd { color: var(--link); font: inherit; font-size: 12.5px; cursor: pointer; }
 .lv-load { margin: 0; color: var(--muted); font-size: 13px; }
 .lv-load.err { color: var(--err-ink); }
+.lv-graphs > .lv-load { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; text-align: center; color: #9aa0a8; pointer-events: none; }
+.lv-graphs > .lv-load[hidden] { display: none; }
+.lv-graphs > .lv-load.err { color: #ff8a80; }
 .lv-danger { margin-top: 6px; }
 .lv-side { display: grid; gap: 8px; min-width: 0; }
 .lv-side[hidden] { display: none; }
@@ -1561,7 +1564,7 @@ body.page-live .main { max-width: 1200px; }
 .lv-sim-sum .up-bad { color: var(--err-ink, #c0392b); font-weight: 700; }
 .lv-sim-graph { display: flex; flex-direction: column; gap: 2px; height: max(360px, calc(100dvh - 420px)); border: 1px solid var(--line); background: #000; }
 .lv-sim-graph .lv-pane { flex: 1 1 0; }
-.lv-pane-tag { position: absolute; left: 50%; bottom: 4px; transform: translateX(-50%); padding: 1px 8px; border-radius: 10px; font: 700 11px var(--ui); pointer-events: none; }
+.lv-pane-tag { position: absolute; left: 50%; top: 4px; transform: translateX(-50%); padding: 1px 8px; border-radius: 10px; font: 700 11px var(--ui); pointer-events: none; }
 .lv-pane-tag.rec { background: rgba(255, 255, 255, .14); color: #e8eaed; }
 .lv-pane-tag.sim { background: rgba(255, 196, 0, .25); color: #ffd54a; }
 @media (max-width: 759px) { .lv-sim-graph { height: 340px; } }

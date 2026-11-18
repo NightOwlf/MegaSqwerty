@@ -315,7 +315,7 @@
                                 : "Private: you play the log on your own. Tap for Live view.";
     }
     function connect() {
-      if (ws || mode !== "live" || document.hidden || !idx) return;
+      if (ws || LIVE || !SLUG || mode !== "live" || document.hidden || !idx) return;  // a live session has its own link to the car
       var proto = location.protocol === "https:" ? "wss://" : "ws://";
       ws = new WebSocket(proto + location.host + "/l/" + SLUG + "/together");
       ws.onopen = function () { open = true; render(); };
@@ -502,7 +502,7 @@
       if (t < t0 || t > t1) return;
       var x = Math.round((t - t0) * kx) + 0.5;
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-      if (label && mk[1]) ctx.fillText(mk[1], x + 3, H - 30);
+      if (label && mk[1]) ctx.fillText(mk[1], x + 3, H - 64);
     });
     ctx.restore();
   }
@@ -559,7 +559,7 @@
   function drawEvents(ctx, W, H, kx, t0, t1, label) {
     ctx.save();
     ctx.font = "11px system-ui, sans-serif"; ctx.textBaseline = "top"; ctx.textAlign = "left";
-    var free = -Infinity, row = 0, rows = [-Infinity, -Infinity];  // labels only where they fit: two rows, never on top of each other
+    var row = 0, rows = H >= 160 ? [-Infinity, -Infinity] : [-Infinity];  // labels only where they fit: two rows (one on a short graph), never on top of each other
     evMarks.concat(diag.show ? diag.marks : []).forEach(function (e) {
       var a = e.ta != null ? e.ta : T[Math.min(N - 1, e.i0)], b = e.tb != null ? e.tb : T[Math.min(N - 1, e.i1)];
       if (b < t0 || a > t1) return;
@@ -571,14 +571,27 @@
         var txt = e.text ? e.text : e.kind, w = ctx.measureText(txt).width + 6;
         for (row = 0; row < rows.length && x0 < rows[row]; row++) { /* the next row with room */ }
         if (row < rows.length && x0 + w < W) {
-          var y = 2 + row * 14;
-          ctx.fillStyle = "rgba(0,0,0,.65)"; ctx.fillRect(x0 + 3, y - 1, w, 13);
-          ctx.fillStyle = "rgb(" + col + ")"; ctx.fillText(txt, x0 + 5, y);
+          evLabels.push({ x: x0, row: row, w: w, txt: txt, col: col });
           rows[row] = x0 + w + 6;
         }
       }
     });
     ctx.restore();
+  }
+  // The cut and finding labels go along the foot of the bottom graph, over the traces, so they never sit on
+  // the readouts (top left) or the channel names (top right).
+  var evLabels = [];
+  function drawEventLabels(ctx, H, bot) {
+    if (!evLabels.length) return;
+    ctx.save();
+    ctx.font = "11px system-ui, sans-serif"; ctx.textBaseline = "top"; ctx.textAlign = "left";
+    evLabels.forEach(function (l) {
+      var y = H - bot - 14 - l.row * 14;
+      ctx.fillStyle = "rgba(0,0,0,.72)"; ctx.fillRect(l.x + 3, y - 1, l.w, 13);
+      ctx.fillStyle = "rgb(" + l.col + ")"; ctx.fillText(l.txt, l.x + 5, y);
+    });
+    ctx.restore();
+    evLabels = [];
   }
   function renderEvents() {
     var box = $(".lv-events");
@@ -675,6 +688,7 @@
     for (var g = 1; g < 4; g++) { ctx.moveTo(0, Math.round(H * g / 4) + 0.5); ctx.lineTo(W, Math.round(H * g / 4) + 0.5); }
     ctx.stroke();
     drawSections(ctx, H, kx, view.t0);
+    evLabels = [];
     drawMarkers(ctx, W, H, kx, view.t0, view.t1, last);
 
     var i0 = Math.max(0, lower(view.t0) - 1), i1 = Math.min(N - 1, lower(view.t1) + 1);
@@ -750,6 +764,7 @@
       ctx.textBaseline = "top"; ctx.textAlign = "left";
     }
     labelW = legendW;
+    drawEventLabels(ctx, H, bot);
 
     // the cursor and the values under it
     ctx.font = "bold " + fs + font;
@@ -762,7 +777,9 @@
       ctx.textAlign = right ? "left" : "right";
       var y0 = Math.min(H - bot - shown.length * lh - 2, Math.max(3 + shown.length * lh + 4, H / 2 - shown.length * lh / 2));
       var clear = cx + 5;
-      if (opt.cursorVals) shown.forEach(function (s, k) {
+      // On a short graph with the cursor at the left, the values would land on the readouts, which already show them.
+      var onLegend = y0 < 4 + rows.length * lh && cx < legendW + 60;
+      if (opt.cursorVals && !onLegend) shown.forEach(function (s, k) {
         var text = s.d ? fmt(s.d.v[cur], s.m.d) : "…";
         var tx = right ? clear : cx - 5, ty = y0 + k * lh;
         ctx.fillStyle = "rgba(0,0,0,.72)";
@@ -2967,8 +2984,9 @@
     if (!P.length) {
       peaks.innerHTML = "<b>No full-throttle pull found.</b> The dyno needs the throttle above " + dynoOpts().wot + "% with RPM climbing for at least 1.5 seconds and 1,500 RPM in one gear." +
         (idx.roles.vss == null ? " This log has no speed sensor, so also check the gearing and tire size." : "");
-      box.innerHTML = ""; return;
+      box.innerHTML = ""; $(".lv-dyno-graph").style.display = "none"; return;  // no empty black graph
     }
+    $(".lv-dyno-graph").style.display = "";
     var p = P[dyno.pick], pk = peak(p), lbl = dyno.show === "crank" ? "crank" : "wheel";
     peaks.innerHTML = '<div class="lv-dyno-big"><span><small>Peak power</small><b>' + pk.hp[0].toFixed(1) + '</b> hp <small>' + lbl + " @ " + pk.hp[1] + ' RPM</small></span>' +
       '<span class="tq"><small>Peak torque</small><b>' + pk.tq[0].toFixed(1) + '</b> lb-ft <small>' + lbl + " @ " + pk.tq[1] + " RPM</small></span></div>" +
@@ -3513,6 +3531,16 @@
   function fromTable(t, v) { return t && t.toAfr ? Math.round(v / t.toAfr * Math.pow(10, t.d0 + 1)) / Math.pow(10, t.d0 + 1) : v; }
   function toTable(t, v) { return t && t.toAfr ? v * t.toAfr : v; }
   function ecuCells(t, cells) { var o = {}; Object.keys(cells).forEach(function (k) { o[k] = fromTable(t, cells[k]); }); return o; }
+  // A log written out by a program (a live session, a trimmed log) carries every float to six figures, so its
+  // channels would read "40.9667 kPa". Show as many decimals as the size of the number deserves, never more.
+  function tidyDigits() {
+    idx.channels.forEach(function (m) {
+      if (/^(ratio|:1)$/i.test(String(m.u || "").trim()) && /afr|air.?fuel/i.test(m.n)) m.u = "AFR";  // "13.09 AFR", not "13.09 ratio"
+      if (m.d == null || m.hi == null || m.lo == null) return;
+      var top = Math.max(Math.abs(m.hi), Math.abs(m.lo)), cap = top < 10 ? 3 : top < 100 ? 2 : 1;
+      if (m.d > cap) m.d = cap;
+    });
+  }
   function toFahrenheit() {
     toAfr();
     if (!TEMP_F || !idx) return;
@@ -3615,7 +3643,7 @@
     if (!api) return fail("Live tuning couldn't start. Reload the page.");
     fetch(base + "/index.json" + query, { cache: "no-store" }).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }).then(function (j) {
       idx = j;
-      toFahrenheit();
+      toFahrenheit(); tidyDigits();
       LB = { cap: 8192, n: 0, t: new Float64Array(8192), ch: {}, t0: null, at: {}, follow: true };
       (j.keys || []).forEach(function (name, i) { LB.at[name] = i; });
       idx.channels.forEach(function (m) { m.lo = m.lo == null ? null : m.lo; });
@@ -3734,7 +3762,7 @@
   function fail(msg) { loadNote.textContent = msg; loadNote.classList.add("err"); loadNote.hidden = false; }
   function start(index, times) {
     idx = index; T = times; N = T.length;
-    if (!LIVE) toFahrenheit();
+    if (!LIVE) { toFahrenheit(); tidyDigits(); }
     if (N < 2) return fail("This log has no records to show.");
     addVirtual();
     addSimulated();
@@ -3785,6 +3813,13 @@
       root.style.setProperty("--lvh", Math.max(240, Math.floor(vh - top - sbh - 6)) + "px");
     };
     fitHeight();
+    // Whatever sits above the graphs can change height (the live page's "At the car" panel opening and
+    // closing, the gauges filling in, a message line): measure again whenever the graphs' top moves.
+    var lastTop = -1;
+    if (window.ResizeObserver) new ResizeObserver(function () {
+      var top = Math.round($(".lv-body").getBoundingClientRect().top + window.scrollY);
+      if (top !== lastTop) { lastTop = top; fitHeight(); scatterDirty = true; invalidate(); }
+    }).observe(document.body);
     window.addEventListener("resize", function () { fitHeight(); scatterDirty = true; invalidate(); });
     window.addEventListener("orientationchange", function () { setTimeout(function () { fitHeight(); scatterDirty = true; invalidate(); }, 250); });
     if (startHash.tab === "scatter" || startHash.tab === "ve") setTab(startHash.tab);
@@ -3792,7 +3827,7 @@
     scanEvents();
     invalidate();
   }
-  if (LIVE) liveBoot();
+  if (LIVE) { $(".lv-graphs").appendChild(loadNote); liveBoot(); }  // "waiting for the car" in the empty graph, not below it
   else Promise.all([
     fetch(base + "/index.json" + query).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }),
     fetchF32(base + "/ch/t")

@@ -1279,7 +1279,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         chans = [c for c in parsed.channels if c is not tc]
         cols = [t[keep] - (t[keep][0] if keep.any() else 0)] + [np.asarray(c.arr, dtype=float)[keep] for c in chans]
         buf = io.StringIO()
-        what = ("without " if cut else "") + ", ".join(f"{a:.1f}–{b:.1f} s" for a, b in ranges)
+        what = ("without " if cut else "") + ", ".join(f"{a:.1f} to {b:.1f} s" for a, b in ranges)
         buf.write(f'"{name} ({what})"\n')
         buf.write("\t".join(["Time"] + [c.name for c in chans]) + "\n")
         buf.write("\t".join(["s"] + [c.units or "" for c in chans]) + "\n")
