@@ -169,7 +169,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
 
     templates = Jinja2Templates(directory=HERE / "templates")
     asset_v = hashlib.sha1(b"".join((HERE / "static" / f).read_bytes()
-                                    for f in ("app.css", "app.js", "theme.js", "edit.js", "viewer.js", "veal.js", "ecu.js", "live.js"))).hexdigest()[:8]
+                                    for f in ("app.css", "app.js", "theme.js", "edit.js", "viewer.js", "veal.js", "ecu.js", "live.js", "codes.js"))).hexdigest()[:8]
     templates.env.globals.update(asset_v=asset_v, max_mb=MAX_MB, max_bytes=MAX_BYTES, icons=views.ICONS,
                                  log_max_mb=LOG_MAX_MB, log_max_bytes=LOG_MAX_BYTES,
                                  tab_names=views.TAB_NAMES, cat_labels=views.CATEGORY_LABELS,
@@ -805,7 +805,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         return tmap, featured + other
 
     def ingest_log(doc: TuneDoc | None, tune_slug: str, data: bytes, filename: str,
-                   slug: str | None = None) -> tuple[str, str, int]:
+                   slug: str | None = None, replace: bool = False) -> tuple[str, str, int]:
         """Parse a log, compare it to its tune if it has one, and store it. -> (log slug, delete key, rows).
 
         Boost cut, MAP sensor range and rev limit for the report come from the tune."""
@@ -821,6 +821,9 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             report = {"standalone": True, "rows": parsed.rows,
                       "seconds": round(t[-1] - t[0], 1) if len(t) > 1 else 0.0,
                       "summary": {"tone": "info", "short": "Log", "verdict": ""}}
+        if replace and slug:
+            store.replace_log(slug, data, report, columns=lambda path: logsmod.build_columns(parsed, path), name=filename)
+            return slug, "", parsed.rows
         slug, key = store.create_log(data, tune_slug, filename, report,
                                      columns=lambda path: logsmod.build_columns(parsed, path), slug=slug)
         return slug, key, parsed.rows
@@ -1139,8 +1142,95 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
                         headers={"Content-Encoding": "deflate", "Cache-Control": "public, max-age=31536000, immutable"})
 
     @app.get("/l/{log_slug}/download")
-    def log_viewer_download(log_slug: str):
-        return send_log(any_log(log_slug))
+    async def log_viewer_download(log_slug: str, s: str = ""):
+        """The log as uploaded, or with `s=from-to,from-to` (seconds, as the viewer counts them) just those
+        stretches, as a .msl that TunerStudio and MegaLogViewer open."""
+        row = any_log(log_slug)
+        ranges = parse_ranges(s)
+        if not ranges:
+            return send_log(row)
+        raw = store.read_log_raw(log_slug)
+        if raw is None:
+            raise HTTPException(404)
+        text = await run_in_threadpool(log_as_msl, raw, row["name"], ranges)
+        base = re.sub(r"[^A-Za-z0-9._-]+", "-", re.sub(r"\.(msl|mlg|csv|tsv|log)$", "", row["name"], flags=re.I)).strip("-._")[:50] or log_slug
+        return Response(text.encode("latin-1", "replace"), media_type="text/plain; charset=iso-8859-1",
+                        headers={"Content-Disposition": f'attachment; filename="{base}-section.msl"'})
+
+    def parse_ranges(s: str) -> list[tuple[float, float]]:
+        out = []
+        for part in (s or "").split(",")[:50]:
+            m = re.match(r"^\s*(-?[\d.]+)-(-?[\d.]+)\s*$", part)
+            if m and float(m.group(2)) > float(m.group(1)):
+                out.append((float(m.group(1)), float(m.group(2))))
+        return out
+
+    def log_as_msl(raw: bytes, name: str, ranges: list[tuple[float, float]]) -> str:
+        """Any log the viewer reads, cut to the given stretches of time, written as a TunerStudio .msl."""
+        import io
+        import numpy as np
+        parsed = logsmod.parse_log(raw, name)
+        roles = logsmod.resolve(parsed)
+        t, _ = logsmod._timebase(parsed, roles)
+        t = np.asarray(t, dtype=float)
+        keep = np.zeros(len(t), dtype=bool)
+        for a, b in ranges:
+            keep |= (t >= a) & (t <= b)
+        tc = roles.get("time")
+        chans = [c for c in parsed.channels if c is not tc]
+        cols = [t[keep] - (t[keep][0] if keep.any() else 0)] + [np.asarray(c.arr, dtype=float)[keep] for c in chans]
+        buf = io.StringIO()
+        what = ", ".join(f"{a:.1f}–{b:.1f} s" for a, b in ranges)
+        buf.write(f'"{name} ({what})"\n')
+        buf.write("\t".join(["Time"] + [c.name for c in chans]) + "\n")
+        buf.write("\t".join(["s"] + [c.units or "" for c in chans]) + "\n")
+        if keep.any():
+            np.savetxt(buf, np.column_stack(cols), fmt="%.6g", delimiter="\t")
+        return buf.getvalue().replace("nan", "")
+
+    # The live session's log, all of it: every part, in order, as one .msl (optionally just some stretches, as
+    # epoch seconds, since the live viewer's clock is the wall clock).
+    def session_msl(s, eranges: list[tuple[float, float]]) -> tuple[str, str]:
+        import datetime as _dt
+        parts = sorted((r for r in store.logs_for(s.tune) if r["name"].startswith("Live session")), key=lambda r: r["created_at"])
+        out, head, names = [], None, None
+        for r in parts:
+            raw = store.read_log_raw(r["slug"])
+            if not raw:
+                continue
+            lines = raw.decode("latin-1").split("\n")
+            m = re.search(r"(\d{4}-\d\d-\d\dT[\d:.]+)Z", lines[0] if lines else "")
+            t0 = _dt.datetime.fromisoformat(m.group(1)).replace(tzinfo=_dt.timezone.utc).timestamp() if m else None
+            if head is None:
+                head, names = lines[:3], lines[1] if len(lines) > 1 else ""
+            elif len(lines) > 1 and lines[1] != names:
+                continue  # a part with other channels can't go in the same file
+            for ln in lines[3:]:
+                if not ln.strip():
+                    continue
+                tab = ln.find("\t")
+                try:
+                    tt = float(ln[:tab])
+                except ValueError:
+                    continue
+                at = (t0 or 0) + tt
+                if eranges and not any(a <= at <= b for a, b in eranges):
+                    continue
+                out.append((at, ln[tab:]))
+        if head is None:
+            return "", ""
+        out.sort(key=lambda x: x[0])
+        first = out[0][0] if out else 0
+        body, last = [], None
+        for at, rest in out:
+            if last is not None and at <= last:
+                continue
+            last = at
+            body.append(f"{at - first:.3f}{rest}")
+        start = _dt.datetime.fromtimestamp(first, _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ") if out else ""
+        return "\n".join(['"MSQ Viewer live session ' + start + '"', head[1], head[2]] + body) + "\n", start[:16]
+    app.state.session_msl = session_msl
+    app.state.parse_ranges = parse_ranges
 
     @app.post("/l/{log_slug}/delete")
     async def log_viewer_delete(request: Request, log_slug: str):

@@ -418,6 +418,33 @@ class Store:
             return slug, delete_key
         raise RuntimeError("could not allocate slug")
 
+    def replace_log(self, slug: str, raw: bytes, report: dict, columns=None, name: str | None = None) -> None:
+        """Give an existing log new contents (a live session's log as it grows). Each file is written beside the
+        old one and swapped in, so a restart at any moment leaves either the old log or the new one, never none."""
+        path = self.log_path(slug).with_suffix(".log.gz")
+        tmp = path.with_suffix(".tmp")
+        with gzip.open(tmp, "wb", compresslevel=4) as f:
+            f.write(raw)
+        os.replace(tmp, path)
+        self.log_path(slug).unlink(missing_ok=True)  # an older uncompressed copy would be read first
+        if columns is not None:
+            col, ctmp = self.col_path(slug), self.col_path(slug).with_suffix(".coltmp")
+            try:
+                columns(ctmp)
+                os.replace(ctmp, col)
+            except Exception:
+                log.exception("failed writing the column store for log %s", slug)
+                ctmp.unlink(missing_ok=True)
+                col.unlink(missing_ok=True)  # rebuilt from the log on first view
+        payload = json.dumps(report, separators=(",", ":"))
+        with self.conn() as c:
+            if name:
+                c.execute("UPDATE logs SET size=?, report_json=?, name=? WHERE slug=?", (len(raw), payload, name[:120], slug))
+            else:
+                c.execute("UPDATE logs SET size=?, report_json=? WHERE slug=?", (len(raw), payload, slug))
+        with self._cache_lock:
+            self._index_cache.pop(slug, None)
+
     def get_log(self, slug: str) -> dict | None:
         if not SLUG_RE.match(slug or ""):
             return None

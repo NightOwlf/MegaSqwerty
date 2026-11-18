@@ -1790,3 +1790,17 @@ li.open .lt-chg-more { transform: rotate(90deg); }
   .lt-lv .lt-mode-note { font-size: 12px; }
 }
 @media (max-width: 400px) { .lt-strip .ts-read { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+/* ---------- cuts and warnings found in a log ---------- */
+.lv-events { margin: 4px 0; padding: 6px 10px; border: 1px solid #c98a12; border-radius: 6px; background: rgba(255, 170, 0, .08); font-size: 13px; }
+.lv-events[hidden] { display: none; }
+.lv-events summary { cursor: pointer; }
+.lv-events ul { margin: 6px 0 0; padding: 0; max-height: 240px; overflow-y: auto; list-style: none; }
+.lv-events li { padding: 5px 4px; border-top: 1px solid var(--line); cursor: pointer; }
+.lv-events li:hover { background: var(--sel-soft); }
+.lv-events .ev-c { color: #ff5b4d; } .lv-events .ev-w { color: #e0a800; }
+.lv-events .fine { margin: 6px 0 0; }
+.lt-codes { color: #fff; font-size: 13px; }
+.lt-codes:empty { display: none; }
+.lt-code { display: inline-block; margin: 2px 4px 2px 0; padding: 2px 8px; border-radius: 3px; background: #c62828; color: #fff; font-weight: 700; }
+.lv-velive.on { background: #1f8f4e; border-color: #2fbf6c; color: #fff; }

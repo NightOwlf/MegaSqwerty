@@ -34,6 +34,7 @@
       <label class="lt-opt"><span>Remote changes</span>
         <select data-mode><option value="off">Off: the tuner can only watch</option><option value="ask" selected>Ask me before each change</option><option value="auto">Allow</option></select></label>
       <label class="check sm"><input type="checkbox" data-allow-burn><span>Let the tuner burn (make changes permanent)</span></label>
+      <label class="check sm"><input type="checkbox" data-autoburn checked><span><b>Keep every change</b>: burn to the ECU by itself 10 seconds after changes stop, so nothing is lost when the key goes off</span></label>
       <p class="fine">Changes go to the ECU's working memory and are only kept if someone burns them: switching the car off undoes anything not burned. Each change is limited to 25% on VE, 1.0 AFR on the target AFR and +5° of timing, and every value stays inside the range the ECU allows. <b>The driver drives; tune from the passenger seat or parked.</b></p>
     </div>
     <div class="lt-ask" hidden></div>

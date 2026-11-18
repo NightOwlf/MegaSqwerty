@@ -8,7 +8,7 @@
 <meta property="og:description" content="{{ og_desc }}">
 {% endblock %}
 {% block bodyclass %}page-viewer{% if live %} page-live-lv{% endif %}{% endblock %}
-{% block scripts %}{% if live %}<script src="/static/ecu.js?v={{ asset_v }}" defer></script><script src="/static/live.js?v={{ asset_v }}" defer></script>{% endif %}<script src="/static/veal.js?v={{ asset_v }}" defer></script><script src="/static/viewer.js?v={{ asset_v }}" defer></script>{% endblock %}
+{% block scripts %}{% if live %}<script src="/static/ecu.js?v={{ asset_v }}" defer></script><script src="/static/live.js?v={{ asset_v }}" defer></script>{% endif %}<script src="/static/codes.js?v={{ asset_v }}" defer></script><script src="/static/veal.js?v={{ asset_v }}" defer></script><script src="/static/viewer.js?v={{ asset_v }}" defer></script>{% endblock %}
 {% set led = {'ok': 'on', 'warn': 'warn', 'error': 'bad', 'info': ''} %}
 {% block main %}
 {% if keys or tune_key %}
@@ -25,7 +25,7 @@
   </div>
 </section>
 {% endif %}
-{% if live %}<div class="lt lt-lv" id="live" data-role="{{ role }}" data-sid="{{ sid }}" data-key="{{ key }}">
+{% if live %}<div class="lt lt-lv" id="live" data-role="{{ role }}" data-sid="{{ sid }}" data-key="{{ key }}" data-v="{{ asset_v }}">
 {% include "_live_head.html" %}
 {% endif %}
 <div class="lv{% if live %} lv-live{% endif %}" id="lv" data-log="{{ log_slug }}" data-rows="{{ index.rows }}" data-tune="{{ tune_slug }}" data-also="{{ also|join(',') }}" data-name="{{ name }}"{% if live %} data-live="1" data-sid="{{ sid }}" data-key="{{ key }}" data-role="{{ role }}"{% endif %}>
@@ -60,7 +60,10 @@
         <button class="btn sm" type="button" data-lv-dl aria-haspopup="true" title="Download the tune (.msq, with your changes) or the log">{{ icon('download') }}<span class="lv-wide">Download</span></button>
         <span class="lv-dl-menu" hidden>
           {% if tune_slug %}<button type="button" data-dl-tune><b>Tune (.msq)</b><small>with every change you made, for TunerStudio</small></button>{% endif %}
-          {% if not live %}<a href="/l/{{ log_slug }}/download" data-dl-log><b>Log file</b><small>the original datalog</small></a>{% endif %}
+          {% if live %}<button type="button" data-dl-session><b>Session log (.msl)</b><small>the whole drive so far, every channel recorded</small></button>
+          {% else %}<a href="/l/{{ log_slug }}/download" data-dl-log><b>Log file</b><small>the original datalog</small></a>{% endif %}
+          <button type="button" data-dl-sec><b>Just the ✂ sections (.msl)</b><small>mark them with ✂ Section, trims the start and end</small></button>
+          <button type="button" data-dl-view><b>What's on screen (.msl)</b><small>the stretch the graphs show now</small></button>
         </span>
       </span>
       {% if tune_slug %}<button class="btn sm" type="button" data-lv-history title="Backups of this tune: restore or download any of them">History</button>{% endif %}
@@ -75,6 +78,7 @@
       {% if live %}<div class="lv-gpanel" data-lv-panel="gauges" hidden>
         <div class="ts-dials ts-cluster" data-dials="cluster"></div>
         <div class="ts-ind"></div>
+        <div class="lt-codes"></div>
         <div class="lt-gauges"></div>
       </div>
       <div class="lt-set lv-setpanel" data-lv-panel="settings" hidden>
@@ -155,6 +159,7 @@
         <div class="lv-status mono" aria-live="off"></div>
       </div>
       <div class="lv-secbar" hidden></div>
+      <details class="lv-events" hidden><summary></summary><ul></ul><p class="fine">Cuts are shown only while the engine was running (at a standstill FOME always reports "engine sync", which is normal). Each one is also marked on the graphs; tap a row to go there.</p></details>
       <div class="lv-gauges"></div>
     </div>
     <aside class="lv-side">

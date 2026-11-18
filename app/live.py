@@ -278,7 +278,7 @@ def register(app, store, templates, deps) -> None:
     LOG_PART_MAX = 24 * 1024 * 1024
 
     @app.post("/live/{sid}/log")
-    async def live_log(request: Request, sid: str, k: str = "", part: int = 1, slug: str = "", secs: float = 0):
+    async def live_log(request: Request, sid: str, k: str = "", part: int = 1, slug: str = "", secs: float = 0, t0: float = 0):
         """The car page records the session (like TunerStudio's datalog) and sends what's new every couple of
         minutes: rows of a .msl log, the first time with its header. They're added to the part's log, which is
         stored like any uploaded log against the session's tune copy, so it opens in the log viewer with the
@@ -302,24 +302,71 @@ def register(app, store, templates, deps) -> None:
                 return JSONResponse({"error": "full", "next": part + 1}, status_code=409)
             if raw and not raw.endswith(b"\n"):
                 raw += b"\n"
+            if raw:
+                body = continue_time(raw, body, t0)
             data = raw + body
             doc = store.get_doc(s.tune) if s.tune else None
             name = f"Live session {time.strftime('%d %b %Y %H:%M', time.gmtime(s.touched))} UTC" + (f" part {part}" if part > 1 else "") + ".msl"
-            if have:
-                await run_in_threadpool(store.delete_log, have)
-            try:
-                new, _key, rows = await run_in_threadpool(ingest, doc, s.tune if doc else "", data, name, have or None)
+            try:  # the log grows in place: replaced, never deleted first, so a restart can't lose it
+                new, _key, rows = await run_in_threadpool(ingest, doc, s.tune if doc else "", data, name, have or None, bool(have))
             except Exception as e:  # noqa: BLE001 - a log that can't be read: keep the session going
                 log.warning("live log for %s not stored: %s", sid, e, exc_info=True)
-                if have and raw:  # put back what was there
-                    try:
-                        await run_in_threadpool(ingest, doc, s.tune if doc else "", raw, name, have)
-                    except Exception:  # noqa: BLE001
-                        log.exception("couldn't restore live log %s", have)
                 return JSONResponse({"error": "That log couldn't be read."}, status_code=400)
             s.logs[part] = {"slug": new, "rows": rows, "seconds": round(max(0.0, min(secs, 86400.0)), 1), "at": int(time.time())}
         await announce(s)
         return JSONResponse({"slug": new, "rows": rows, "url": f"/l/{new}?tune={s.tune}" if s.tune else f"/l/{new}"})
+
+    def continue_time(raw: bytes, body: bytes, t0: float) -> bytes:
+        """Rows added to a log must carry on its clock. A car page that was reloaded starts counting from 0
+        again: shift its rows by when it started (t0, epoch ms) against when the log did (its first line), or at
+        least to just after the last row."""
+        import datetime as _dt
+        tail = raw[-4000:].decode("latin-1").strip().split("\n")
+        try:
+            last = float(tail[-1].split("\t", 1)[0])
+        except (ValueError, IndexError):
+            return body
+        lines = body.decode("latin-1").split("\n")
+        first_i = next((i for i, ln in enumerate(lines) if ln[:1].isdigit() or ln[:1] == "-"), None)
+        if first_i is None:
+            return body
+        try:
+            first = float(lines[first_i].split("\t", 1)[0])
+        except ValueError:
+            return body
+        shift = 0.0
+        head = raw[:200].decode("latin-1")
+        m = re.search(r"(\d{4}-\d\d-\d\dT[\d:.]+)Z", head)
+        if m and t0 > 0:
+            log_t0 = _dt.datetime.fromisoformat(m.group(1)).replace(tzinfo=_dt.timezone.utc).timestamp() * 1000
+            shift = max(0.0, (t0 - log_t0) / 1000)
+        if first + shift <= last:
+            shift = last - first + 0.05
+        if shift < 0.0005:
+            return body
+        out = []
+        for ln in lines:
+            if ln[:1].isdigit() or ln[:1] == "-":
+                tab = ln.find("\t")
+                try:
+                    ln = f"{float(ln[:tab]) + shift:.3f}{ln[tab:]}"
+                except ValueError:
+                    pass
+            out.append(ln)
+        return "\n".join(out).encode("latin-1")
+
+    @app.get("/live/{sid}/session.msl")
+    async def live_session_msl(sid: str, k: str = "", e: str = ""):
+        """The whole session's log as one .msl, or with `e=` just the chosen stretches (epoch seconds)."""
+        s = get(sid)
+        if not (secrets.compare_digest(k, s.car_key) or secrets.compare_digest(k, s.view_key)):
+            raise HTTPException(404)
+        text, start = await run_in_threadpool(app.state.session_msl, s, app.state.parse_ranges(e))
+        if not text:
+            return JSONResponse({"error": "Nothing recorded yet: the first save is a minute after the ECU connects."}, status_code=404)
+        fname = "Live-session-" + re.sub(r"[^0-9T-]", "-", start or "now") + ("-section" if e else "") + ".msl"
+        return Response(text.encode("latin-1", "replace"), media_type="text/plain; charset=iso-8859-1",
+                        headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
     def logsmod_slug_ok(slug: str) -> bool:
         return bool(re.match(r"^[A-Za-z0-9]{10}$", slug or ""))
@@ -406,7 +453,7 @@ def register(app, store, templates, deps) -> None:
                 och = {n: v for n, v in zip(s.chs, vals) if v is not None}
             except ValueError:
                 och = None
-        await send(ws, {"t": "hello", "role": role, "state": s.public_state(), "tables": s.tables, "och": och,
+        await send(ws, {"t": "hello", "v": templates.env.globals.get("asset_v", ""), "role": role, "state": s.public_state(), "tables": s.tables, "och": och,
                         "chs": s.chs, "changes": s.changes[-200:], "want": sorted({n for w in s.wants.values() for n in w})})
         if role == "view" and s.hist:  # everything seen so far, so the graph starts where the session did
             try:

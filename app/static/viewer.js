@@ -486,6 +486,7 @@
     return m;
   }
   function drawMarkers(ctx, W, H, kx, t0, t1, label) {
+    if (evMarks.length) drawEvents(ctx, W, H, kx, t0, t1, label);
     if (!idx.markers || !idx.markers.length) return;
     ctx.save();
     ctx.strokeStyle = "#ff3b30"; ctx.fillStyle = "#ff8a80"; ctx.lineWidth = 1;
@@ -499,6 +500,94 @@
     });
     ctx.restore();
   }
+  /* ---------- cuts and warnings: where fuel or spark was cut while the engine ran, and why; warning codes ---------- */
+  var evMarks = [], evT = 0;
+  function evChannel(re) { for (var i = 0; i < idx.channels.length; i++) if (re.test(idx.channels[i].n)) return i; return -1; }
+  function scanEvents() {
+    if (!idx || !window.MSQCodes) return;
+    var R = idx.roles || {}, fc = evChannel(/^fuel:?\s*cut\s*code$|fuelcutreason/i), sc = evChannel(/^ign(ition)?:?\s*cut\s*code$|sparkcutreason/i),
+        wc = evChannel(/^warning:?\s*last$|lasterrorcode/i);
+    var noCodes = fc < 0 && sc < 0;
+    if (noCodes && wc < 0 && R.pw == null) return;
+    Promise.all([load(R.rpm), load(fc), load(sc), load(wc), noCodes ? load(R.pw) : null, noCodes ? load(R.tps) : null, noCodes ? load(R.map) : null, noCodes ? load(R.dfco) : null]).then(function (r) {
+      var rpm = r[0] && r[0].v, out = [];
+      // a log without the cut codes: fuel stopping while the engine runs still shows, with the likely reason
+      var pw = r[4] && r[4].v, tps = r[5] && r[5].v, map = r[6] && r[6].v, dfco = r[7] && r[7].v;
+      if (noCodes && pw && rpm) {
+        var n0 = Math.min(pw.length, N), q = 0;
+        while (q < n0) {
+          if (!(pw[q] <= 0.05 && rpm[q] > 1000) || (dfco && dfco[q] > 0)) { q++; continue; }
+          var q1 = q;
+          while (q1 + 1 < n0 && pw[q1 + 1] <= 0.05 && rpm[q1 + 1] > 800) q1++;
+          var closed = tps && map && tps[q] < 6 && map[q] < 55, wot = tps && tps[q] > 80;
+          out.push({ kind: "Fuel stopped", code: 0, i0: q, i1: q1, rpm: rpm[q],
+                     text: closed ? "closed throttle (decel fuel cut)" : wot ? "at full throttle: rev limit or a protection cut" : "reason not recorded",
+                     why: closed ? "Lifting off at speed: the ECU stops fuel until RPM drops or you touch the throttle. Normal." :
+                          "This log doesn't have the cut-code channel; new live sessions record it, so the reason shows by name." });
+          q = q1 + 1;
+        }
+      }
+      [[fc >= 0 ? r[1] : null, "Fuel cut"], [sc >= 0 ? r[2] : null, "Spark cut"]].forEach(function (pair) {
+        var v = pair[0] && pair[0].v; if (!v) return;
+        var i = 0, n = Math.min(v.length, N);
+        while (i < n) {
+          var c = Math.round(v[i]);
+          if (!(c > 0) || !(rpm && rpm[i] > 400)) { i++; continue; }
+          var j = i;
+          while (j + 1 < n && Math.round(v[j + 1]) === c && (!rpm || rpm[j + 1] > 300 || T[j + 1] - T[j] < 0.3)) j++;
+          out.push({ kind: pair[1], code: c, i0: i, i1: j, text: MSQCodes.cutText(c), why: MSQCodes.cutWhy(c), rpm: rpm ? rpm[i] : null });
+          i = j + 1;
+        }
+      });
+      var w = wc >= 0 && r[3] && r[3].v;
+      if (w) for (var k = 1; k < Math.min(w.length, N); k++) {
+        var c2 = Math.round(w[k]);
+        if (c2 > 0 && c2 !== Math.round(w[k - 1])) out.push({ kind: "Warning", code: c2, i0: k, i1: k, text: MSQCodes.errText(c2), why: "", rpm: rpm ? rpm[k] : null });
+      }
+      out.sort(function (a, b) { return a.i0 - b.i0; });
+      evMarks = out;
+      renderEvents();
+      invalidate();
+    });
+  }
+  function drawEvents(ctx, W, H, kx, t0, t1, label) {
+    ctx.save();
+    ctx.font = "11px system-ui, sans-serif"; ctx.textBaseline = "top"; ctx.textAlign = "left";
+    evMarks.forEach(function (e) {
+      var a = T[Math.min(N - 1, e.i0)], b = T[Math.min(N - 1, e.i1)];
+      if (b < t0 || a > t1) return;
+      var x0 = Math.round((a - t0) * kx), x1 = Math.max(x0 + 2, Math.round((b - t0) * kx));
+      var col = e.kind === "Warning" ? "255,170,0" : "255,59,48";
+      ctx.fillStyle = "rgba(" + col + ",.22)"; ctx.fillRect(x0, 0, x1 - x0, H);
+      ctx.fillStyle = "rgb(" + col + ")"; ctx.fillRect(x0, 0, 2, H);
+      if (label) ctx.fillText(e.kind + ": " + e.text, x0 + 4, 2);
+    });
+    ctx.restore();
+  }
+  function renderEvents() {
+    var box = $(".lv-events");
+    if (!box) return;
+    var ev = evMarks;
+    box.hidden = !ev.length;
+    if (!ev.length) return;
+    var cuts = ev.filter(function (e) { return e.kind !== "Warning"; }).length, warns = ev.length - cuts;
+    $("summary", box).innerHTML = "⚠ <b>" + (cuts ? plural(cuts, "cut") : "") + (cuts && warns ? " · " : "") + (warns ? plural(warns, "warning") : "") + "</b> in this " + (LIVE ? "session" : "log") + " <span class=\"dim\">(tap to see where and why)</span>";
+    $("ul", box).innerHTML = ev.slice(0, 300).map(function (e, k) {
+      var t = T[Math.min(N - 1, e.i0)], dur = T[Math.min(N - 1, e.i1)] - t;
+      return '<li data-ev="' + k + '"><span class="mono">' + fmtClock(t) + "</span> <b class=\"" + (e.kind === "Warning" ? "ev-w" : "ev-c") + "\">" + esc(e.kind) + ": " + esc(e.text) + "</b>" +
+        (e.kind !== "Warning" ? ' <span class="dim">' + (dur >= 0.05 ? dur.toFixed(2) + " s" : "a moment") + (e.rpm ? " at " + Math.round(e.rpm) + " RPM" : "") + "</span>" : "") +
+        (e.why ? '<br><small class="dim">' + esc(e.why) + "</small>" : "") + "</li>";
+    }).join("");
+  }
+  function fmtClock(s) { var m = Math.floor(s / 60), r = s - m * 60; return m + ":" + (r < 10 ? "0" : "") + r.toFixed(1); }
+  root.addEventListener("click", function (e) {
+    var li = e.target.closest("[data-ev]");
+    if (!li) return;
+    var ev = evMarks[+li.dataset.ev]; if (!ev) return;
+    var a = T[ev.i0], b = T[Math.min(N - 1, ev.i1)], pad = Math.max(3, (b - a) * 2);
+    if (LB) LB.follow = false;
+    setView(a - pad, b + pad); cur = ev.i0; invalidate();
+  });
   function drawPane(p, last) {
     var f = fit(p.cv), ctx = f.ctx, W = f.w, H = f.h;
     if (W < 10 || H < 10) return;
@@ -671,7 +760,7 @@
   function drawStatus() {
     var total = tMax - tMin || 1, z = total / (view.t1 - view.t0);
     $(".lv-status").textContent = "Record " + (cur + 1).toLocaleString() + " of " + N.toLocaleString() +
-      " · " + T[cur].toFixed(2) + " s · Zoom " + z.toFixed(1) + "× · Play speed " + Math.round(speed * 100) + "%";
+      " · " + (T[Math.min(cur, N - 1)] || 0).toFixed(2) + " s · Zoom " + z.toFixed(1) + "× · Play speed " + Math.round(speed * 100) + "%";
   }
 
   /* ---------- the tune's tables: colours, values, edits ---------- */
@@ -1543,6 +1632,20 @@
       toast("Downloaded " + file + (changedCells() ? " (" + plural(changedCells(), "cell") + " changed from the original)" : ""));
     }, function (e) { lab.textContent = old; alert("Couldn't save your changes first: " + (e && e.message || "try again.")); });
   }
+  /* The log: all of it, or just the ✂ sections, or what's on screen (a trimmed .msl). Live, it's the session's
+     recording (the car saves first, so it's up to the second). */
+  function downloadLog(b) {
+    var ranges = b.dataset.dlSec != null ? sections.slice() : b.dataset.dlView != null ? [[view.t0, view.t1]] : null;
+    if (b.dataset.dlSec != null && !ranges.length) { toast("Mark the part you want first: tap ✂ Section, then drag across a graph (or Start/End)."); return; }
+    var go = function (url) { var a = document.createElement("a"); a.href = url; a.setAttribute("download", ""); document.body.appendChild(a); a.click(); a.remove(); };
+    if (LIVE) {
+      var api = window.MSQLive, e = ranges ? "&e=" + ranges.map(function (r) { return (LB.t0 + r[0]).toFixed(2) + "-" + (LB.t0 + r[1]).toFixed(2); }).join(",") : "";
+      toast("Getting the session log…");
+      (api && api.flush ? api.flush() : Promise.resolve()).then(function () { go(api.sessionUrl() + e); }, function () { go(api.sessionUrl() + e); });
+      return;
+    }
+    go(base + "/download" + (ranges ? "?s=" + ranges.map(function (r) { return r[0].toFixed(2) + "-" + r[1].toFixed(2); }).join(",") : ""));
+  }
   var shareFile = null;
   function openShare() {
     saveNow();
@@ -1679,6 +1782,7 @@
         '<div class="lv-ve-ctl">' +
           '<button class="btn primary" type="button" data-ve="run">▶ Run VE Analyze</button>' +
           '<button class="btn" type="button" data-ve="stop" hidden>Stop</button>' +
+          (LIVE ? '<button class="btn lv-velive" type="button" data-ve="live" title="Correct the VE table in the ECU as you drive, every 15 seconds">● Run live</button>' : "") +
           '<select data-ve-speed aria-label="How fast to play through the log"><option value="25">Watch it (25 s)</option><option value="10" selected>Quick (10 s)</option><option value="0">Instant</option></select>' +
           '<select data-ve-mode aria-label="What the cells show"><option value="value">New VE</option><option value="change">Change %</option><option value="hits">Data (s)</option><option value="err">AFR error %</option><option value="ran">VE that ran</option></select>' +
         "</div>" +
@@ -2111,6 +2215,53 @@
       $('[data-ve="run"]').hidden = false; $('[data-ve="stop"]').hidden = true;
       status.textContent = "The log couldn't be loaded for VE Analyze. Reload the page and try again.";
     });
+  }
+  /* VE Analyze Live (like TunerStudio's VE Analyze Live): every 15 seconds while the car runs, the data since the
+     last pass goes through the same engine, and the cells it has enough clean data for are corrected in the ECU
+     (within the max change and locks you set, and the driver's say on remote changes). */
+  var veLive = { on: false, timer: 0, from: 0, passes: 0, cells: 0 };
+  function veLiveToggle(btn) {
+    veLive.on = !veLive.on;
+    btn.classList.toggle("on", veLive.on);
+    btn.textContent = veLive.on ? "■ Stop live" : "● Run live";
+    clearInterval(veLive.timer);
+    var status = $(".lv-ve-status");
+    if (veLive.on) {
+      if (ve.running) ve.running = false;
+      veLive.from = Math.max(0, N - 1); veLive.passes = 0; veLive.cells = 0;
+      status.textContent = "VE Analyze Live: drive normally. Every 15 seconds the cells you've driven through are corrected in the ECU.";
+      veLive.timer = setInterval(veLivePass, 15000);
+    } else status.textContent = "VE Analyze Live stopped after " + plural(veLive.passes, "pass") + ", " + plural(veLive.cells, "cell") + " corrected.";
+  }
+  function veLivePass() {
+    var t = ve.table, status = $(".lv-ve-status");
+    if (!veLive.on || ve.running || !LB || !t) return;
+    var from = veLive.from, to = N;
+    if (to - from < 60) return;  // a few seconds of data at least
+    var cur2 = Object.assign({}, t, { z: t.z.map(function (v, k) { return valueAt(t, k); }) });
+    var opts = veOpts(); opts.locked = Object.keys(locks[t.name] || {}).map(Number);
+    var engine = VEAL.create(cur2, opts);
+    ve.engine = engine;
+    veData(idx, function (c) { return c === "t" ? Promise.resolve(T) : load(c).then(function (x) { return x && x.v; }); }).then(function (d) {
+      return filterMask(d.T.length, function (name) { var c = byName(name); return c >= 0 ? load(c).then(function (x) { return x && x.v; }) : Promise.resolve(null); })
+        .then(function (m) { if (m) d.userOk = m; return d; });
+    }).then(function (d) {
+      if (!veLive.on) return;
+      var n = Math.min(to, d.T.length), mask = new Uint8Array(d.T.length);
+      for (var i = from; i < n; i++) mask[i] = 1;
+      d.inSection = mask;
+      engine.begin(d);
+      for (i = from; i < n; i++) engine.step(i);
+      var res = engine.finish();
+      veLive.from = n; veLive.passes++;
+      var ch = (res.changed || []).filter(function (c) { return !(locks[t.name] && locks[t.name][c.i]); });
+      ch.forEach(function (c) { setValue(t, c.i, c.to); });
+      veLive.cells += ch.length;
+      if (ch.length) { editsChanged(t); if (ve.grid) { ve.grid.paint(); ch.forEach(function (c) { ve.grid.flash(c.i); }); } }
+      status.textContent = "VE Analyze Live · pass " + veLive.passes + ": " + (ch.length ? plural(ch.length, "cell") + " corrected and sent to the ECU" : "no cell had enough clean data this time") +
+        " · " + plural(veLive.cells, "cell") + " in all · " + plural(engine.stats.used, "sample") + " used this pass";
+      renderWhy();
+    }).catch(function () { /* try again next pass */ });
   }
   function renderWhy() {
     var e = ve.engine;
@@ -2860,7 +3011,7 @@
     b = e.target.closest("[data-lv-tab]");
     if (b) { setTab(b.dataset.lvTab); return; }
     b = e.target.closest("[data-ve]");
-    if (b) { if (b.dataset.ve === "run") runVE(); else ve.running = false; return; }
+    if (b) { if (b.dataset.ve === "live") veLiveToggle(b); else if (b.dataset.ve === "run") runVE(); else ve.running = false; return; }
     b = e.target.closest("[data-save-tune]");
     if (b && vePending && editCount()) { setTab("ve"); return; }
     if (b) { saveAndShare(b); return; }
@@ -2872,6 +3023,8 @@
     if (b) { undoVE(b); return; }
     b = e.target.closest("[data-lv-dl]");
     if (b) { var mn = $(".lv-dl-menu"); mn.hidden = !mn.hidden; return; }
+    b = e.target.closest("[data-dl-session], [data-dl-sec], [data-dl-view]");
+    if (b) { $(".lv-dl-menu").hidden = true; downloadLog(b); return; }
     b = e.target.closest("[data-dl-tune]");
     if (b) { $(".lv-dl-menu").hidden = true; downloadTune(b); return; }
     if (!e.target.closest(".lv-dl") && $(".lv-dl-menu")) $(".lv-dl-menu").hidden = true;
@@ -3322,6 +3475,8 @@
       else { view.t1 = tMax; view.t0 = Math.max(tMin, tMax - span); }
       cur = N - 1;
     }
+    if (cur > N - 1) cur = N - 1;
+    if (Date.now() - evT > 3000) { evT = Date.now(); scanEvents(); }
     LB.follow = follow;
     var fb = $("[data-lv=follow]"); if (fb) fb.classList.toggle("on", follow);
     scatterDirty = true;
@@ -3342,6 +3497,12 @@
       api.on("rejected", liveRejected);
       api.on("tables", liveTables);
       api.on("state", function () { liveBars(); });
+      api.on("reconnected", function () {  // the link dropped: whatever wasn't answered goes again
+        Object.keys(liveReq).forEach(function (id) { liveSettle(+id, null); delete liveReq[id]; });
+        livePend = {};
+        if (editCount()) scheduleAuto(300);
+      });
+      api.busy = function () { return Object.keys(liveReq).length > 0; };
       api.ready();
       setInterval(liveCommit, 250);
     }).catch(function () {  // the server restarted and the car hasn't brought the session back yet
@@ -3500,6 +3661,7 @@
     window.addEventListener("orientationchange", function () { setTimeout(function () { fitHeight(); scatterDirty = true; invalidate(); }, 250); });
     if (startHash.tab === "scatter" || startHash.tab === "ve") setTab(startHash.tab);
     if (LIVE) liveStarted();
+    scanEvents();
     invalidate();
   }
   if (LIVE) liveBoot();

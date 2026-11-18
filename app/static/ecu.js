@@ -289,7 +289,12 @@
     function lead(tpl) { return tpl && tpl[0] && tpl[0].lit ? tpl[0].lit[0] : -1; }
     function setOut(name, v) {
       var o = outs[name];
-      if (!o || o.kind === "bits" || o.offset + SIZE[o.type] > och.length) return;
+      if (!o || o.offset + SIZE[o.type] > och.length) return;
+      if (o.kind === "bits") {  // a flag: set or clear its bits in the word
+        var w = readRaw(odv, o.type, o.offset, little) >>> 0, lo = o.bits[0], width = o.bits[1] - lo + 1, mask = ((1 << width) - 1) << lo;
+        writeRaw(odv, o.type, o.offset, ((w & ~mask) | ((Math.round(v) << lo) & mask)) >>> 0, little);
+        return;
+      }
       var raw = v / (o.scale || 1) - (o.translate || 0);
       writeRaw(odv, o.type, o.offset, o.type === "F32" ? raw : Math.round(Math.max(RANGE[o.type][0], Math.min(RANGE[o.type][1], raw))), little);
     }
@@ -333,6 +338,10 @@
         else if (n === roles.batt) setOut(n, 14.1);
         else if (n === roles.ve) setOut(n, veCmd);
         else if (n === roles.advance) setOut(n, ign ? interp(ign, rpm, load) : 20);
+        else if (n === roles.pw) setOut(n, 1.2 + veCmd * load / 1600);  // injector pulse width, ms
+        else if (n === roles.inj_duty) setOut(n, (1.2 + veCmd * load / 1600) * rpm / 1200);
+        else if (/target\s*afr/.test(lbl)) setOut(n, tgt);
+        else if (n === roles.lambda_ok || /lambdacurrentlygood/i.test(n)) setOut(n, 1);  // the wideband is warmed up
       });
       var roleCh = {};
       Object.keys(roles).forEach(function (r) { roleCh[roles[r]] = 1; });

@@ -74,6 +74,7 @@
     ws = new WebSocket(proto + location.host + "/live/" + SID + "/ws?k=" + encodeURIComponent(KEY));
     ws.onopen = function () {
       wsOpen = true; pill();
+      if (ROLE === "view") emit("reconnected");
       if (ROLE === "car") {
         pushState();
         if (running) { chKey = ""; send({ t: "tables", tables: tables }); }  // a fresh session (server restarted) needs the tune again
@@ -98,11 +99,32 @@
     ws.onmessage = function (e) { var m; try { m = JSON.parse(e.data); } catch (err) { return; } onMessage(m); };
   }
   function send(m) { if (ws && wsOpen) ws.send(JSON.stringify(m)); }
+  /* MSQ Viewer was updated while this page was open. A tuner's page reloads by itself once nothing it sent is
+     still on its way (the ECU and the session's tune already hold every change, so nothing is lost). The car's
+     page doesn't (that would drop the USB link): it says so, for when the car is parked. */
+  var updating = false;
+  function newVersion() {
+    if (updating) return;
+    updating = true;
+    if (ROLE === "car") {
+      var st = $(".lt-status");
+      if (st) st.innerHTML = "<b>MSQ Viewer was updated.</b> Reload this page when the car is parked to get it (then Connect the ECU again). Everything keeps working until then.";
+      return;
+    }
+    toast("MSQ Viewer was updated: reloading…");
+    var tries = 0;
+    (function wait() {
+      var busy = window.MSQLive && window.MSQLive.busy && window.MSQLive.busy();
+      if (busy && tries++ < 20) return setTimeout(wait, 500);
+      location.reload();
+    })();
+  }
   function pushState() {
     send({ t: "state", ecu: !!running, mode: modeSel() ? modeSel().value : "ask", burn: !!($("[data-allow-burn]") || {}).checked,
            needBurn: !!state.needBurn, ecuSignature: state.ecuSignature || "", signature: layout ? layout.comms.signature : "" });
   }
   function onMessage(m) {
+    if (m.t === "hello" && m.v && root.dataset.v && m.v !== root.dataset.v) newVersion();
     if (m.t === "hello") {
       state = m.state || {}; tables = Object.keys(m.tables || {}).length ? m.tables : tables; if (m.och) och = m.och;
       if (ROLE === "view") snapBase();
@@ -230,25 +252,35 @@
      log against the session's tune copy: open it in the log viewer, run VE Analyze on it. A part holds up to
      about 30 minutes; then the next part starts. */
   var rec = { cols: null, rows: [], sent: 0, t0: 0, last: 0, part: 1, slug: "", busy: false, timer: 0, partT0: 0 };
-  try { var rs = JSON.parse(localStorage.getItem("msq.live.rec") || "null"); if (rs && rs.sid === SID) { rec.part = rs.part; rec.slug = rs.slug; } } catch (e) { /* ignore */ }
+  // kept in this browser so a reload carries on the same log, on the same clock
+  var recSaved = null;
+  try { recSaved = JSON.parse(localStorage.getItem("msq.live.rec") || "null"); if (recSaved && recSaved.sid === SID) { rec.part = recSaved.part || 1; rec.slug = recSaved.slug || ""; rec.t0 = recSaved.t0 || 0; rec.partT0 = recSaved.partT0 || 0; } else recSaved = null; } catch (e) { /* ignore */ }
+  function recSave() { try { localStorage.setItem("msq.live.rec", JSON.stringify({ sid: SID, part: rec.part, slug: rec.slug, t0: rec.t0, partT0: rec.partT0, cols: (rec.cols || []).join(",") })); } catch (e) { /* ignore */ } }
   function recCols() {
     var keep = [], seen = {}, add = function (n) { if (n && layout.outputs[n] && !seen[n]) { seen[n] = 1; keep.push(n); } };
     Object.keys(layout.roles || {}).forEach(function (r) { add(layout.roles[r]); });
     allDefs().forEach(function (t) { add(t.xch); add(t.ych); });
     (layout.front || []).forEach(function (g) { add(((layout.gauges || {})[g] || {}).ch); });
-    Object.keys(layout.outputs).forEach(function (n) { if (keep.length < 120 && layout.outputs[n].kind !== "bits") add(n); });
+    // why fuel or spark was cut, the warning codes and every lamp: always in the log, so a cut shows where and why
+    ["fuelCutReason", "sparkCutReason", "lastErrorCode", "warningCounter", "dfcoActive", "revLimit", "launchActivatePinState"].forEach(add);
+    (layout.indicators || []).forEach(function (i) { add(i.ch); add(i.onCh); });
+    Object.keys(layout.outputs).forEach(function (n) { if (keep.length < 150 && layout.outputs[n].kind !== "bits") add(n); });
     return keep;
   }
   function record() {
     var now = Date.now();
     if (now - rec.last < 48) return;
     rec.last = now;
-    if (!rec.cols) { rec.cols = recCols(); rec.t0 = now; rec.partT0 = now; }
+    if (!rec.cols) {
+      rec.cols = recCols();
+      if (recSaved && recSaved.cols && recSaved.cols !== rec.cols.join(",") && rec.slug) { rec.part++; rec.slug = ""; rec.partT0 = 0; }  // other channels: a new part
+      rec.t0 = rec.t0 || now; rec.partT0 = rec.partT0 || now; recSave();
+    }
     var r = new Array(rec.cols.length + 1);
     r[0] = ((now - rec.t0) / 1000).toFixed(3);
     for (var i = 0; i < rec.cols.length; i++) { var v = och[rec.cols[i]]; r[i + 1] = v == null || v !== v ? "" : +(+v).toPrecision(6); }
     rec.rows.push(r.join("\t"));
-    if (!rec.timer) rec.timer = setInterval(flushLog, 120000);
+    if (!rec.timer) rec.timer = setInterval(flushLog, 60000);
     renderRec();
   }
   function flushLog() {
@@ -260,7 +292,7 @@
       ["s"].concat(rec.cols.map(function (n) { return layout.outputs[n].units || ""; })).join("\t") + "\n" : "";
     var body = head + rec.rows.slice(rec.sent, upto).join("\n") + "\n";
     var secs = (rec.last - rec.partT0) / 1000;
-    var url = "/live/" + SID + "/log?k=" + encodeURIComponent(KEY) + "&part=" + rec.part + "&slug=" + encodeURIComponent(rec.slug) + "&secs=" + secs.toFixed(1);
+    var url = "/live/" + SID + "/log?k=" + encodeURIComponent(KEY) + "&part=" + rec.part + "&slug=" + encodeURIComponent(rec.slug) + "&secs=" + secs.toFixed(1) + "&t0=" + rec.t0;
     return fetch(url, { method: "POST", body: body, headers: { "Content-Type": "text/plain" } }).then(function (r) {
       return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; });
     }).then(function (res) {
@@ -270,8 +302,8 @@
         // keep only what's still to send (the server has the rest), and start a new part after ~30 minutes
         rec.rows = rec.rows.slice(upto); rec.sent = 0;
         if (secs > 1800) { rec.part++; rec.slug = ""; rec.partT0 = rec.last; }
-        try { localStorage.setItem("msq.live.rec", JSON.stringify({ sid: SID, part: rec.part, slug: rec.slug })); } catch (e) { /* ignore */ }
-      } else if (res.status === 409) { rec.part++; rec.slug = ""; }
+        recSave();
+      } else if (res.status === 409) { rec.part++; rec.slug = ""; recSave(); }
       renderRec();
     }, function () { rec.busy = false; });
   }
@@ -286,14 +318,17 @@
     var secs = rolling ? Math.round((rec.last - rec.t0) / 1000) : 0;
     var t = Math.floor(secs / 60) + ":" + ("0" + secs % 60).slice(-2);
     var html = (rolling ? '<b class="ts-dotrec">●</b> REC ' + t + " " : "") +
-      (lastLog ? logs.map(function (l) {
-        return '<a href="/l/' + esc(l.slug) + (state.tune ? "?tune=" + esc(state.tune) : "") + '" target="_blank" rel="noopener" title="Open the session log in the log viewer (saved every 2 minutes)">' +
-          (logs.length > 1 ? "Log part " + l.part : "Open session log") + "</a>";
-      }).join(" ") : '<span class="dim">first save in 2 min</span>');
+      (lastLog ? '<a href="' + window.MSQLive.sessionUrl() + '" data-rec-dl title="Download the whole session log (.msl)">⬇ Download log</a> ' + logs.map(function (l) {
+        return '<a href="/l/' + esc(l.slug) + (state.tune ? "?tune=" + esc(state.tune) : "") + '" target="_blank" rel="noopener" title="Open the session log in the log viewer (saved every minute)">' +
+          (logs.length > 1 ? "Part " + l.part : "Open log") + "</a>";
+      }).join(" ") : '<span class="dim">first save in a minute</span>');
     if (el.dataset.h !== html) { el.innerHTML = html; el.dataset.h = html; }
   }
   setInterval(renderRec, 1000);
   window.addEventListener("pagehide", function () { if (ROLE === "car") flushLog(); });
+  document.addEventListener("visibilitychange", function () { if (ROLE === "car" && document.hidden) flushLog(); });
+  window.MSQLive.flush = function () { return ROLE === "car" ? flushLog() : Promise.resolve(); };
+  window.MSQLive.sessionUrl = function () { return "/live/" + SID + "/session.msl?k=" + encodeURIComponent(KEY); };
   function disconnectEcu() {
     flushLog();
     if (wake) { wake.release().catch(function () { /* ignore */ }); wake = null; }
@@ -313,6 +348,8 @@
     (layout.front || []).forEach(function (g) { var c = (layout.gauges || {})[g]; if (c) keep[c.ch] = 1; });
     (layout.indicators || []).forEach(function (i) { keep[i.ch] = 1; });
     if (layout.outputs.stoichiometricRatio) keep.stoichiometricRatio = 1;
+    ["lastErrorCode", "warningCounter", "recentErrorCode1", "recentErrorCode2", "recentErrorCode3", "recentErrorCode4",
+     "recentErrorCode5", "recentErrorCode6", "recentErrorCode7", "recentErrorCode8"].forEach(function (n) { if (layout.outputs[n]) keep[n] = 1; });
     return Object.keys(keep).sort();
   }
   function pollLoop() {
@@ -365,11 +402,18 @@
           if (layout.comms.signature && sig.trim() !== layout.comms.signature.trim()) throw new Error("a different ECU answered: " + sig);
           return ecu.readPage();
         }).then(function (page) {
-          var fresh = ECU.decodeConstants(layout, page, ecu.little), lost = 0;
+          var fresh = ECU.decodeConstants(layout, page, ecu.little), lost = 0, back = {};
           Object.keys(fresh).forEach(function (k) {
-            (fresh[k] || []).forEach(function (v, i) { if (tables[k] && Math.abs(tables[k][i] - v) > 1e-6) lost++; });
+            (fresh[k] || []).forEach(function (v, i) {
+              if (tables[k] && Math.abs(tables[k][i] - v) > 1e-6) { lost++; if ((layout.editable || {})[k] || k === "tpsMin" || k === "tpsMax") (back[k] = back[k] || {})[i] = tables[k][i]; }
+            });
           });
           tables = fresh;
+          if (lost && Object.keys(back).length) {  // put back what the session had changed, then keep it
+            Object.keys(back).forEach(function (k) { queue.push({ kind: "set", m: { table: k, cells: back[k], note: "restore" }, by: "driver" }); });
+            queue.push({ kind: "done", fn: function () { send({ t: "notice", text: "The ECU restarted and lost changes that weren't burned: they're back in it now." }); toast("Put back the changes the ECU lost when it restarted."); } });
+            lost = 0;
+          }
           if (lost) snapBase();
           send({ t: "tables", tables: tables }); emit("tables", tables);
           if (lost) {
@@ -443,7 +487,7 @@
     if (!job || !ecu) return Promise.resolve();
     if (job.kind === "done") { job.fn(); return Promise.resolve(); }
     if (job.kind === "burn") {
-      return ecu.burn().then(function () { state.needBurn = false; snapBase(); send({ t: "burned" }); pushState(); toast("Burned: the changes are permanent."); renderTable(); renderState(); },
+      return ecu.burn().then(function () { state.needBurn = false; snapBase(); send({ t: "burned" }); pushState(); toast(job.m.auto ? "Kept: burned to the ECU." : "Burned: the changes are permanent."); renderTable(); renderState(); emit("state"); },
         function (e) { send({ t: "rejected", id: job.m.id, why: "Burn failed: " + e.message }); });
     }
     if (job.kind === "undo") {
@@ -456,6 +500,20 @@
       if (job.by === "driver") emit("rejected", { id: job.m.id, why: "Writing to the ECU failed: " + e.message });
     });
   }
+  /* Keep every change: burn by itself once changes have stopped for 10 s (the driver can turn this off). */
+  var burnT = 0;
+  function autoBurnOn() { var c = $("[data-autoburn]"); return ROLE === "car" && c && c.checked; }
+  function burnSoon() {
+    clearTimeout(burnT);
+    if (!autoBurnOn()) return;
+    burnT = setTimeout(function () { if (state.needBurn && running) queue.push({ kind: "burn", m: { auto: true } }); }, 10000);
+  }
+  (function () {
+    var c = $("[data-autoburn]");
+    if (!c) return;
+    try { var v = localStorage.getItem("msq.live.autoburn"); if (v != null) c.checked = v === "1"; } catch (e) { /* ignore */ }
+    c.addEventListener("change", function () { try { localStorage.setItem("msq.live.autoburn", c.checked ? "1" : "0"); } catch (e) { /* ignore */ } if (c.checked) burnSoon(); });
+  })();
   /* Write cells to the ECU's RAM, read them back, and report what it now holds. */
   function writeCells(table, cells, by, note, id) {
     var c = layout.constants[table], vals = tables[table], before = {};
@@ -472,7 +530,7 @@
     return chain.then(function () {
       if (note !== "undo") undoStack.push({ table: table, cells: before });
       if (undoStack.length > 100) undoStack.shift();
-      state.needBurn = true; pushState();
+      state.needBurn = true; pushState(); burnSoon();
       send({ t: "applied", id: id, table: table, cells: got, was: before, by: by, note: note });
       emit("applied", { id: id, table: table, cells: got, was: before, by: by, note: note });
       logChange({ table: table, cells: got, was: before, by: by, note: note, at: Date.now() / 1000 });
@@ -772,7 +830,7 @@
   function frame() {  // keeps the graph scrolling smoothly between frames while data is flowing
     var real = och, si = scrub != null ? frameAt(scrub) : -1;
     if (si >= 0) och = frameOch(si);
-    try { drawGauges(); drawDials(); drawLamps(); drawRead(); cursor(); } finally { och = real; }
+    try { drawGauges(); drawDials(); drawLamps(); drawCodes(); drawRead(); cursor(); } finally { och = real; }
     drawTps();
     drawChart();
     if (Date.now() - lastData < 1500 || gDirty) { gDirty = false; requestAnimationFrame(frame); } else drawPending = false;
@@ -1062,6 +1120,20 @@
     ctx.fillStyle = hub; ctx.beginPath(); ctx.arc(cx, cy, R * 0.11, 0, 7); ctx.fill();
     return face;
   }
+  /* the warning codes the ECU holds now (what lights Check Engine), with what they mean */
+  function drawCodes() {
+    var box = $(".lt-codes"), view = box && box.closest("[data-lv-panel]");
+    if (!box || !layout || !view || view.hidden || !window.MSQCodes) return;
+    var seen = {}, list = [];
+    ["lastErrorCode"].concat([1, 2, 3, 4, 5, 6, 7, 8].map(function (k) { return "recentErrorCode" + k; })).forEach(function (n) {
+      var v = Math.round(och[n] || 0);
+      if (v && !seen[v]) { seen[v] = 1; list.push(v); }
+    });
+    var html = !layout.outputs.lastErrorCode && !layout.outputs.recentErrorCode1 ? "" :
+      "<b>Warning codes</b> " + (list.length ? list.map(function (c) { return '<span class="lt-code">' + esc(window.MSQCodes.errText(c)) + "</span>"; }).join(" ")
+        : '<span class="dim">none right now</span>') + (och.warningCounter ? ' <small class="dim">' + Math.round(och.warningCounter) + " warnings since the key went on</small>" : "");
+    if (box.dataset.h !== html) { box.innerHTML = html; box.dataset.h = html; }
+  }
   /* indicator lamps, from the project's front page */
   var lampsBuilt = false;
   function drawLamps() {
@@ -1075,6 +1147,11 @@
       var on = v == null ? false : x.op === "!=" ? v != x.v : x.op === "==" ? v == x.v : x.op === ">" ? v > x.v : x.op === "<" ? v < x.v :
         x.op === ">=" ? v >= x.v : x.op === "<=" ? v <= x.v : !!v;
       var txt = on ? x.on : x.off || x.on;
+      if (on && x.onPrefix) {  // the reason by name: "Fuel cut: engine sync"
+        var code = Math.round(och[x.onCh] != null ? och[x.onCh] : v);
+        txt = x.onPrefix + ": " + ((x.onNames || [])[code] || "code " + code);
+        if (/cut/i.test(x.onPrefix) && code === 12 && !(gaugeValue("rpm") > 50)) txt += " (engine stopped: normal)";
+      }
       if (el.textContent !== txt) el.textContent = txt;
       el.style.background = on ? x.onBg : x.offBg; el.style.color = on ? x.onFg : x.offFg;
       el.classList.toggle("dim", v == null);

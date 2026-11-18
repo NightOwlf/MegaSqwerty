@@ -159,6 +159,7 @@ def parse(text: str, defined: set[str] | None = None, values: dict | None = None
     gauges: dict = {}
     front: list = []
     indicators: list = []
+    code_lists: dict = {}
     section = ""
     comms: dict = {"pageSizes": [], "pageIdentifiers": []}
     constants: dict = {}
@@ -181,6 +182,9 @@ def parse(text: str, defined: set[str] | None = None, values: dict | None = None
         if "=" not in line:
             continue
         key, rhs = (x.strip() for x in line.split("=", 1))
+        if key.endswith("CodeList") and rhs.startswith("bits"):  # what each value of a code means
+            code_lists[key] = [_unq(x) for x in _fields(rhs)[3:]]
+            continue
         if section in ("MegaTune", "TunerStudio"):
             if key in ("signature", "queryCommand", "versionInfo"):
                 comms[key] = _unq(rhs)
@@ -282,7 +286,11 @@ def parse(text: str, defined: set[str] | None = None, values: dict | None = None
                 if m and len(indicators) < 60:
                     col = lambda i, d: _COLORS.get(f[i].strip().lower(), d) if len(f) > i else d  # noqa: E731
                     on = _unq(f[2]) if f[2].startswith('"') else m.group(1)
+                    # { Fuel cut: bitStringValue(fuelIgnCutCodeList, fuelCutReason) }: the reason, by name
+                    bm = re.match(r"^\{\s*([^:{}]+):\s*bitStringValue\(\s*(\w+)\s*,\s*(\w+)\s*\)\s*\}$", f[2])
                     indicators.append({"ch": m.group(1), "op": m.group(2) or "", "v": float(m.group(3) or 0),
+                                       "onPrefix": bm.group(1).strip() if bm else "", "onList": bm.group(2) if bm else "",
+                                       "onCh": bm.group(3) if bm else "",
                                        "off": _unq(f[1]) if f[1].startswith('"') else "", "on": on,
                                        "offBg": col(3, "#ffffff"), "offFg": col(4, "#000000"),
                                        "onBg": col(5, "#22dd22"), "onFg": col(6, "#000000")})
@@ -315,7 +323,7 @@ def parse(text: str, defined: set[str] | None = None, values: dict | None = None
                    and constants[c["y"]]["kind"] == "array"}
     return {"comms": comms, "constants": constants, "outputs": outputs, "datalog": datalog, "tables": good,
             "curves": good_curves, "labels": labels, "powerCycle": sorted(power_cycle), "gauges": gauges,
-            "front": [g for _, g in sorted(front)], "indicators": indicators}
+            "front": [g for _, g in sorted(front)], "indicators": indicators, "codeLists": code_lists}
 
 
 # Settings a remote tuner may not change, whatever the driver allows: what only takes effect after a power cycle
@@ -391,7 +399,12 @@ def layout_for_live(ini: dict) -> dict:
     gauges = {k: g for k, g in (ini.get("gauges") or {}).items() if g["ch"] in ini["outputs"]}
     front = [g for g in (ini.get("front") or []) if g in gauges][:8]
     indicators = [i for i in (ini.get("indicators") or []) if i["ch"] in ini["outputs"]]
-    extra = [n for n in ("stoichiometricRatio", "rawTps1Primary") if n in ini["outputs"]]
+    lists = ini.get("codeLists") or {}
+    for i in indicators:
+        if i.get("onList") in lists:
+            i["onNames"] = lists[i["onList"]]
+    extra = [n for n in ["stoichiometricRatio", "rawTps1Primary", "lastErrorCode", "warningCounter"] +
+             [f"recentErrorCode{k}" for k in range(1, 9)] if n in ini["outputs"]]
     for ch in [gauges[g]["ch"] for g in gauges] + [i["ch"] for i in indicators] + extra:
         if ch not in outs:
             outs[ch] = dict(ini["outputs"][ch], label=ini["datalog"].get(ch) or ch)

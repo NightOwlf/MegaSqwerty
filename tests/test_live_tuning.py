@@ -327,3 +327,33 @@ def test_a_tuner_who_joins_late_gets_the_session_so_far(client, fx):
             hist = vw.receive_json()
             assert hist["t"] == "hist" and hist["chs"][0] == ["RPMValue", "MAPValue"]
             assert [f[2]["v"][0] for f in hist["f"]] == [1000, 1001, 1002]
+
+
+def test_a_reloaded_car_page_carries_on_the_same_log_and_clock(client, fx):
+    """A car page that was reloaded starts counting from 0 again; its rows still land after the log's last one,
+    the log grows in place (same link), and the whole session or just a stretch of it downloads as a .msl."""
+    import re as _re
+    s = start(client, fx)
+    sid, car = s["id"], s["car_key"]
+    head = '"MSQ Viewer live session 2026-11-18T01:00:00.000Z"\nTime\tRPM\tMAP\tAFR\ns\tRPM\tkPa\tAFR\n'
+    rows = lambda t0, n: "".join(f"{t0 + i * 0.05:.3f}\t{900 + i}\t{40 + i % 5}\t14.{i % 9}\n" for i in range(n))  # noqa: E731
+    slug = client.post(f"/live/{sid}/log?k={car}&part=1", content=head + rows(0, 40)).json()["slug"]
+    # the page reloaded 10 minutes after the log started (t0 in ms) and counts from 0 again
+    t0 = 1_794_963_600_000 + 600_000  # 2026-11-18T01:10:00Z
+    r = client.post(f"/live/{sid}/log?k={car}&part=1&slug={slug}&t0={t0}", content=rows(0, 40)).json()
+    assert r["slug"] == slug and r["rows"] == 80
+    raw = client.get(f"/l/{slug}/download").text.strip().split("\n")
+    times = [float(x.split("\t")[0]) for x in raw[3:]]
+    assert times == sorted(times) and abs(times[40] - 600.0) < 0.01  # carried on, ten minutes later
+    whole = client.get(f"/live/{sid}/session.msl?k={car}")
+    assert whole.status_code == 200 and "attachment" in whole.headers["content-disposition"]
+    assert len(whole.text.strip().split("\n")) == 3 + 80
+    epoch0 = 1_794_963_600.0
+    part = client.get(f"/live/{sid}/session.msl?k={car}&e={epoch0 + 600 - 0.01}-{epoch0 + 601}").text.strip().split("\n")
+    assert len(part) == 3 + 21 and part[3].startswith("0.000\t")
+    # any log, trimmed to a stretch of the viewer's time
+    sec = client.get(f"/l/{slug}/download?s=0.5-1.0")
+    assert sec.status_code == 200 and "-section.msl" in sec.headers["content-disposition"]
+    lines = sec.text.strip().split("\n")
+    assert lines[1].split("\t")[0] == "Time" and len(lines) == 3 + 11
+    assert _re.match(r"^0\t", lines[3]) or lines[3].startswith("0\t") or lines[3].startswith("0.")

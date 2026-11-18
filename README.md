@@ -418,8 +418,16 @@ ranges and warning zones, and its indicator lamps) and **Settings**.
   The session's tune copy follows what the ECU really holds.
 - **Key on, engine off** shows MAP, temperatures, battery and 0 RPM like TunerStudio. *Calibrate TPS* (FOME /
   rusEFI) grabs the sensor voltage at closed and wide-open throttle into tpsMin/tpsMax, then Burn.
-- **The session is recorded** as a log by itself (about 20 records a second, saved every 2 minutes) against the
-  session's tune copy: *Open session log* opens it in the log viewer, where VE Analyze and the Dyno use it.
+- **The session is recorded** as a log by itself (about 20 records a second, saved every minute and whenever the
+  page is hidden) against the session's tune copy, including the cut codes and warning codes. A reload of the car
+  page carries on the same log on the same clock; the log grows in place and is never deleted while it's saved,
+  so a server restart can't lose it. *⬇ Download log* gets the whole session as one .msl.
+- **Keep every change** (on by default at the car): the ECU burns by itself 10 seconds after changes stop, so
+  nothing is lost when the key goes off. If the ECU restarts and loses unburned changes, the car page puts them back.
+- **VE Analyze Live**: in the VE Analyze tab, *● Run live* corrects the VE table in the ECU every 15 seconds from
+  the cells you've just driven through (same engine, filters, locks and max change as VE Analyze).
+- **Updates**: a tuner's page reloads by itself onto a new version once nothing it sent is still on its way; the
+  car's page says an update is ready (reload when parked).
 - **A tuner who joins late sees the whole session**: the graph starts where the session did. Drag the graph to
   scroll back, pinch / wheel / − + to zoom, tap a moment to see the gauges, readouts and table dot as they were;
   *Live ▶* follows the car again.
@@ -485,6 +493,24 @@ shows it side by side: **Before**, **After** and **Change %** (red for more fuel
 three 3D surfaces on one height scale that turn together, with the changed cells dotted. Under them, every
 changed cell, biggest first, with its RPM, load, before, after, change and (after a run) how many seconds of
 the log it was built from; tap one to find it in all three. On a phone it shows one at a time.
+
+### Cuts and warnings in a log
+
+If fuel or spark was cut while the engine was running, the log viewer marks each one on the graphs (a red band
+labelled with the reason) and lists them under the transport bar: when, how long, at what RPM, and why, using
+FOME/rusEFI's cut codes (RPM limit, boost cut, launch control, lambda protection, flood clear…). Warning codes
+("Warning: last") are listed too, as OBD-II P-codes with their meaning where they are standard ones. At a
+standstill FOME always reports "engine sync", which is normal and isn't listed. Logs without the cut codes still
+show where fuel stopped while the engine ran, with the likely reason (closed throttle: deceleration fuel cut). In
+live tuning, the indicator lamps name the reason ("Fuel cut: RPM limit") and the Gauges tab shows the warning
+codes the ECU holds.
+
+### Downloading a log, or just part of it
+
+**Download** offers the log as uploaded, **just the ✂ sections** (mark them with ✂ Section to trim the start and
+end), or **what's on screen**, as a .msl that TunerStudio and MegaLogViewer open. In live tuning it's the
+session's recording, every part as one file (the car saves first, so it's up to the second); *⬇ Download log*
+is also next to REC at the top.
 
 ### Dyno: horsepower and torque from a log
 
