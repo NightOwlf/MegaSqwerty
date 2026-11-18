@@ -429,3 +429,17 @@ def test_before_is_what_the_ecu_had_at_the_start_not_the_project_file(client, fx
     v = client.get(f"/t/{s['tune']}/versions").json()
     assert v["parent"]["slug"] != before and "start" in client.get(f"/t/{v['parent']['slug']}").text.lower() or v["parent"]["slug"] != before
     assert any("before syncing" in x["label"].lower() for x in v["versions"]) and ve
+
+
+def test_a_log_trims_to_a_new_one(client, fx):
+    """Keep only the chosen sections, or cut them out: a new log each time, the original untouched."""
+    text = "Time\tRPM\tMAP\ns\trpm\tkPa\n" + "".join(f"{i * 0.1:.1f}\t{1000 + i}\t50\n" for i in range(300)) 
+    r = client.post("/logs", files={"file": ("t.msl", text.encode(), "text/plain")}, follow_redirects=False)
+    slug = r.headers["location"].rstrip("/").split("/")[-1]
+    keep = client.post(f"/l/{slug}/trim", json={"mode": "keep", "s": "5-10,20-25"}).json()
+    k = client.get(f"/l/{keep['slug']}/data.json?ch=RPM").json()
+    assert keep["rows"] == 102 and k["channels"]["RPM"][0] == 1050 and k["t"][0] == 0
+    cut = client.post(f"/l/{slug}/trim", json={"mode": "cut", "s": "0-9.95"}).json()
+    assert cut["rows"] == 200 and client.get(f"/l/{cut['slug']}/data.json?ch=RPM").json()["channels"]["RPM"][0] == 1100
+    assert client.get(f"/l/{slug}/data.json").json()["rows"] == 300  # the original is as it was
+    assert client.post(f"/l/{slug}/trim", json={"mode": "keep", "s": ""}).status_code == 400

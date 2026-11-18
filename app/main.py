@@ -1220,6 +1220,39 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         return Response(text.encode("latin-1", "replace"), media_type="text/plain; charset=iso-8859-1",
                         headers={"Content-Disposition": f'attachment; filename="{base}-section.msl"'})
 
+    @app.post("/l/{log_slug}/trim")
+    async def log_trim(request: Request, log_slug: str):
+        """A new log made from this one: just the chosen stretches (`keep`), or this one with them taken out
+        (`cut`). It reads with the same tune; the original log is never changed."""
+        row = any_log(log_slug)
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "That didn't come through. Try again."}, status_code=400)
+        ranges, cut = parse_ranges(str(body.get("s") or "")), body.get("mode") == "cut"
+        if not ranges:
+            return JSONResponse({"error": "Mark a section first: ✂ Section, then drag across a graph."}, status_code=400)
+        if store.over_limit(client_ip(request), limit):
+            return JSONResponse({"error": MESSAGES[429]}, status_code=429)
+        raw = store.read_log_raw(log_slug)
+        if raw is None:
+            raise HTTPException(404)
+        text = await run_in_threadpool(log_as_msl, raw, row["name"], ranges, cut)
+        if text.count("\n") < 5:
+            return JSONResponse({"error": "That would leave the log empty."}, status_code=400)
+        tune = str(body.get("tune") or row["tune_slug"] or "")
+        doc = store.get_doc(tune) if tune else None
+        base_name = re.sub(r"\.(msl|mlg|csv|tsv|log)$", "", row["name"], flags=re.I)
+        name = f"{base_name} ({'cut' if cut else 'trimmed'}).msl"
+        try:
+            slug, key, rows = await run_in_threadpool(ingest_log, doc, tune if doc else "", text.encode("latin-1", "replace"), name)
+        except Exception:
+            return JSONResponse({"error": "The trimmed log couldn't be made."}, status_code=400)
+        store.record_upload(client_ip(request))
+        resp = JSONResponse({"slug": slug, "rows": rows, "url": f"/l/{slug}" + (f"?tune={tune}" if doc else "")})
+        set_key_cookie(resp, request, slug, key)
+        return resp
+
     def parse_ranges(s: str) -> list[tuple[float, float]]:
         out = []
         for part in (s or "").split(",")[:50]:
@@ -1228,8 +1261,9 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
                 out.append((float(m.group(1)), float(m.group(2))))
         return out
 
-    def log_as_msl(raw: bytes, name: str, ranges: list[tuple[float, float]]) -> str:
-        """Any log the viewer reads, cut to the given stretches of time, written as a TunerStudio .msl."""
+    def log_as_msl(raw: bytes, name: str, ranges: list[tuple[float, float]], cut: bool = False) -> str:
+        """Any log the viewer reads, cut to the given stretches of time (or, with cut, with them taken out),
+        written as a TunerStudio .msl."""
         import io
         import numpy as np
         parsed = logsmod.parse_log(raw, name)
@@ -1239,11 +1273,13 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         keep = np.zeros(len(t), dtype=bool)
         for a, b in ranges:
             keep |= (t >= a) & (t <= b)
+        if cut:
+            keep = ~keep
         tc = roles.get("time")
         chans = [c for c in parsed.channels if c is not tc]
         cols = [t[keep] - (t[keep][0] if keep.any() else 0)] + [np.asarray(c.arr, dtype=float)[keep] for c in chans]
         buf = io.StringIO()
-        what = ", ".join(f"{a:.1f}–{b:.1f} s" for a, b in ranges)
+        what = ("without " if cut else "") + ", ".join(f"{a:.1f}–{b:.1f} s" for a, b in ranges)
         buf.write(f'"{name} ({what})"\n')
         buf.write("\t".join(["Time"] + [c.name for c in chans]) + "\n")
         buf.write("\t".join(["s"] + [c.units or "" for c in chans]) + "\n")

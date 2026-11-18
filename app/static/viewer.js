@@ -474,7 +474,9 @@
       '<button type="button" class="btn sm" data-sec="end" title="Mark where it ends, at the cursor">End ⟧</button>' +
       '<button type="button" class="btn sm" data-sec="view" title="Add what\'s on screen as a section">+ On screen</button>' +
       (sections.length ? '<button type="button" class="btn sm" data-sec="clear">Clear</button>' +
-        (tab !== "ve" ? '<button type="button" class="btn sm primary" data-sec="tune">Tune these ▶</button>' : "") : "");
+        (tab !== "ve" ? '<button type="button" class="btn sm primary" data-sec="tune">Tune these ▶</button>' : "") +
+        (LIVE ? "" : '<button type="button" class="btn sm" data-sec="keep" title="A new log with only these sections (the start and end trimmed off)">Keep only these</button>' +
+          '<button type="button" class="btn sm" data-sec="cut" title="A new log with these sections taken out">Cut these out</button>') : "");
   }
   function inSections(Tarr) {
     if (!sections.length) return null;
@@ -1691,6 +1693,21 @@
   }
   /* The log: all of it, or just the ✂ sections, or what's on screen (a trimmed .msl). Live, it's the session's
      recording (the car saves first, so it's up to the second). */
+  /* A new log from this one: only the ✂ sections (trim the start and end, drop the boring bits), or with them cut
+     out. The original stays as it is; the new one opens with the same tune. */
+  function trimLog(mode, btn) {
+    if (!sections.length) return;
+    var what = sections.map(function (r) { return fmtClock(r[0]) + "–" + fmtClock(r[1]); }).join(", ");
+    if (!confirm((mode === "keep" ? "Make a new log with only " : "Make a new log without ") + what + "? This log stays as it is.")) return;
+    btn.disabled = true; btn.textContent = "Making it…";
+    fetch(base + "/trim", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: mode, s: sections.map(function (r) { return r[0].toFixed(3) + "-" + r[1].toFixed(3); }).join(","), tune: TUNE }) })
+      .then(function (r) { return r.json().then(function (j) { return [r.ok, j]; }); })
+      .then(function (res) {
+        if (!res[0]) throw new Error(res[1].error || "try again");
+        location.href = res[1].url;
+      }).catch(function (e) { btn.disabled = false; btn.textContent = mode === "keep" ? "Keep only these" : "Cut these out"; toast("Couldn't make it: " + e.message); });
+  }
   function downloadLog(b) {
     var ranges = b.dataset.dlSec != null ? sections.slice() : b.dataset.dlView != null ? [[view.t0, view.t1]] : null;
     if (b.dataset.dlSec != null && !ranges.length) { toast("Mark the part you want first: tap ✂ Section, then drag across a graph (or Start/End)."); return; }
@@ -3064,6 +3081,7 @@
       else if (w === "view") addSection(view.t0, view.t1);
       else if (w === "clear") { sections = []; secStart = null; sectionsChanged(); }
       else if (w === "tune") { selMode = false; setTab("ve"); renderSections(); }
+      else if (w === "keep" || w === "cut") trimLog(w, b);
       return;
     }
     b = e.target.closest("[data-lv-tab]");

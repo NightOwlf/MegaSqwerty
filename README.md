@@ -527,6 +527,12 @@ show where fuel stopped while the engine ran, with the likely reason (closed thr
 live tuning, the indicator lamps name the reason ("Fuel cut: RPM limit") and the Gauges tab shows the warning
 codes the ECU holds.
 
+### Trimming a log
+
+Mark sections with **✂ Section** (drag across a graph, Start/End, or + On screen), then **Keep only these** for a
+new log with just those stretches (the start and end trimmed off), or **Cut these out** for a new log without them.
+The new log opens with the same tune; the original is never changed.
+
 ### Downloading a log, or just part of it
 
 **Download** offers the log as uploaded, **just the ✂ sections** (mark them with ✂ Section to trim the start and
