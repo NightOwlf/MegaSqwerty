@@ -1205,6 +1205,7 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
                 head, names = lines[:3], lines[1] if len(lines) > 1 else ""
             elif len(lines) > 1 and lines[1] != names:
                 continue  # a part with other channels can't go in the same file
+            shift, prev = 0.0, None
             for ln in lines[3:]:
                 if not ln.strip():
                     continue
@@ -1213,7 +1214,10 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
                     tt = float(ln[:tab])
                 except ValueError:
                     continue
-                at = (t0 or 0) + tt
+                if prev is not None and tt + shift < prev - 1:  # a part whose clock restarted (an old car page reload): keep file order
+                    shift = prev - tt + 0.05
+                prev = tt + shift
+                at = (t0 or 0) + tt + shift
                 if eranges and not any(a <= at <= b for a, b in eranges):
                     continue
                 out.append((at, ln[tab:]))

@@ -357,3 +357,17 @@ def test_a_reloaded_car_page_carries_on_the_same_log_and_clock(client, fx):
     lines = sec.text.strip().split("\n")
     assert lines[1].split("\t")[0] == "Time" and len(lines) == 3 + 11
     assert _re.match(r"^0\t", lines[3]) or lines[3].startswith("0\t") or lines[3].startswith("0.")
+
+
+def test_a_session_part_whose_clock_restarted_downloads_in_order(client, fx):
+    s = start(client, fx)
+    sid, car = s["id"], s["car_key"]
+    head = '"MSQ Viewer live session 2026-11-18T01:00:00.000Z"\nTime\tRPM\tMAP\tAFR\ns\tRPM\tkPa\tAFR\n'
+    body = "".join(f"{i * 0.05:.3f}\t{1000 + i}\t40\t14.7\n" for i in range(30)) + "".join(f"{i * 0.05:.3f}\t{2000 + i}\t40\t14.7\n" for i in range(30))
+    # stored as it was before the fix: the second stretch restarts at 0 (an old page, no t0, straight in)
+    raw = (head + body).encode()
+    from app.main import create_app  # noqa: F401
+    slug = client.post(f"/live/{sid}/log?k={car}&part=1", content=raw).json()["slug"]
+    lines = client.get(f"/live/{sid}/session.msl?k={car}").text.strip().split("\n")[3:]
+    rpms = [int(float(x.split("\t")[1])) for x in lines]
+    assert rpms[:30] == list(range(1000, 1030)) and rpms[30:] == list(range(2000, 2030)) and slug
