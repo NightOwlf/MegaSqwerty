@@ -346,7 +346,8 @@ def test_a_reloaded_car_page_carries_on_the_same_log_and_clock(client, fx):
     r = client.post(f"/live/{sid}/log?k={car}&part=1&slug={slug}&t0={t0}", content=rows(0, 40)).json()
     assert r["slug"] == slug and r["rows"] == 80
     raw = client.get(f"/l/{slug}/download").text.strip().split("\n")
-    times = [float(x.split("\t")[0]) for x in raw[3:]]
+    assert raw[0].startswith('"rusEFI') and raw[1].startswith('"MSQ Viewer live session')  # the ECU signature TunerStudio needs, first
+    times = [float(x.split("\t")[0]) for x in raw[4:]]
     assert times == sorted(times) and abs(times[40] - 600.0) < 0.01  # carried on, ten minutes later
     whole = client.get(f"/live/{sid}/session.msl?k={car}")
     assert whole.status_code == 200 and "attachment" in whole.headers["content-disposition"]
@@ -362,8 +363,8 @@ def test_a_reloaded_car_page_carries_on_the_same_log_and_clock(client, fx):
     sec = client.get(f"/l/{slug}/download?s=0.5-1.0")
     assert sec.status_code == 200 and "-section.msl" in sec.headers["content-disposition"]
     lines = sec.text.strip().split("\n")
-    assert lines[1].split("\t")[0] == "Time" and len(lines) == 3 + 11
-    assert _re.match(r"^0\t", lines[3]) or lines[3].startswith("0\t") or lines[3].startswith("0.")
+    assert lines[0].startswith('"rusEFI') and lines[2].split("\t")[0] == "Time" and len(lines) == 4 + 11
+    assert _re.match(r"^0\t", lines[4]) or lines[4].startswith("0\t") or lines[4].startswith("0.")
 
 
 def test_a_session_part_whose_clock_restarted_downloads_in_order(client, fx):
@@ -463,12 +464,12 @@ def test_live_session_logs_are_written_the_way_tunerstudio_writes_them(client, f
     sig = layout["comms"]["signature"]
     old = '"MSQ Viewer live session 2026-11-18T01:00:00.000Z"\nTime\tRPM\tMAP\ns\tRPM\tkPa\n' + "".join(f"{i * 0.05:.3f}\t{900 + i}\t40\n" for i in range(20))
     client.post(f"/live/{sid}/log?k={car}&part=1", content=old)
-    new = (f'"{sig}: MSQ Viewer live tuning"\n"Capture Date: Wed Nov 18 01:00:10 UTC 2026, File author: MSQ Viewer live tuning 2026-11-18T01:00:10.000Z"\n'
+    new = (f'"{sig}"\n"Capture Date: Wed Nov 18 01:00:10 UTC 2026, File author: MSQ Viewer live tuning 2026-11-18T01:00:10.000Z"\n'
            "Time\tRPM\tMAP\tFuel: Trim bank 1\ns\tRPM\tkPa\t%\n" + "".join(f"{i * 0.05:.3f}\t{2000 + i}\t50\t1.5\n" for i in range(20)))
     r = client.post(f"/live/{sid}/log?k={car}&part=2", content=gzip.compress(new.encode()), headers={"X-Body-Encoding": "gzip"})
     assert r.status_code == 200 and r.json()["rows"] == 20
     lines = client.get(f"/live/{sid}/session.msl?k={car}").text.strip().split("\n")
-    assert lines[0] == f'"{sig}: MSQ Viewer live tuning"' and lines[1].startswith('"Capture Date: ')
+    assert lines[0] == f'"{sig}"' and lines[1].startswith('"Capture Date: ')
     assert lines[2] == "Time\tRPM\tMAP\tFuel: Trim bank 1" and lines[3] == "s\tRPM\tkPa\t%"
     rows = [ln.split("\t") for ln in lines[4:]]
     assert len(rows) == 40 and rows[0][1] == "900" and rows[0][3] == "" and rows[20][1] == "2000" and rows[20][3] == "1.5"
@@ -551,3 +552,19 @@ def test_a_blank_ecu_read_never_becomes_the_tune(client, fx):
         while cw.receive_json()["t"] != "state":
             pass
     assert client.get(f"/t/{s['tune']}.msq").content == before
+
+
+def test_a_log_without_the_ecu_signature_gets_it_for_tunerstudio(client, fx):
+    """TunerStudio names a log's fields (VE Analyze's EGO among them) by the ECU signature on its first line. A log
+    made before MSQ Viewer wrote it ("MSQ Viewer live session ...") gets the tune's when downloaded, whole or a section."""
+    s = start(client, fx)
+    sig = parse_msq(client.get(f"/t/{s['tune']}.msq").content).signature
+    assert sig
+    old = ('"MSQ Viewer live session (whole drive, repaired) 2026-11-18T01:03:33.680Z"\nTime\tRPM\tFuel: Trim bank 1\n'
+           's\tRPM\t%\n' + "".join(f"{i * 0.1:.3f}\t{900 + i}\t{i % 3}\n" for i in range(60)))
+    slug = client.post(f"/live/{s['id']}/log?k={s['car_key']}&part=1", content=old).json()["slug"]
+    whole = client.get(f"/l/{slug}/download").text.split("\n")
+    assert whole[0] == f'"{sig}"' and whole[1].startswith('"MSQ Viewer live session') and whole[2].startswith("Time")
+    assert "\n".join(whole[1:]) == client.get(f"/l/{slug}/download").text.split("\n", 1)[1]  # the rest as it was
+    part = client.get(f"/l/{slug}/download?s=1-3").text.split("\n")
+    assert part[0] == f'"{sig}"' and part[1].startswith('"MSQ Viewer live session') and part[2].startswith("Time")

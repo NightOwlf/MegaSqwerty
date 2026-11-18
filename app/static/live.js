@@ -385,7 +385,7 @@
     var when = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d0.getUTCDay()] + " " + ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d0.getUTCMonth()] +
       " " + p2(d0.getUTCDate()) + " " + p2(d0.getUTCHours()) + ":" + p2(d0.getUTCMinutes()) + ":" + p2(d0.getUTCSeconds()) + " UTC " + d0.getUTCFullYear();
     var sig = String(state.ecuSignature || layout.comms.signature || "").replace(/"/g, "").trim();
-    var head = first ? (sig ? '"' + sig + ': MSQ Viewer live tuning"\n' : "") +
+    var head = first ? (sig ? '"' + sig + '"\n' : "") +
       '"Capture Date: ' + when + ", File author: MSQ Viewer live tuning " + d0.toISOString() + '"\n' +
       ["Time"].concat(rec.cols.map(function (n) { return layout.outputs[n].label || n; })).join("\t") + "\n" +
       ["s"].concat(rec.cols.map(function (n) { return layout.outputs[n].units || ""; })).join("\t") + "\n" : "";

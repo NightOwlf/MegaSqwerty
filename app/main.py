@@ -955,6 +955,8 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
             raise HTTPException(404)
         base = re.sub(r"[^A-Za-z0-9._-]+", "-", row["name"]).strip("-._")[:60] or f"{row['slug']}.log"
         binary = raw[:5] == b"MLVLG"
+        if not binary:
+            raw = with_signature(raw, log_signature(row))
         return Response(raw, media_type="application/octet-stream" if binary else "text/plain; charset=utf-8",
                         headers={"Content-Disposition": f'attachment; filename="{base}"'})
 
@@ -1259,6 +1261,24 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         doc = store.get_doc(slug) if slug else None
         return (getattr(doc, "signature", "") or "") if doc is not None else ""
 
+    def with_signature(raw: bytes, signature: str) -> bytes:
+        """TunerStudio names a log's fields (VE Analyze's EGO and lambda among them) by the ECU signature on its
+        first line; without it, it falls back to MegaSquirt's names and asks for "EGO cor1". A text log whose
+        header doesn't carry the tune's signature gets it as its first line; everything else stays as it was."""
+        sig = (signature or "").replace('"', "").strip()
+        if not sig:
+            return raw
+        head = raw[:4000].decode("latin-1", "replace").split("\n")
+        quoted = []
+        for ln in head:
+            if not ln.strip().startswith('"'):
+                break
+            quoted.append(ln.strip())
+        if any(q.strip('"').strip() == sig for q in quoted):
+            return raw
+        nl = b"\r\n" if b"\r\n" in raw[:4000] else b"\n"
+        return b'"' + sig.encode("latin-1", "replace") + b'"' + nl + raw
+
     def parse_ranges(s: str) -> list[tuple[float, float]]:
         out = []
         for part in (s or "").split(",")[:50]:
@@ -1290,6 +1310,9 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         cols = [tcol] + [np.asarray(c.arr, dtype=float)[keep] for c in chans]
         buf = io.StringIO()
         head = list(parsed.header)
+        sig = (signature or "").replace('"', "").strip()
+        if head and sig and not any(h.strip().strip('"').strip() == sig for h in head):
+            head.insert(0, '"' + sig + '"')  # TunerStudio names the fields by it (see with_signature)
         if not head:  # a log without TunerStudio's header: give it one, from the tune's ECU signature if there is one
             if signature:
                 head.append('"' + signature.replace('"', "") + '"')
@@ -1380,8 +1403,8 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         when = _dt.datetime.fromtimestamp(first, _dt.timezone.utc) if out else _dt.datetime.now(_dt.timezone.utc)
         start = when.strftime("%Y-%m-%dT%H:%M:%S.%fZ") if out else ""
         sig = next((q for q in quoted if not q.startswith('"Capture Date') and not q.startswith('"MSQ Viewer')), "")
-        if not sig and s.layout.get("comms", {}).get("signature"):
-            sig = '"' + s.layout["comms"]["signature"].replace('"', "") + ': MSQ Viewer live tuning"'
+        if s.layout.get("comms", {}).get("signature"):  # exactly the ECU's signature, as TunerStudio writes it
+            sig = '"' + s.layout["comms"]["signature"].replace('"', "").strip() + '"'
         head = ([sig] if sig else []) + ['"Capture Date: ' + when.strftime("%a %b %d %H:%M:%S UTC %Y") +
                                          ", File author: MSQ Viewer live tuning " + start + '"']
         return "\n".join(head + ["\t".join(cols), "\t".join(unit_of[c] for c in cols)] + body) + "\n", start[:16]
