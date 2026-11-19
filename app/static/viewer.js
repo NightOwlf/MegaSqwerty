@@ -1145,6 +1145,7 @@
       html.join("") + '</tbody></table><i class="lv-dot" hidden></i></div>' +
       '<button type="button" class="lv-zreset" hidden>⤡ Fit table</button>';
     this.wrap = $(".lv-tw", this.el);
+    this.wrap._grid = this;
     this.cells = [];
     var self = this;
     $$("td", this.el).forEach(function (td) { self.cells[+td.dataset.k] = td; });
@@ -1260,6 +1261,35 @@
     var td = this.cells[k];
     if (!td) return;
     td.classList.remove("vx-hit"); void td.offsetWidth; td.classList.add("vx-hit");
+  };
+  /* The table (or the selected cells) as TunerStudio copies it: only the values, tab between cells, one line
+     per row, top row = highest load, as on screen. No axis labels: TunerStudio refuses a paste with any text in it
+     ("not a valid table copy"). Select the top-left cell in TunerStudio and paste. */
+  Grid.prototype.tsv = function () {
+    var t = this.t, s = this.sel || [0, 0, t.rows - 1, t.cols - 1], self = this, lines = [];
+    for (var r = s[2]; r >= s[0]; r--) {
+      var row = [];
+      for (var c = s[1]; c <= s[3]; c++) {
+        var k = r * t.cols + c, v = self.opts.live ? self.opts.live(k) : valueAt(t, k);
+        var txt = v === v ? (+v).toFixed(t.d || 0) : "0";
+        row.push(/^-0(\.0*)?$/.test(txt) ? txt.slice(1) : txt);
+      }
+      lines.push(row.join("\t"));
+    }
+    return lines.join("\n");
+  };
+  Grid.prototype.copyTS = function () {
+    var text = this.tsv(), s = this.sel, t = this.t;
+    var what = s ? (s[2] - s[0] + 1) + "×" + (s[3] - s[1] + 1) + " cells" : "the whole " + (t.label || t.name) + " (" + t.rows + "×" + t.cols + ")";
+    var ok = function () { toast("Copied " + what + ". In TunerStudio select the top-left cell and press Ctrl/Cmd+V."); };
+    var fallback = function () {
+      var ta = document.createElement("textarea");
+      ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); ok(); } catch (err) { toast("Couldn't copy here: your browser blocked the clipboard."); }
+      document.body.removeChild(ta);
+    };
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(ok, fallback); else fallback();
   };
   Grid.prototype.rc = function (k) { return [Math.floor(k / this.t.cols), k % this.t.cols]; };
   Grid.prototype.selected = function () {
@@ -1479,7 +1509,7 @@
   function buildSlot(slot) {
     var t = slot.t;
     var opts = idx.tables.map(function (o, i) { return "<option value=" + i + (o === t ? " selected" : "") + ">" + esc(o.label) + "</option>"; }).join("");
-    slot.el.innerHTML = '<div class="lv-th"><select aria-label="Table">' + opts + '</select><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn lv-undobtn" data-undo-edit hidden title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div>' +
+    slot.el.innerHTML = '<div class="lv-th"><select aria-label="Table">' + opts + '</select><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn lv-undobtn" data-undo-edit hidden title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button><button type="button" class="lv-3dbtn" data-copy-ts title="Copy the table (or the selected cells) to paste into TunerStudio: select the top-left cell there and press Ctrl/Cmd+V">Copy</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div>' +
       '<div class="lv-ovrow"><span>Cells show</span><select class="lv-ovsel" aria-label="What the cells show">' +
         '<option value="">Values</option><option value="time">Time in each cell</option>' +
         (idx.roles && idx.roles.knock != null ? '<option value="knock">Knock retard (most)</option>' : "") +
@@ -1895,7 +1925,7 @@
       "</div>" +
       '<div class="lv-ve-apply" hidden></div>' +
       '<div class="lv-ve-warn" hidden></div>' +
-      '<div class="lv-ve-main"><div class="lv-ve-gridbox"><div class="lv-th"><b>' + esc(t.label) + '</b><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn lv-undobtn" data-undo-edit hidden title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div><div class="lv-grid"></div>' + toolbar() +
+      '<div class="lv-ve-main"><div class="lv-ve-gridbox"><div class="lv-th"><b>' + esc(t.label) + '</b><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn lv-undobtn" data-undo-edit hidden title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button><button type="button" class="lv-3dbtn" data-copy-ts title="Copy the table (or the selected cells) to paste into TunerStudio: select the top-left cell there and press Ctrl/Cmd+V">Copy</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div><div class="lv-grid"></div>' + toolbar() +
         '<p class="lv-tn">' + esc((t.yl || "Load") + (t.yu ? " (" + t.yu + ")" : "") + " ↑ · " + (t.xl || "RPM") + " →") + " · after a run, select cells to adjust them</p></div>" +
         '<div class="lv-ve-side">' +
           '<div class="lv-ve-why"></div>' +
@@ -3220,6 +3250,14 @@
                       : "Back to turning the map. Tap Shape to edit by dragging.");
       return;
     }
+    b = e.target.closest("[data-copy-ts]");
+    if (b) {
+      var cbx = b.closest(".lv-table, .lv-ve-gridbox"), cg = null;
+      tableSlots.forEach(function (s) { if (s.el === cbx) cg = s.grid; });
+      if (!cg && ve.grid && cbx && cbx.contains(ve.grid.el)) cg = ve.grid;
+      if (cg) cg.copyTS();
+      return;
+    }
     b = e.target.closest("[data-3d]");
     if (b) {
       var box = b.closest(".lv-table, .lv-ve-gridbox"), gr = null;
@@ -3463,6 +3501,18 @@
     var slot = tableSlots[+sel.closest(".lv-table").dataset.slot];
     slot.t = idx.tables[+sel.value];
     buildSlot(slot); invalidate();
+  });
+  // Ctrl/Cmd+C on a table: the selected cells (or the whole table) in TunerStudio's paste format
+  document.addEventListener("copy", function (e) {
+    var ae = document.activeElement, g = ae && ae.closest && ae.closest(".lv-tw");
+    g = g && g._grid;
+    if (!g || !e.clipboardData) return;
+    var ts = window.getSelection && String(window.getSelection());
+    if (ts && ts.trim()) return;  // text picked by hand: copy that
+    e.clipboardData.setData("text/plain", g.tsv());
+    e.preventDefault();
+    var s = g.sel;
+    toast("Copied " + (s ? (s[2] - s[0] + 1) + "×" + (s[3] - s[1] + 1) + " cells" : "the whole table") + " for TunerStudio: select the top-left cell there and press Ctrl/Cmd+V.");
   });
   document.addEventListener("keydown", function (e) {
     if (idx && (e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
