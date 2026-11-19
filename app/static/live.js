@@ -43,7 +43,9 @@
       viewerWant[name] = 1;
       if (ROLE === "car") wanted[name] = 1; else sendWant();
     },
-    set: function (table, cells) { return liveSet(table, cells); },
+    set: function (table, cells, note) { return liveSet(table, cells, note); },
+    /* VE Analyze Live started or stopped on this page: the server tells every page of the session (the banner) */
+    veLive: function (on) { state.veLive = !!on; state.veLiveBy = on ? (ROLE === "car" ? "driver" : "tuner") : ""; send({ t: "velive", on: !!on }); renderState(); emit("state"); },
     /* the settings dialogs (dialogs.js): a setting changed in a dialog. At the car the driver may change anything
        the ECU's dialogs show, inside its range; a tuner's request goes to the car, where the remote rules apply. */
     setSetting: function (table, cells) {
@@ -54,6 +56,7 @@
       return id;
     },
     burn: function () { if (ROLE === "car") queue.push({ kind: "burn", m: {} }); else send({ t: "burn", id: ++reqN }); },
+    holdBurn: function (on) { burnHeld = !!on; if (on) clearTimeout(burnT); },
     layout: function () { return layout; },
     values: function () { return tables; },
     live: function () { return och; },
@@ -61,15 +64,21 @@
     running: function () { return ROLE === "car" ? running : !!state.ecu; },
     state: function () { return Object.assign({ role: ROLE }, state, { mode: ROLE === "car" && modeSel() ? modeSel().value : state.mode }); }
   };
-  function liveSet(table, cells) {
+  function liveSet(table, cells, note) {
     var id = ++reqN;
+    var c = layout && layout.constants[table];
+    if (state.veLive && note !== "velive" && /ve/i.test(table) && c && c.units === "%" &&
+        !window.confirm("VE Analyze Live is running and correcting this VE table as the car drives. Change it by hand anyway? (Live carries on from your values.)")) {
+      setTimeout(function () { emit("rejected", { id: id, why: "Not sent: VE Analyze Live is running." }); }, 0);
+      return id;
+    }
     if (ROLE === "car") {
       var why = !running ? "Connect the ECU first." : check(table, cells);
       if (why) { setTimeout(function () { emit("rejected", { id: id, why: why }); }, 0); return id; }
-      queue.push({ kind: "set", m: { id: id, table: table, cells: cells }, by: "driver" });
+      queue.push({ kind: "set", m: { id: id, table: table, cells: cells, note: note || "" }, by: "driver" });
       return id;
     }
-    send({ t: "set", id: id, table: table, cells: cells });
+    send({ t: "set", id: id, table: table, cells: cells, note: note || "" });
     return id;
   }
   setInterval(function () { fps = frames; frames = 0; if (ROLE === "view") { send({ t: "ping", at: Date.now() }); pill(); } }, 1000);
@@ -177,7 +186,7 @@
       }
       logChange(m); flashCells(m.table, m.cells); renderTable(); if ((layout.editable || {})[m.table] === "setting") renderSettings();
       emit("applied", m);
-      if (ROLE === "view" && m.by === "driver") toast("The driver changed " + Object.keys(m.cells).length + " cell(s) in " + title(m.table));
+      if (ROLE === "view" && m.by === "driver" && m.note !== "velive") toast("The driver changed " + Object.keys(m.cells).length + " cell(s) in " + title(m.table));
     } else if (m.t === "rejected") { clearPending(m.id); renderTable(); if (bus.rejected) emit("rejected", m); else toast("Not changed: " + (m.why || "refused"), true); }
     else if (m.t === "burned") { toast(m.verified ? "Burned and read back from the ECU: it holds every value." : m.bad ? "Burned, but reading it back " + m.bad + " value(s) differ: ask the driver to burn again." : "Burned to the ECU: the changes are now permanent.", !!m.bad); state.needBurn = false; snapBase(); renderTable(); renderState(); emit("state"); }
     else if (m.t === "notice") { toast(m.text || ""); $(".lt-mode-note") && ($(".lt-mode-note").textContent = m.text || ""); }
@@ -563,7 +572,14 @@
   /* What a remote change may do. The car page is the only thing that writes to the ECU, so this is the rule:
      only what the layout marks editable (tables, curves, settings; never what needs a power cycle, or that
      sets how the engine is wired, timed, measured or protected), inside the ECU's range, in moderate steps. */
-  function check(table, cells) { return ECU.checkChange(layout, tables, table, cells, STOICH, title, limits()); }
+  function check(table, cells) { return backToStart(table, cells) ? null : ECU.checkChange(layout, tables, table, cells, STOICH, title, limits()); }
+  // putting cells back to what the ECU had when the session started (an undo) is always allowed, however far they moved
+  function backToStart(table, cells) {
+    var was = startTables && startTables[table], c = layout && layout.constants[table], ks = Object.keys(cells || {});
+    if (!was || !c || !ks.length || (layout.editable || {})[table] === "setting") return false;
+    var tol = Math.abs(c.scale || 0) * 0.51 + 1e-6;
+    return ks.every(function (k) { var w = was[+k]; return w != null && Math.abs(+cells[k] - w) <= tol; });
+  }
   /* What the ECU had when this session started (kept in this browser, so a reload doesn't move it), and how far
      the driver lets any cell move from it. */
   var startTables = (function () { try { var s = JSON.parse(localStorage.getItem("msq.live.start") || "null"); return s && s.sid === SID ? s.t : null; } catch (e) { return null; } })();
@@ -676,12 +692,12 @@
     }, function () { return -1; });
   }
   /* Keep every change: burn by itself once changes have stopped for 10 s (the driver can turn this off). */
-  var burnT = 0;
-  function autoBurnOn() { var c = $("[data-autoburn]"); return ROLE === "car" && c && c.checked; }
+  var burnT = 0, burnHeld = false;  // held: VE Analyze Live is running (its changes stay unburned until you choose)
+  function autoBurnOn() { var c = $("[data-autoburn]"); return ROLE === "car" && c && c.checked && !burnHeld; }
   function burnSoon() {
     clearTimeout(burnT);
     if (!autoBurnOn()) return;
-    burnT = setTimeout(function () { if (state.needBurn && running) queue.push({ kind: "burn", m: { auto: true } }); }, 10000);
+    burnT = setTimeout(function () { if (state.needBurn && running && !burnHeld) queue.push({ kind: "burn", m: { auto: true } }); }, 10000);
   }
   (function () {
     var c = $("[data-autoburn]");
@@ -1721,6 +1737,7 @@
   }
   function renderState() {
     pill();
+    veLiveBanner();
     var mode = state.mode || "ask", m = $(".lt-mode-note");
     if (m) m.textContent = ROLE === "view" && !state.ecu ? "Not connected: this page goes live by itself when the ECU is plugged in at the car." : ROLE === "view" ? ({ off: "The driver has remote changes off: you can watch, not change.", ask: "The driver approves each change you send.", auto: "Your changes go to the ECU straight away." }[mode]) : "";
     var burn = $("[data-act=burn]");
@@ -1728,13 +1745,28 @@
     var tl = $("[data-tune-link]");
     if (tl && (state.tune || (sess && sess.tune))) { tl.href = "/t/" + (state.tune || sess.tune); tl.hidden = false; }
   }
+  /* While VE Analyze Live runs (on any page of this session), every page says so: hands off the VE table. */
+  function veLiveBanner() {
+    var all = document.querySelectorAll(".lt-velive-banner"), b = all[0];  // the page's one banner (not just this panel's)
+    for (var i = 1; i < all.length; i++) all[i].parentNode.removeChild(all[i]);
+    if (!b) {
+      b = document.createElement("div");
+      b.className = "lt-velive-banner"; b.setAttribute("role", "status"); b.hidden = true;
+      document.body.insertBefore(b, document.body.firstChild);
+    }
+    var on = !!state.veLive;
+    b.hidden = !on;
+    document.documentElement.classList.toggle("velive-on", on);
+    if (on) b.innerHTML = "<b>● VE Analyze Live is running</b> <span>(started by the " + esc(state.veLiveBy === "tuner" ? "tuner" : "driver") +
+      "): it's correcting the VE table in the ECU as the car drives. Leave the VE table alone until it's stopped. Changed cells flash; nothing is burned until someone chooses to.</span>";
+  }
   function logChange(m) {
     var ul = $(".lt-log ul");
     if (!ul || !m.table) return;
     var n = Object.keys(m.cells || {}).length, at = new Date((m.at || Date.now() / 1000) * 1000);
     var li = document.createElement("li");
     li.innerHTML = '<button type="button" class="lt-chg"><span class="mono">' + at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) + "</span> " +
-      esc(title(m.table)) + ": " + n + " cell" + (n === 1 ? "" : "s") + (m.note === "undo" ? " (undo)" : m.note === "load" ? " (tune loaded)" : "") +
+      esc(title(m.table)) + ": " + n + " cell" + (n === 1 ? "" : "s") + (m.note === "undo" ? " (undo)" : m.note === "load" ? " (tune loaded)" : m.note === "velive" ? " (VE Analyze Live)" : "") +
       ' <small class="dim">by the ' + esc(m.by === "driver" ? "driver" : "tuner") + "</small> <span class=\"lt-chg-more\">▸</span></button>";
     li._m = m;
     ul.insertBefore(li, ul.firstChild);

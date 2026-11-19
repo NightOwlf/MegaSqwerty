@@ -82,7 +82,8 @@ class Session:
         self.car: WebSocket | None = None
         self.viewers: set[WebSocket] = set()
         self.state: dict = {"car": False, "ecu": False, "mode": "ask", "burn": False, "needBurn": False,
-                            "signature": "", "ecuSignature": ""}
+                            "signature": "", "ecuSignature": "", "veLive": False, "veLiveBy": ""}
+        self.velive_ws: int | None = None  # the page running VE Analyze Live (its banner goes when that page does)
         self.tables: dict = {}
         self.och: dict | None = None
         self.frame: str | None = None    # the latest live frame, as the car sent it
@@ -574,6 +575,13 @@ def register(app, store, templates, deps) -> None:
                     continue
                 s.touched = time.time()
                 t = msg.get("t")
+                if t == "velive":  # VE Analyze Live started or stopped on this page: every page shows it's running
+                    on = bool(msg.get("on"))
+                    if on or s.velive_ws in (None, id(ws)):
+                        s.state["veLive"], s.state["veLiveBy"] = on, ("driver" if role == "car" else "tuner") if on else ""
+                        s.velive_ws = id(ws) if on else None
+                        await announce(s)
+                    continue
                 if role == "car":
                     if t == "o":  # a live frame formatted some other way: same as the fast path
                         s.frame = json.dumps(msg, separators=(",", ":"))
@@ -651,6 +659,9 @@ def register(app, store, templates, deps) -> None:
                 s.state["ecu"] = False
             s.viewers.discard(ws)
             s.wants.pop(id(ws), None)
+            if s.velive_ws == id(ws):  # the page running VE Analyze Live went away: it isn't running any more
+                s.velive_ws = None
+                s.state["veLive"], s.state["veLiveBy"] = False, ""
             s.touched = time.time()
             try:
                 await announce(s)

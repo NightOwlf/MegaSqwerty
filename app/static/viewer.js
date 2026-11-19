@@ -1252,9 +1252,10 @@
       td.classList.toggle("vx-ed", !self.opts.live && edited(t, k));
       td.classList.toggle("vx-lock", isLocked(t, k));
       // an edited copy: mark the cells that differ from the tune it was edited from
-      var was = t.p && !self.opts.live ? t.p[k] : null, diff = was != null && Math.abs(v - was) > 0.5 * Math.pow(10, -t.d);
+      var wa = self.opts.was || t.p, was = wa && !self.opts.live ? wa[k] : null, diff = was != null && Math.abs(v - was) > 0.5 * Math.pow(10, -t.d);
       td.classList.toggle("vx-ch", diff);
-      if (diff) td.title = "Was " + cellText(was, t.d) + " in the original"; else if (td.title) td.removeAttribute("title");
+      if (diff) td.title = "Was " + cellText(was, t.d) + (self.opts.was ? " before VE Analyze Live (" + (v > was ? "+" : "") + ((v / was - 1) * 100).toFixed(1) + "%)" : " in the original");
+      else if (td.title) td.removeAttribute("title");
     });
     this.fitText(cw);
     this.markSel();
@@ -1935,7 +1936,9 @@
         '<div class="lv-ve-ctl">' +
           '<button class="btn primary" type="button" data-ve="run">▶ Run VE Analyze</button>' +
           '<button class="btn" type="button" data-ve="stop" hidden>Stop</button>' +
-          (LIVE ? '<button class="btn lv-velive" type="button" data-ve="live" title="Correct the VE table in the ECU as you drive, every 15 seconds">● Run live</button>' : "") +
+          (LIVE ? '<button class="btn lv-velive" type="button" data-ve="live" title="Correct the VE table in the ECU as you drive, every 5 seconds">● Run live</button>' +
+            '<button class="btn" type="button" data-ve="livesum" hidden title="Before and after, side by side or in 3D">Live\'s changes</button>' +
+            '<button class="btn" type="button" data-ve="liveundo" hidden title="Put every cell VE Analyze Live changed back to what it was before Live started">↺ Undo Live\'s changes</button>' : "") +
           '<select data-ve-speed aria-label="How fast to play through the log"><option value="25">Watch it (25 s)</option><option value="10" selected>Quick (10 s)</option><option value="0">Instant</option></select>' +
           '<select data-ve-mode aria-label="What the cells show"><option value="value">New VE</option><option value="change">Change %</option><option value="hits">Data (s)</option><option value="err">AFR error %</option><option value="ran">VE that ran</option></select>' +
         "</div>" +
@@ -2007,7 +2010,8 @@
   }
   /* ---------- what changed: before / after / change, side by side ---------- */
   var cmp = { t: null, grids: [], is3d: false, cam: { yaw: -0.62, pitch: 0.62, zoom: 1 }, timer: 0 };
-  function baseOf(t) { return t.p || t.z; }
+  // live: VE Analyze Live's changes are measured from where the VE table was before it started
+  function baseOf(t) { return LIVE && veLive.start && t === ve.table ? veLive.start : t.p || t.z; }
   function changedKs(t) {
     var b = baseOf(t), out = [], eps = 0.5 * Math.pow(10, -t.d);
     for (var k = 0; k < t.z.length; k++) if (Math.abs(valueAt(t, k) - b[k]) > eps) out.push(k);
@@ -2050,7 +2054,7 @@
     // the totals, and every changed cell, biggest first
     var richer = 0, leaner = 0, sum = 0;
     ks.forEach(function (k) { var c = pct(k); if (c > 0) richer++; else leaner++; sum += Math.abs(c); });
-    var why = t.p ? "against the tune it was edited from" : "against this tune";
+    var why = LIVE && veLive.start && t === ve.table ? "since VE Analyze Live started" : t.p ? "against the tune it was edited from" : "against this tune";
     $(".lv-cmp-sum", box).textContent = plural(ks.length, "cell") + " changed " + why + ": " + richer + " up, " + leaner + " down, " +
       (ks.length ? (sum / ks.length).toFixed(1) : "0") + "% on average.";
     var hits = t === ve.table && ve.engine ? ve.engine.hits : null;
@@ -2376,8 +2380,101 @@
      (not noise), by at least 1%, within the max change and locks you set and the driver's say on remote changes;
      after a change it waits to see what the new value does before changing it again, and a cell whose mixture
      doesn't get richer as fuel goes up (a misfire or a wideband problem reading lean) is held and reported, not fed. */
-  var VE_LIVE_EVERY = 5000, VE_LIVE_HALFLIFE = 300;
-  var veLive = { on: false, timer: 0, fromT: 0, lastT: 0, passes: 0, cells: 0, engine: null, lag: null, mine: {}, blocked: {}, held: [] };
+  // Leaning is the dangerous way: Live takes a cell down at most VE_LIVE_LEAN % per pass (so a wideband reading
+  // falsely rich is caught before it goes far), and a boost cell (above 100 kPa) at most VE_LIVE_BOOST_LEAN % below
+  // where it was when Live started. Richer is never limited beyond the usual caps.
+  var VE_LIVE_EVERY = 5000, VE_LIVE_HALFLIFE = 300, VE_LIVE_LEAN = 5, VE_LIVE_BOOST_LEAN = 5;
+  var veLive = { on: false, timer: 0, fromT: 0, lastT: 0, passes: 0, cells: 0, engine: null, lag: null, mine: {}, blocked: {}, held: [],
+                 start: null, touched: {}, last: [] };
+  /* What the VE table was before Live first ran on this page (kept for this tab, so a reload doesn't move it): what
+     "Change %" and the marked cells measure from, the boost limit's reference, and what Undo puts back. */
+  function veLiveKey() { return "msq.velive." + location.pathname; }
+  function veLiveRestore(t) {
+    if (veLive.start || !t) return;
+    try {
+      var j = JSON.parse(sessionStorage.getItem(veLiveKey()) || "null");
+      if (j && j.name === t.name && j.start && j.start.length === t.z.length) { veLive.start = j.start; veLive.touched = j.touched || {}; }
+    } catch (e) { /* ignore */ }
+  }
+  function veLiveKeep(t) {
+    try { sessionStorage.setItem(veLiveKey(), JSON.stringify({ name: t.name, start: veLive.start, touched: veLive.touched })); } catch (e) { /* ignore */ }
+  }
+  function veLiveShow(t) {
+    if (!ve.grid || !veLive.start) return;
+    ve.grid.opts.was = veLive.start; ve.grid.opts.base = veLive.start;
+    ve.grid.paint();
+    var ub = $('[data-ve="liveundo"]'), n = Object.keys(veLive.touched).filter(function (k) { return Math.abs(valueAt(t, +k) - veLive.start[+k]) > 0.5 * Math.pow(10, -t.d); }).length;
+    if (ub) { ub.hidden = !n; ub.textContent = "↺ Undo Live's changes (" + plural(n, "cell") + ")"; }
+    var sb = $('[data-ve="livesum"]');
+    if (sb) { sb.hidden = !n; sb.textContent = "Live's changes (" + plural(n, "cell") + ")"; }
+    compareSoon();
+  }
+  /* What VE Analyze Live changed, in a window: before / after / change side by side (or in 3D), every changed cell
+     listed biggest first, and what to do with them: keep (burn), undo, or decide later. The "What changed" section of
+     the VE tab is moved into the window while it's open, and back after. */
+  var veSum = null;
+  function veLiveSummary(auto) {
+    var t = ve.table, box = $(".lv-cmp");
+    if (!t || !veLive.start || !box) return;
+    var n = changedKs(t).length;
+    if (!n) { if (!auto) toast("VE Analyze Live hasn't changed any cell yet."); return; }
+    if (!veSum) {
+      veSum = document.createElement("div");
+      veSum.className = "lv-dlg lv-dlg-velive"; veSum.hidden = true;
+      veSum.innerHTML = '<div class="lv-dlg-in lv-dlg-wide"><h2>VE Analyze Live: what it changed</h2>' +
+        '<p class="dim" data-vs-note></p><div data-vs-slot></div>' +
+        '<div class="lv-dlg-btns"><button class="btn" type="button" data-vs="undo">↺ Undo Live\'s changes</button>' +
+        '<button class="btn" type="button" data-vs="burn">Burn to keep them</button><span class="st-grow"></span>' +
+        '<button class="btn primary" type="button" data-vs="close">Close (decide later)</button></div></div>';
+      document.body.appendChild(veSum);
+      veSum.addEventListener("click", function (e) {
+        var b = e.target.closest("[data-vs]");
+        if (!b && e.target !== veSum) return;
+        var what = b ? b.dataset.vs : "close";
+        if (what === "undo") { veLiveSummaryClose(); veLiveUndo(); return; }
+        if (what === "burn") {
+          var api = window.MSQLive;
+          if (!api || !window.confirm("Burn VE Analyze Live's changes into the ECU, so they stay after the key goes off? (Every backup of the tune is kept in History.)")) return;
+          api.burn(); veLiveSummaryClose(); toast("Burning to the ECU…"); return;
+        }
+        veLiveSummaryClose();
+      });
+    }
+    // the VE tab's compare section moves into the window (a placeholder keeps its place)
+    if (!box._home) { box._home = document.createComment("lv-cmp"); box.parentNode.insertBefore(box._home, box); }
+    $("[data-vs-slot]", veSum).appendChild(box);
+    cmp.t = t;
+    var st = window.MSQLive && window.MSQLive.state ? window.MSQLive.state() : {};
+    $("[data-vs-note]", veSum).textContent = plural(n, "cell") + " moved from where the VE table was before Live started" +
+      (veLive.passes ? " (" + (veLive.passes + (veLive.passes === 1 ? " pass" : " passes")) + " this run)" : "") + ". They're in the ECU's working memory" +
+      (st.needBurn ? ", not burned: Burn keeps them; Undo puts them back; switching the key off loses them." : ".") +
+      " Tables shows the maps side by side; 3D shows them as surfaces. Tap a row to find that cell in all three.";
+    $('[data-vs="burn"]', veSum).hidden = !st.needBurn || (st.role === "view" && !st.burn);
+    veSum.hidden = false;
+    setTimeout(renderCompare, 0);  // drawn once it's in the window, at the window's size
+  }
+  function veLiveSummaryClose() {
+    if (!veSum || veSum.hidden) return;
+    veSum.hidden = true;
+    var box = $(".lv-cmp", veSum);
+    if (box && box._home) box._home.parentNode.insertBefore(box, box._home);
+    setTimeout(renderCompare, 0);
+  }
+  function veLiveUndo() {
+    var t = ve.table;
+    if (!t || !veLive.start) return;
+    var ks = Object.keys(veLive.touched).map(Number).filter(function (k) { return Math.abs(valueAt(t, k) - veLive.start[k]) > 0.5 * Math.pow(10, -t.d); });
+    if (!ks.length) { toast("Nothing to undo: every cell is where it was before Live started."); return; }
+    if (!window.confirm("Put " + plural(ks.length, "cell") + " VE Analyze Live changed back to what they were before it started? They go to the ECU's working memory now.")) return;
+    if (veLive.on) { var lb = $('[data-ve="live"]'); if (lb) veLiveToggle(lb); }
+    rememberUndo(t, ks);
+    ks.forEach(function (k) { setValue(t, k, veLive.start[k]); });
+    editsChanged(t);
+    ks.forEach(function (k) { ve.grid.flash(k); });
+    $(".lv-ve-status").textContent = "VE Analyze Live's changes are going back: " + plural(ks.length, "cell") + " to what they were before it started.";
+    setTimeout(function () { veLiveShow(t); }, 1500);
+  }
+  function holdBurn(on) { var api = window.MSQLive; if (api && api.holdBurn) api.holdBurn(on); }
   function veLiveToggle(btn) {
     var t = ve.table, status = $(".lv-ve-status");
     veLive.on = !veLive.on;
@@ -2391,11 +2488,23 @@
         toast("VE Analyze's earlier suggestion was put aside: Live corrects the ECU's table as you drive.");
       }
       veLive.fromT = N ? T[N - 1] : 0; veLive.lastT = veLive.fromT; veLive.passes = 0; veLive.cells = 0;
-      veLive.engine = null; veLive.lag = null; veLive.mine = {}; veLive.blocked = {}; veLive.held = [];
+      veLive.engine = null; veLive.lag = null; veLive.mine = {}; veLive.blocked = {}; veLive.held = []; veLive.last = [];
+      veLiveRestore(t);
+      if (!veLive.start) { veLive.start = Array.prototype.map.call(t.z, function (v, k) { return valueAt(t, k); }); veLive.touched = {}; veLiveKeep(t); }
+      veLiveShow(t);
+      holdBurn(true);  // nothing Live does is burned while it runs, even with "Burn by itself" on
+      if (window.MSQLive && window.MSQLive.veLive) window.MSQLive.veLive(true);  // every page of the session shows it's running
       $(".lv-ve-warn").hidden = true;
-      status.textContent = "VE Analyze Live: drive normally (warm engine, steady throttle is best). Every few seconds the cells you've driven through are corrected in the ECU.";
+      status.textContent = "VE Analyze Live: drive normally (warm engine, steady throttle is best). Every 5 seconds the cells you've driven through are corrected in the ECU's working memory (not burned). Corrected cells get an orange corner; \"Change %\" shows how far each has moved.";
       veLive.timer = setInterval(veLivePass, VE_LIVE_EVERY);
-    } else status.textContent = "VE Analyze Live stopped after " + plural(veLive.passes, "pass") + ", " + plural(veLive.cells, "cell correction") + ".";
+    } else {
+      holdBurn(false);
+      if (window.MSQLive && window.MSQLive.veLive) window.MSQLive.veLive(false);
+      setTimeout(function () { veLiveSummary(true); }, 400);  // once the last pass's writes have landed
+      status.textContent = "VE Analyze Live stopped after " + (veLive.passes + (veLive.passes === 1 ? " pass" : " passes")) + ", " + plural(veLive.cells, "cell correction") + ". " +
+        "Its changes are in the ECU's working memory, not burned: Burn keeps them, ↺ Undo Live's changes takes them back, and switching the key off loses them.";
+      veLiveShow(t);
+    }
   }
   function indexAtT(time) {  // the first record at or after a time (the live buffer drops its oldest records when full)
     var lo = 0, hi = N;
@@ -2413,7 +2522,7 @@
     if (to - from < 40) return;  // a couple of seconds of data at least
     var now = Array.prototype.map.call(t.z, function (v, k) { return valueAt(t, k); });
     var opts = veOpts();
-    opts.ref = "base"; opts.minChange = opts.minChange == null ? 1 : opts.minChange; opts.responseCheck = true;
+    opts.ref = "base"; opts.minChange = opts.minChange == null ? 1 : opts.minChange; opts.responseCheck = true; opts.maxLean = VE_LIVE_LEAN;
     var userLag = typeof opts.lag === "number" ? opts.lag : null;
     if (!veLive.engine) veLive.engine = VEAL.create(Object.assign({}, t, { z: now.slice() }), opts);
     var engine = veLive.engine;
@@ -2450,13 +2559,34 @@
       var fresh = engine.passEnd();
       var res = engine.finish();
       veLive.passes++;
-      var ch = (res.changed || []).filter(function (c) { return !isLocked(t, c.i) && !veLive.blocked[c.i]; });
-      ch.forEach(function (c) { setValue(t, c.i, c.to); veLive.mine[c.i] = c.to; });
+      var C = t.x.length, unit = Math.pow(10, t.d || 0), boost = /kpa/i.test(t.yu || "") || !t.yu, capped = 0;
+      var ch = (res.changed || []).filter(function (c) {
+        if (isLocked(t, c.i) || veLive.blocked[c.i]) return false;
+        // boost: never more than VE_LIVE_BOOST_LEAN % leaner than before Live started
+        var was = veLive.start ? veLive.start[c.i] : null, ld = t.y[Math.floor(c.i / C)];
+        if (boost && ld > 100 && was > 0 && c.to < was * (1 - VE_LIVE_BOOST_LEAN / 100)) {
+          var floor = Math.ceil(was * (1 - VE_LIVE_BOOST_LEAN / 100) * unit - 1e-6) / unit;
+          if (c.to < floor) { capped++; c.to = floor; }
+          if (Math.abs(c.to - c.from) < 0.5 / unit) return false;
+        }
+        return true;
+      });
+      ch.forEach(function (c) { setValue(t, c.i, c.to); veLive.mine[c.i] = c.to; veLive.touched[c.i] = 1; });
       veLive.cells += ch.length;
-      if (ch.length) { editsChanged(t); if (ve.grid) { ve.grid.paint(); ch.forEach(function (c) { ve.grid.flash(c.i); }); } }
+      if (ch.length) {
+        veLiveKeep(t);
+        editsChanged(t);
+        if (ve.grid) { veLiveShow(t); ch.forEach(function (c) { ve.grid.flash(c.i); }); }
+      }
       if (fresh.length) { veLive.held = veLive.held.concat(fresh); veLiveHeld(t); }
       var wait = res.stats.used ? "" : " · no clean data yet (warm up, hold the throttle steady)";
-      status.textContent = "VE Analyze Live · pass " + veLive.passes + ": " + (ch.length ? plural(ch.length, "cell") + " corrected and sent to the ECU" : "nothing sure enough to change this time") +
+      // the biggest corrections this pass, where they are on the map
+      var where = ch.slice().sort(function (a, b) { return Math.abs(b.to / b.from - 1) - Math.abs(a.to / a.from - 1); }).slice(0, 4).map(function (c) {
+        var p = (c.to / c.from - 1) * 100;
+        return Math.round(t.x[c.i % C]) + " rpm · " + Math.round(t.y[Math.floor(c.i / C)]) + (t.yu ? " " + t.yu : "") + " " + cellText(c.from, t.d) + "→" + cellText(c.to, t.d) + " (" + (p > 0 ? "+" : "") + p.toFixed(1) + "%)";
+      });
+      status.textContent = "VE Analyze Live · pass " + veLive.passes + ": " + (ch.length ? plural(ch.length, "cell") + " corrected in the ECU (not burned): " + where.join(", ") + (ch.length > 4 ? "…" : "") : "nothing sure enough to change this time") +
+        (capped ? " · " + plural(capped, "boost cell") + " held at " + VE_LIVE_BOOST_LEAN + "% leaner, the most Live takes out in boost" : "") +
         " · " + plural(veLive.cells, "correction") + " in all · wideband delay " + Math.round(engine.opts.lag * 1000) + " ms" + wait;
       renderWhy();
     }).catch(function () { veLive.busy = false; /* try again next pass */ });
@@ -2469,9 +2599,12 @@
       return Math.round(t.x[k % C]) + " rpm · " + Math.round(t.y[Math.floor(k / C)]) + (t.yu ? " " + t.yu : "");
     });
     box.hidden = false;
-    box.innerHTML = "<b>⚠ Adding fuel isn't making " + plural(veLive.held.length, "cell") + " richer</b> (" + esc(where.join(", ")) + (veLive.held.length > 12 ? "…" : "") + "). " +
-      "VE Analyze Live has stopped raising them. When more fuel reads leaner, the engine is usually misfiring (weak spark: check dwell, plugs, coils) " +
-      "or the wideband is reading wrong (its ground, or an exhaust leak), not short of fuel. Fix that, then pull those cells back to where they ran well.";
+    var e = veLive.engine, down = e && e.stuckDir ? veLive.held.filter(function (k) { return e.stuckDir(k) < 0; }).length : 0;
+    box.innerHTML = "<b>⚠ The wideband isn't following the fuel in " + plural(veLive.held.length, "cell") + "</b> (" + esc(where.join(", ")) + (veLive.held.length > 12 ? "…" : "") + "). " +
+      "VE Analyze Live has stopped moving them further. " +
+      (down < veLive.held.length ? "Where more fuel reads leaner, the engine is usually misfiring (weak spark: check dwell, plugs, coils) or the wideband is reading wrong (its ground, or an exhaust leak), not short of fuel. " : "") +
+      (down ? "Where less fuel didn't read leaner, the wideband is reading rich whatever the engine does: don't trust it there, and check the sensor before going on. " : "") +
+      "Fix that, then use ↺ Undo Live's changes or pull those cells back to where they ran well.";
   }
   function renderWhy() {
     var e = ve.engine;
@@ -3224,7 +3357,7 @@
     b = e.target.closest("[data-lv-tab]");
     if (b) { setTab(b.dataset.lvTab); return; }
     b = e.target.closest("[data-ve]");
-    if (b) { if (b.dataset.ve === "live") veLiveToggle(b); else if (b.dataset.ve === "run") runVE(); else ve.running = false; return; }
+    if (b) { if (b.dataset.ve === "live") veLiveToggle(b); else if (b.dataset.ve === "liveundo") veLiveUndo(); else if (b.dataset.ve === "livesum") veLiveSummary(false); else if (b.dataset.ve === "run") runVE(); else ve.running = false; return; }
     b = e.target.closest("[data-save-tune]");
     if (b && vePending && editCount()) { setTab("ve"); return; }
     if (b) { saveAndShare(b); return; }
@@ -3552,7 +3685,7 @@
     if (t && t.closest && t.closest(".lv-tw")) return;  // the table has the keyboard
     var k = e.key, big = e.shiftKey ? 10 : 1;
     if (k === "Escape" && selMode) { selMode = false; renderSections(); invalidate(); }
-    if (k === "Escape") { closePick(); $$(".lv-help, .lv-dlg", document).forEach(function (d) { d.hidden = true; }); return; }
+    if (k === "Escape") { closePick(); veLiveSummaryClose(); $$(".lv-help, .lv-dlg", document).forEach(function (d) { d.hidden = true; }); return; }
     if (ve.running) return;
     if (k === "ArrowLeft") step(-big);
     else if (k === "ArrowRight") step(big);
@@ -3817,7 +3950,7 @@
       var ks = Object.keys(cells);
       for (var i = 0; i < ks.length; i += 64) {
         var part = {}; ks.slice(i, i + 64).forEach(function (k) { part[k] = cells[k]; p[k] = cells[k]; });
-        var id = api.set(t.name, ecuCells(t, part));
+        var id = api.set(t.name, ecuCells(t, part), veLive.on && t === ve.table ? "velive" : "");
         liveReq[id] = { t: t, cells: part }; ids.push(id);
       }
     });

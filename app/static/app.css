@@ -1964,3 +1964,11 @@ fieldset.tsd-p { padding: 14px 10px 8px; border: 1px solid var(--line); border-r
   .tsd-body { max-height: none; }
 }
 @media (min-width: 641px) { .tsd-f > .tsd-q { grid-column: 4; } .tsd-f > .tsd-u { grid-column: 3; } }
+
+/* VE Analyze Live running somewhere in this session: a banner on every page */
+.lt-velive-banner { position: sticky; top: 0; z-index: 60; padding: 7px 14px; background: #ff9f0a; color: #1d1d1f; font-size: 13px; line-height: 1.35; text-align: center; box-shadow: 0 1px 4px rgba(0, 0, 0, .25); }
+.lt-velive-banner b { white-space: nowrap; }
+.lt-velive-banner b::first-letter { color: #c62828; animation: lv-velive-pulse 1.2s ease-in-out infinite; }
+@keyframes lv-velive-pulse { 50% { opacity: .25; } }
+.lv-dlg-in.lv-dlg-wide { width: min(1240px, 100%); }
+.lv-dlg-velive .lv-cmp { margin-top: 4px; }

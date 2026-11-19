@@ -31,6 +31,8 @@
     lag: "auto",       // wideband delay: "auto" (measured from the log) or seconds
     lagByRpm: true,    // exhaust takes longer to reach the sensor at low RPM: scale the delay with it
     maxChange: 15,     // % a cell may move in one pass: cautious, so one bad stretch of log can't wreck a cell
+    maxLean: null,     // % a cell may come DOWN in one pass (null: maxChange). Live uses a small step: leaning is the
+                       // dangerous way, and small steps let the response check see a bad wideband before it goes far
     minData: 0.5,      // s of data a cell needs for full authority
     smooth: 0.15,      // 0–1: how much neighbouring cells with data are pulled together
     lamMin: 0.6,
@@ -149,6 +151,9 @@
     var lockedSet = new Uint8Array(N);
     // per pass, per cell: the mixture it saw (for the response check), and its history across passes
     var pY = new Float64Array(N), pW = new Float64Array(N), hist = new Array(N), stuck = new Uint8Array(N);
+    // which way a held cell was going when it stopped responding: +1 raised (a misfire reads lean), -1 lowered (a
+    // wideband reading rich whatever the fuel): it's never moved further that way
+    var stuckDir = new Int8Array(N);
     function setLocked(list) { lockedSet.fill(0); (list || []).forEach(function (k) { if (k >= 0 && k < N) lockedSet[k] = 1; }); }
     setLocked(o.locked);
     var within = function (v, lo, hi) { return (lo == null || !(v < lo)) && (hi == null || !(v > hi)); };
@@ -279,7 +284,7 @@
         var cp = corner[p];
         hits[cp] += s * w;
         errSum[cp] += s * w * (lam / tgt - 1); errW[cp] += s * w;
-        pY[cp] += s * w * Math.log(lam / tgt); pW[cp] += s * w;
+        pY[cp] += s * w * Math.log(want); pW[cp] += s * w;  // the VE the engine needed, for the response check
         var r = want / used;
         rS[cp] += s * w * r; rS2[cp] += s * w * r * r; wS2[cp] += s * w * s * w;
         val[cp] += s * w / (hits[cp] + prior) * err;
@@ -299,9 +304,9 @@
       if (lockedSet[k] || hits[k] < o.minData * 0.1) return base[k];
       if (o.ref === "base") ran = base[k];
       var authority = Math.min(1, hits[k] / o.minData);
-      var lim = Math.abs(ran) * o.maxChange / 100;
+      var lim = Math.abs(ran) * o.maxChange / 100, limDown = o.maxLean == null ? lim : Math.abs(ran) * Math.min(o.maxChange, o.maxLean) / 100;
       v = base[k] + (v - base[k]) * authority;
-      return Math.max(ran - lim, Math.min(ran + lim, v));
+      return Math.max(ran - limDown, Math.min(ran + lim, v));
     }
     function current(k) { return limited(k, val[k], valRan[k]); }
 
@@ -319,9 +324,11 @@
     /* VE Analyze Live keeps one engine for the whole session: what each sample says the engine needs is measured
        against the VE that ran then (logged), so it stays true after the table changes. Between passes the table
        it corrects moves on (rebase), older evidence slowly counts for less (decay), and locks can change. */
-    /* After a live pass: note each cell's table value and the mixture it saw this pass. Raising a cell's VE has to
-       make the mixture there richer; when it has gone up 6% or more over the session and the mixture didn't follow
-       (or went leaner), more fuel isn't the answer: the cell is held (it may still come down). -> newly held cells */
+    /* After a live pass: note each cell's table value and the VE its samples said the engine needed this pass. On a
+       healthy engine and wideband that need stays put however the table moves; when the cell has moved 6% or more
+       over the session and the need moved with it, the wideband isn't measuring fuel there (a misfire reads lean,
+       a bad sensor reads one mixture whatever the fuel): the cell is held, never moved further the way it was
+       going (it may still go back). -> newly held cells */
     function passEnd() {
       var fresh = [];
       for (var q = 0; q < N; q++) {
@@ -341,9 +348,10 @@
         pts.forEach(function (p) { sw += p[2]; sx += p[2] * p[0]; sy += p[2] * p[1]; lo = Math.min(lo, p[0]); hi = Math.max(hi, p[0]); });
         var mx = sx / sw, my = sy / sw, cxy = 0, cxx = 0;
         pts.forEach(function (p) { cxy += p[2] * (p[0] - mx) * (p[1] - my); cxx += p[2] * (p[0] - mx) * (p[0] - mx); });
-        // the cell's value moves the mixture by its share of the interpolation (about half): a working cell gives a
-        // clearly negative slope; around zero or positive means fuel isn't what's wrong there
-        if (hi - lo >= Math.log(1.06) && cxx > 0 && cxy / cxx > -0.1) { stuck[q] = 1; fresh.push(q); }
+        // what the engine needed (VE used × measured λ / target) doesn't depend on the table when the wideband reads
+        // true: moving this cell or its neighbours leaves it where it is (slope ≈ 0). A wideband stuck reading one
+        // mixture, or a misfire reading lean, makes it follow the table instead (slope ≈ the cell's share, ~0.5–1+)
+        if (hi - lo >= Math.log(1.06) && cxx > 0 && cxy / cxx > 0.3) { stuck[q] = 1; stuckDir[q] = h.x >= pts[0][0] ? 1 : -1; fresh.push(q); }
       }
       return fresh;
     }
@@ -415,7 +423,8 @@
         // not sure enough, or too small to bother with: the cell stays as it is
         var rel = base[k] ? Math.abs(full / base[k] - 1) : 0;
         if (rel * 100 < o.minChange || (o.confidence > 0 && rel < o.confidence * uncertainty(k))) full = base[k];
-        if (stuck[k] && full > base[k]) full = base[k];  // not responding to fuel: never raised further
+        // not responding to fuel: never moved further the way it was going (raised on a misfire, leaned on a bad reading)
+        if (stuck[k] && (stuckDir[k] < 0 ? full < base[k] : full > base[k])) full = base[k];
         // live: after a change, see what the new value does before changing the cell again
         var hk = hist[k];
         if (o.responseCheck && hk && hk.moved && hk.sw < 0.25) full = base[k];
@@ -448,6 +457,7 @@
              mismatch: mismatch, ran: function (k) { return valRan[k]; }, uncertainty: uncertainty,
              rebase: rebase, decay: decay, setLocked: setLocked, passEnd: passEnd,
              stuck: function () { var out = []; for (var q = 0; q < N; q++) if (stuck[q]) out.push(q); return out; },
+             stuckDir: function (q) { return stuckDir[q]; },
              summary: summary, opts: o, logs: logs, cells: N };
   }
 

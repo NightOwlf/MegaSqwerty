@@ -195,14 +195,14 @@ console.log("all VE Analyze tests passed");
 /* VE Analyze Live: one engine for the whole session, corrections written into the ECU's table pass by pass while
    the car keeps running on it. Same steps as the viewer (rebase on the table as it is now, decay older evidence,
    a short window per pass, then the corrections go into the ECU). */
-function liveSession({ truthOf = truth, noise = 0.004, passes = 40, passS = 5, hz = 20, opts = {}, seed = 3, misfire = null } = {}) {
+function liveSession({ truthOf = truth, noise = 0.004, passes = 40, passS = 5, hz = 20, opts = {}, seed = 3, misfire = null, stuckRich = null } = {}) {
   const rand = rng(seed), dt = 1 / hz, lag = 0.15, per = Math.round(passS * hz), total = per * passes;
   const cur = tune.slice(), n0 = total + 200;
   const d = { T: new Float32Array(n0), rpm: new Float32Array(n0), load: new Float32Array(n0), lam: new Float32Array(n0),
               tgt: new Float32Array(n0), ve: new Float32Array(n0), tps: new Float32Array(n0), clt: new Float32Array(n0),
               map: new Float32Array(n0) };
   const ratio = new Float32Array(n0);
-  const engine = VEAL.create(Object.assign({}, table, { z: cur.slice() }), Object.assign({ lag, lagByRpm: false, ref: "base", minChange: 1 }, opts));
+  const engine = VEAL.create(Object.assign({}, table, { z: cur.slice() }), Object.assign({ lag, lagByRpm: false, ref: "base", minChange: 1, maxLean: 5 }, opts));
   let from = 0, n = 0, sent = 0;
   const sample = (i) => {
     const t = i * dt;
@@ -216,6 +216,8 @@ function liveSession({ truthOf = truth, noise = 0.004, passes = 40, passS = 5, h
     d.lam[i] = d.tgt[src] * ratio[src] * (1 + (rand() - 0.5) * 2 * noise);
     // a misfire: unburned air reaches the wideband, and the more fuel it's given the leaner it reads
     if (misfire && misfire(d.rpm[src], d.load[src])) d.lam[i] *= 1.12 * Math.pow(1 / ratio[src], 1.3);
+    // a wideband that reads rich whatever the fuel does (a bad sensor, its ground): λ stuck near 0.85
+    if (stuckRich && stuckRich(d.rpm[src], d.load[src])) d.lam[i] = 0.85 * (1 + (rand() - 0.5) * 2 * noise);
   };
   for (let p = 0; p < passes; p++) {
     for (let k = 0; k < per; k++) sample(n++);
@@ -271,4 +273,19 @@ function liveSession({ truthOf = truth, noise = 0.004, passes = 40, passS = 5, h
   guarded.cur.forEach((v, k) => { if (!zone(X[k % C], Y[Math.floor(k / C)]) && X[k % C] < 2000 && guarded.engine.hits[k] > 2) w = Math.max(w, Math.abs(v / truth[k] - 1)); });
   assert(w < 0.02, "cells away from the misfire still tune normally: " + (w * 100).toFixed(2) + "%");
   console.log("ok - a misfire isn't fed: " + held.length + " cells held at +" + (up * 100).toFixed(0) + "% (+" + (upNaive * 100).toFixed(0) + "% without the check)");
+}
+
+// 16. ...and it won't lean a cell out on a wideband that reads rich whatever the fuel does: once taking fuel out
+// hasn't made the mixture leaner, it stops lowering the cells (the dangerous direction) and says which.
+{
+  const zone = (rpm, load) => rpm > 2400 && rpm < 3600 && load > 70;
+  const inZone = k => X[k % C] >= 2500 && X[k % C] <= 3500 && Y[Math.floor(k / C)] >= 80;
+  const guarded = liveSession({ stuckRich: zone, passes: 60 });
+  const naive = liveSession({ stuckRich: zone, passes: 60, opts: { responseCheck: false } });
+  let down = 0, downNaive = 0;
+  tune.forEach((v, k) => { if (inZone(k)) { down = Math.max(down, 1 - guarded.cur[k] / v); downNaive = Math.max(downNaive, 1 - naive.cur[k] / v); } });
+  assert(guarded.engine.stuck().some(inZone), "the cells on the bad reading are reported");
+  assert(downNaive > 0.3, "without the check the cells lean out: -" + (downNaive * 100).toFixed(0) + "%");
+  assert(down < 0.2 && down < downNaive / 2, "with it, they stop coming down: -" + (down * 100).toFixed(0) + "% vs -" + (downNaive * 100).toFixed(0) + "%");
+  console.log("ok - a wideband stuck rich doesn't lean the table out: held at -" + (down * 100).toFixed(0) + "% (-" + (downNaive * 100).toFixed(0) + "% without the check)");
 }
