@@ -886,6 +886,20 @@
   var locks = (function () { try { return JSON.parse(localStorage.getItem("msq.lv.locks") || "{}") || {}; } catch (e) { return {}; } })();
   function isLocked(t, k) { return !!(locks[t.name] && locks[t.name][k]); }
   function saveLocks() { try { localStorage.setItem("msq.lv.locks", JSON.stringify(locks)); } catch (e) { /* ignore */ } }
+  // The header chip on each table: how many of its cells are locked; clicking it unlocks them all.
+  function renderLocks() {
+    $$("[data-locks]").forEach(function (b) {
+      var g = gridIn(b), n = g ? Object.keys(locks[g.t.name] || {}).length : 0;
+      b.hidden = !n;
+      b.textContent = "🔒 " + n + " locked";
+    });
+  }
+  function gridIn(b) {
+    var box = b.closest(".lv-table, .lv-ve-gridbox"), g = null;
+    tableSlots.forEach(function (s) { if (s.el === box) g = s.grid; });
+    if (!g && ve.grid && box && box.contains(ve.grid.el)) g = ve.grid;
+    return g;
+  }
   function valueAt(t, k) { var e = edits[t.name]; return e && k in e ? e[k] : t.z[k]; }
   function edited(t, k) { var e = edits[t.name]; return !!(e && k in e); }
   function range(t) {
@@ -1356,6 +1370,7 @@
     if (k === "-" || k === "_") { this.opts.act("dec"); e.preventDefault(); return; }
     if (k === "i" || k === "I") { this.opts.act("interp"); e.preventDefault(); return; }
     if (k === "s" || k === "S") { this.opts.act("smooth"); e.preventDefault(); return; }
+    if ((k === "l" || k === "L") && !e.metaKey && !e.ctrlKey) { this.opts.act("lock"); e.preventDefault(); return; }
     var mv = { ArrowUp: [1, 0], ArrowDown: [-1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[k];
     if (!mv) return;
     e.preventDefault();
@@ -1424,8 +1439,12 @@
     else if (what === "lock") {
       var on = !ks.every(function (k) { return isLocked(t, k); }), set = locks[t.name] || {};
       ks.forEach(function (k) { if (on) set[k] = 1; else delete set[k]; });
-      locks[t.name] = set; saveLocks();
+      if (!Object.keys(set).length) delete locks[t.name]; else locks[t.name] = set;
+      saveLocks();
       allGrids().forEach(function (g) { if (g.t === t) g.paint(); });
+      renderLocks();
+      toast(on ? "Locked " + plural(ks.length, "cell") + ": VE Analyze won't change " + (ks.length === 1 ? "it" : "them") + ". Press L again or 🔒 Lock to unlock."
+               : "Unlocked " + plural(ks.length, "cell") + ": VE Analyze can correct " + (ks.length === 1 ? "it" : "them") + " again.");
       return;
     }
     else if (what === "interp") {
@@ -1481,7 +1500,7 @@
       '<button type="button" data-t="interp" title="Fill between the corners of the selection (I)">Interp</button>' +
       '<button type="button" data-t="smooth" title="Smooth the selection (S)">Smooth</button>' +
       '<button type="button" data-t="revert" title="Back to the original tune\'s values">Revert</button>' +
-      '<button type="button" data-t="lock" title="Lock or unlock the selected cells: VE Analyze leaves locked cells alone">🔒 Lock</button>' +
+      '<button type="button" data-t="lock" title="Lock or unlock the selected cells (L): VE Analyze leaves locked cells alone">🔒 Lock</button>' +
       '<button type="button" data-t="range" class="lv-touch" title="Tap two cells to select everything between">Range</button>' +
       "</div>";
   }
@@ -1509,7 +1528,7 @@
   function buildSlot(slot) {
     var t = slot.t;
     var opts = idx.tables.map(function (o, i) { return "<option value=" + i + (o === t ? " selected" : "") + ">" + esc(o.label) + "</option>"; }).join("");
-    slot.el.innerHTML = '<div class="lv-th"><select aria-label="Table">' + opts + '</select><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn lv-undobtn" data-undo-edit hidden title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button><button type="button" class="lv-3dbtn" data-copy-ts title="Copy the table (or the selected cells) to paste into TunerStudio: select the top-left cell there and press Ctrl/Cmd+V">Copy</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div>' +
+    slot.el.innerHTML = '<div class="lv-th"><select aria-label="Table">' + opts + '</select><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn lv-undobtn" data-undo-edit hidden title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button><button type="button" class="lv-3dbtn lv-lockchip" data-locks hidden title="Cells locked against VE Analyze. Click to unlock them all">🔒</button><button type="button" class="lv-3dbtn" data-copy-ts title="Copy the table (or the selected cells) to paste into TunerStudio: select the top-left cell there and press Ctrl/Cmd+V">Copy</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div>' +
       '<div class="lv-ovrow"><span>Cells show</span><select class="lv-ovsel" aria-label="What the cells show">' +
         '<option value="">Values</option><option value="time">Time in each cell</option>' +
         (idx.roles && idx.roles.knock != null ? '<option value="knock">Knock retard (most)</option>' : "") +
@@ -1524,7 +1543,7 @@
       onSelect: function (g) { w.tools.hidden = !g.sel; }
     });
     load(t.xc); load(t.yc);
-    renderUndo();
+    renderUndo(); renderLocks();
     if (slot.ov) { $(".lv-ovsel", slot.el).value = slot.ov; showOverlay(slot); }
   }
   /* What the log did in each cell of a table: seconds spent there, the most knock retard, or the average
@@ -1925,7 +1944,7 @@
       "</div>" +
       '<div class="lv-ve-apply" hidden></div>' +
       '<div class="lv-ve-warn" hidden></div>' +
-      '<div class="lv-ve-main"><div class="lv-ve-gridbox"><div class="lv-th"><b>' + esc(t.label) + '</b><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn lv-undobtn" data-undo-edit hidden title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button><button type="button" class="lv-3dbtn" data-copy-ts title="Copy the table (or the selected cells) to paste into TunerStudio: select the top-left cell there and press Ctrl/Cmd+V">Copy</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div><div class="lv-grid"></div>' + toolbar() +
+      '<div class="lv-ve-main"><div class="lv-ve-gridbox"><div class="lv-th"><b>' + esc(t.label) + '</b><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn lv-undobtn" data-undo-edit hidden title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button><button type="button" class="lv-3dbtn lv-lockchip" data-locks hidden title="Cells locked against VE Analyze. Click to unlock them all">🔒</button><button type="button" class="lv-3dbtn" data-copy-ts title="Copy the table (or the selected cells) to paste into TunerStudio: select the top-left cell there and press Ctrl/Cmd+V">Copy</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div><div class="lv-grid"></div>' + toolbar() +
         '<p class="lv-tn">' + esc((t.yl || "Load") + (t.yu ? " (" + t.yu + ")" : "") + " ↑ · " + (t.xl || "RPM") + " →") + " · after a run, select cells to adjust them</p></div>" +
         '<div class="lv-ve-side">' +
           '<div class="lv-ve-why"></div>' +
@@ -1975,7 +1994,7 @@
       ve.grid.mode = this.value; ve.grid.paint();
     });
     renderSaveBars();
-    renderUndo();
+    renderUndo(); renderLocks();
     renderFilters();
     renderVeApply();
     if (root.classList.contains("cells-big")) $$("[data-cells]").forEach(function (x) { x.textContent = "Fit"; x.classList.add("on"); });
@@ -3252,10 +3271,18 @@
     }
     b = e.target.closest("[data-copy-ts]");
     if (b) {
-      var cbx = b.closest(".lv-table, .lv-ve-gridbox"), cg = null;
-      tableSlots.forEach(function (s) { if (s.el === cbx) cg = s.grid; });
-      if (!cg && ve.grid && cbx && cbx.contains(ve.grid.el)) cg = ve.grid;
+      var cg = gridIn(b);
       if (cg) cg.copyTS();
+      return;
+    }
+    b = e.target.closest("[data-locks]");
+    if (b) {
+      var lg = gridIn(b), ln = lg ? Object.keys(locks[lg.t.name] || {}).length : 0;
+      if (!ln || !window.confirm("Unlock all " + ln + " locked cells in " + (lg.t.label || lg.t.name) + "? VE Analyze will be able to change them again.")) return;
+      delete locks[lg.t.name]; saveLocks();
+      allGrids().forEach(function (g) { if (g.t === lg.t) g.paint(); });
+      renderLocks();
+      toast("Unlocked " + plural(ln, "cell") + " in " + (lg.t.label || lg.t.name) + ".");
       return;
     }
     b = e.target.closest("[data-3d]");
