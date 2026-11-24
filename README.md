@@ -88,8 +88,11 @@ curve or setting page):
 
 - **Tables** work like TunerStudio's table editor. Select cells by clicking, dragging or shift-clicking (on
   a phone, tap a cell, or tap **Range** and then the far corner). Then type a value and **Set**, **Add**,
-  **± %**, step **▲ / ▼**, **Interpolate** across the selection, or **Undo**. Keyboard: arrows move,
-  Shift+arrows extend, typing a number starts a value, Enter sets, + / − step, Ctrl/Cmd+Z undoes.
+  **± %** (by the value typed, e.g. -7.5), **−N% / +N%** (type a whole-number percent in the box between
+  them, e.g. 5, and each press takes 5% off or adds 5%), step **▲ / ▼**, **Interpolate** across the
+  selection, **Smooth**, or **Undo**. Keyboard: arrows move, Shift+arrows extend, typing a number starts a
+  value, Enter sets, + / − step, [ / ] take off / add the percent step, I interpolates, S smooths,
+  Ctrl/Cmd+Z undoes. The percent step is remembered and shared with the log viewer's tables.
 - **Curves, axis bins and numeric settings**: tap the number and type.
 - Edits stay in the browser until **Save as new tune**. Saving never changes the original. It creates a new
   tune with its own link and delete key, marked **Edited copy**, with a **See what changed** diff. Send that
@@ -364,7 +367,7 @@ It works the way a desktop log viewer does (`app/static/viewer.js`, plain canvas
 - **Mixture as AFR**: AFR channels are shown in preference to lambda, and the report gives AFR too.
 - **Markers** recorded in an `.mlg` show as red lines.
 - **Edit the tables**: drag (or tap, then *Range*) across cells, then type a value and Enter, or use −/+,
-  ±1%, *Interp* (fill between the selection's corners), *Smooth* and *Revert* (back to the original tune).
+  −N% / +N% (the whole-number percent in the box between them, or [ / ] on the keyboard), *Interp* (fill between the selection's corners), *Smooth* and *Revert* (back to the original tune).
 
 ### Editing together, live
 

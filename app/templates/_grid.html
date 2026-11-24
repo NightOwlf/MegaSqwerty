@@ -22,10 +22,16 @@
     <input class="edval" type="text" inputmode="decimal" enterkeyhint="done" data-edval placeholder="Value" aria-label="Value" autocomplete="off">
     <button type="button" class="tool" data-op="set" title="Set selected cells to the value (Enter)">= Set</button>
     <button type="button" class="tool" data-op="add" title="Add the value to selected cells (Shift+Enter)">+ Add</button>
-    <button type="button" class="tool" data-op="scale" title="Change selected cells by the value, in percent">± %</button>
+    <button type="button" class="tool" data-op="scale" title="Change selected cells by the value typed, in percent (e.g. -7.5)">± %</button>
+    <span class="edpct" role="group" aria-label="Percent step">
+      <button type="button" class="tool" data-op="pctdown" title="Take 1% off the selected cells ([)">−1%</button>
+      <input class="edval edpct-in" type="number" inputmode="numeric" min="1" max="100" step="1" value="1" data-edpct aria-label="Percent step, a whole number" title="How many percent −% / +% change the selected cells by">
+      <button type="button" class="tool" data-op="pctup" title="Add 1% to the selected cells (])">+1%</button>
+    </span>
     <button type="button" class="tool" data-op="up" title="Increase by one step (+)">▲</button>
     <button type="button" class="tool" data-op="down" title="Decrease by one step (−)">▼</button>
-    <button type="button" class="tool" data-op="interp" title="Interpolate between the corners of the selection">Interpolate</button>
+    <button type="button" class="tool" data-op="interp" title="Interpolate between the corners of the selection (I)">Interpolate</button>
+    <button type="button" class="tool" data-op="smooth" title="Smooth the selection: each cell averaged with its neighbours (S)">Smooth</button>
     <button type="button" class="tool" data-op="range" aria-pressed="false" title="Tap a second cell to select everything between">Range</button>
     <button type="button" class="tool" data-op="undo" title="Undo (Ctrl/Cmd+Z)">Undo</button>
     <button type="button" class="tool redmarks" data-clear-red hidden title="Cells you've changed have red numbers. Click to clear the red marks (the values stay)">✎ <span>0 changed</span></button>

@@ -1,5 +1,5 @@
 /* Tune editing. Tables edit like TunerStudio's table editor: select cells (click, drag, shift-click, or
-   Range on a phone), then Set / Add / ± % / step / Interpolate, with undo. Curves, axis bins and single
+   Range on a phone), then Set / Add / ± % / −N% +N% / step / Interpolate / Smooth, with undo. Curves, axis bins and single
    numbers edit in place. Edits are kept per tune in localStorage until saved, so they survive moving
    between the tune page and table pages. "Save as new tune" posts only the changed numbers; the server
    writes them into a copy of the original .msq and returns the new tune's link. The original is never
@@ -593,6 +593,33 @@
   });
   document.addEventListener("pointerup", function () { dragging = false; });
 
+  /* ---------- percent step ---------- */
+  // The whole number of percent the −N% / +N% buttons (and the [ / ] keys) change the selection by. Remembered in
+  // this browser and shared with the log viewer's tables (viewer.js uses the same key).
+  var PCT_KEY = "msq.pctstep", pctMem = 1;
+  function pctStep() {
+    var v = parseInt(stash(PCT_KEY), 10);
+    return v >= 1 && v <= 100 ? v : pctMem;
+  }
+  function setPctStep(v) {
+    v = Math.max(1, Math.min(100, Math.round(+v) || 1));
+    pctMem = v;
+    stash(PCT_KEY, String(v));
+    renderPct();
+    return v;
+  }
+  function renderPct() {
+    var v = pctStep();
+    $$("[data-edpct]").forEach(function (i) { if (document.activeElement !== i) i.value = v; });
+    $$("[data-op=pctdown]").forEach(function (b) { b.textContent = "\u2212" + v + "%"; b.title = "Take " + v + "% off the selected cells ([)"; });
+    $$("[data-op=pctup]").forEach(function (b) { b.textContent = "+" + v + "%"; b.title = "Add " + v + "% to the selected cells (])"; });
+  }
+  document.addEventListener("change", function (e) {
+    if (e.target.matches && e.target.matches("[data-edpct]")) e.target.value = setPctStep(e.target.value);
+  });
+  window.addEventListener("storage", function (e) { if (e.key === PCT_KEY) renderPct(); });
+  renderPct();
+
   /* ---------- operations ---------- */
   function lerp(a, b, t) { return a + (b - a) * t; }
   function op(fig, name) {
@@ -611,6 +638,9 @@
     }
     var at = function (r, c) { return num(textOf(rows[r].cells[c])); };
     var q = [at(b.r0, b.c0), at(b.r0, b.c1), at(b.r1, b.c0), at(b.r1, b.c1)];
+    var pct = name === "pctup" ? pctStep() : -pctStep(), src = {};
+    // Smooth reads every value before changing any, so the result doesn't depend on the order cells are visited.
+    if (name === "smooth") selected().forEach(function (td) { var p = posOf(td); src[p.r + "," + p.c] = num(textOf(td)); });
     var batch = [];
     selected().forEach(function (td) {
       var v = num(textOf(td)), p = posOf(td), nv;
@@ -618,6 +648,18 @@
       if (name === "set") nv = x;
       else if (name === "add") nv = v + x;
       else if (name === "scale") nv = v * (1 + x / 100);
+      else if (name === "pctup" || name === "pctdown") nv = v * (1 + pct / 100);
+      else if (name === "smooth") {
+        var sum = 0, n = 0;
+        for (var dr = -1; dr <= 1; dr++) for (var dc = -1; dc <= 1; dc++) {
+          var rr = p.r + dr, cc = p.c + dc;
+          if (rr < 0 || rr >= rows.length || cc < 1 || cc >= rows[rr].cells.length) continue;
+          var w = dr || dc ? 1 : 2, kv = rr + "," + cc, nb = kv in src ? src[kv] : at(rr, cc);
+          if (isNaN(nb)) continue;
+          sum += w * nb; n += w;
+        }
+        nv = n ? sum / n : v;
+      }
       else if (name === "up") nv = v + step;
       else if (name === "down") nv = v - step;
       else if (name === "interp") {
@@ -704,6 +746,11 @@
   document.addEventListener("keydown", function (e) {
     if (!editing) return;
     var t = e.target, k = e.key;
+    if (t.matches && t.matches("[data-edpct]")) {
+      if (k === "Enter") { e.preventDefault(); t.value = setPctStep(t.value); t.blur(); }
+      else if (k === "Escape") { t.value = pctStep(); t.blur(); }
+      return;
+    }
     if (t.matches && t.matches("[data-edval]")) {
       if (k === "Enter") { e.preventDefault(); op(t.closest(".hm-wrap"), e.shiftKey ? "add" : "set"); }
       else if (k === "Escape") t.blur();
@@ -732,6 +779,10 @@
     }
     if (k === "+" || k === "=") { e.preventDefault(); op(sel.fig, "up"); return; }
     if (k === "-" || k === "_") { e.preventDefault(); op(sel.fig, "down"); return; }
+    if (k === "[") { e.preventDefault(); op(sel.fig, "pctdown"); return; }
+    if (k === "]") { e.preventDefault(); op(sel.fig, "pctup"); return; }
+    if (k === "s" || k === "S") { e.preventDefault(); op(sel.fig, "smooth"); return; }
+    if (k === "i" || k === "I") { e.preventDefault(); op(sel.fig, "interp"); return; }
     if (k === "Escape") { sel = null; rangeMode = false; drawSel(); return; }
     if (/^[0-9.]$/.test(k)) {
       e.preventDefault();

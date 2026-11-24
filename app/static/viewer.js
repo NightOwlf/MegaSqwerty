@@ -1416,6 +1416,8 @@
     if (k === "Escape") { this.clearSel(); e.preventDefault(); return; }
     if (k === "+" || k === "=") { this.opts.act("inc"); e.preventDefault(); return; }
     if (k === "-" || k === "_") { this.opts.act("dec"); e.preventDefault(); return; }
+    if (k === "[") { this.opts.act("pctdown"); e.preventDefault(); return; }
+    if (k === "]") { this.opts.act("pctup"); e.preventDefault(); return; }
     if (k === "i" || k === "I") { this.opts.act("interp"); e.preventDefault(); return; }
     if (k === "s" || k === "S") { this.opts.act("smooth"); e.preventDefault(); return; }
     if ((k === "l" || k === "L") && !e.metaKey && !e.ctrlKey) { this.opts.act("lock"); e.preventDefault(); return; }
@@ -1482,7 +1484,10 @@
     var step = Math.pow(10, -t.d), s = grid.sel;
     if (what === "set") ks.forEach(function (k) { setValue(t, k, arg); });
     else if (what === "inc" || what === "dec") ks.forEach(function (k) { setValue(t, k, valueAt(t, k) + (what === "inc" ? step : -step)); });
-    else if (what === "pct") ks.forEach(function (k) { setValue(t, k, valueAt(t, k) * (1 + arg / 100)); });
+    else if (what === "pct" || what === "pctup" || what === "pctdown") {
+      var p = what === "pct" ? arg : (what === "pctup" ? 1 : -1) * pctStep();
+      ks.forEach(function (k) { setValue(t, k, valueAt(t, k) * (1 + p / 100)); });
+    }
     else if (what === "revert") ks.forEach(function (k) { setValue(t, k, t.p ? t.p[k] : t.z[k]); });
     else if (what === "lock") {
       var on = !ks.every(function (k) { return isLocked(t, k); }), set = locks[t.name] || {};
@@ -1536,6 +1541,29 @@
     return out.filter(Boolean);
   }
 
+  /* The whole-number percent the −% / +% buttons (and the [ / ] keys) change cells by. One setting for every
+     table, remembered in this browser; the tune editor (edit.js) uses the same one. */
+  var PCT_KEY = "msq.pctstep", pctMem = 1;
+  function pctStep() {
+    var v = NaN;
+    try { v = parseInt(localStorage.getItem(PCT_KEY), 10); } catch (e) { /* storage blocked */ }
+    return v >= 1 && v <= 100 ? v : pctMem;
+  }
+  function setPctStep(v) {
+    v = Math.max(1, Math.min(100, Math.round(+v) || 1));
+    pctMem = v;
+    try { localStorage.setItem(PCT_KEY, String(v)); } catch (e) { /* storage blocked */ }
+    renderPct();
+    return v;
+  }
+  function renderPct() {
+    var v = pctStep();
+    $$(".lv-tpct").forEach(function (i) { if (document.activeElement !== i) i.value = v; });
+    $$('[data-t="pctdown"]').forEach(function (b) { b.textContent = "\u2212" + v + "%"; b.title = v + "% less ([)"; });
+    $$('[data-t="pctup"]').forEach(function (b) { b.textContent = "+" + v + "%"; b.title = v + "% more (])"; });
+  }
+  window.addEventListener("storage", function (e) { if (e.key === PCT_KEY) renderPct(); });
+
   /* ---------- the tables beside the graphs ---------- */
   function toolbar(prefix) {
     return '<div class="lv-tools" hidden>' +
@@ -1543,8 +1571,9 @@
       '<button type="button" data-t="set" title="Set the selected cells (Enter)">Set</button>' +
       '<button type="button" data-t="dec" title="Down one step (−)">−</button>' +
       '<button type="button" data-t="inc" title="Up one step (+)">+</button>' +
-      '<button type="button" data-t="pct" data-arg="-1" title="1% less">−1%</button>' +
-      '<button type="button" data-t="pct" data-arg="1" title="1% more">+1%</button>' +
+      '<span class="lv-pctgrp"><button type="button" data-t="pctdown" title="1% less ([)">−1%</button>' +
+      '<input type="number" inputmode="numeric" class="lv-tpct" min="1" max="100" step="1" value="1" aria-label="Percent step, a whole number" title="How many percent the −% / +% buttons change the selected cells by">' +
+      '<button type="button" data-t="pctup" title="1% more (])">+1%</button></span>' +
       '<button type="button" data-t="interp" title="Fill between the corners of the selection (I)">Interp</button>' +
       '<button type="button" data-t="smooth" title="Smooth the selection (S)">Smooth</button>' +
       '<button type="button" data-t="revert" title="Back to the original tune\'s values">Revert</button>' +
@@ -1553,7 +1582,14 @@
       "</div>";
   }
   function wireTools(box, getGrid) {
-    var tools = $(".lv-tools", box), input = $(".lv-tin", box);
+    var tools = $(".lv-tools", box), input = $(".lv-tin", box), pin = $(".lv-tpct", box);
+    pin.addEventListener("change", function () { pin.value = setPctStep(pin.value); });
+    pin.addEventListener("keydown", function (e) {
+      var g = getGrid();
+      if (e.key === "Enter") { e.preventDefault(); pin.value = setPctStep(pin.value); if (g) g.wrap.focus({ preventScroll: true }); }
+      if (e.key === "Escape" && g) { pin.value = pctStep(); g.wrap.focus({ preventScroll: true }); }
+    });
+    renderPct();
     tools.addEventListener("click", function (e) {
       var b = e.target.closest("button[data-t]"), g = getGrid();
       if (!b || !g) return;
