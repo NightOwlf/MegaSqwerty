@@ -64,7 +64,9 @@
   var loadNote = $(".lv-load");
 
   /* Display options (the ⚙ menu), remembered in this browser. */
-  var OPT_DEF = { range: "view", scale: "log", cursorVals: true, peaks: false, line: 1.25, text: 1 };
+  // On a touch screen the traces are drawn thicker so they read at arm's length (the ⚙ menu still changes it).
+  var TOUCH = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+  var OPT_DEF = { range: "view", scale: "log", cursorVals: true, peaks: false, line: TOUCH ? 2 : 1.25, text: 1 };
   var opt = (function () {
     var o = {}, s = null, k;
     for (k in OPT_DEF) o[k] = OPT_DEF[k];
@@ -468,7 +470,7 @@
         return '<span class="lv-chip mono"><button type="button" data-sec-go="' + i + '" title="Show this section">' + fmtT(r[0], span ? 700 : 60) + "–" + fmtT(r[1], span ? 700 : 60) +
           '</button><button type="button" data-sec-del="' + i + '" aria-label="Remove this section">×</button></span>';
       }).join("") + '<span class="dim mono">' + secLen().toFixed(1) + " s of " + (tMax - tMin).toFixed(0) + " s</span>"
-        : '<span class="dim">' + (selMode ? "Drag across a graph to choose a section (or mark start and end at the cursor)." : "Whole log") + "</span>") +
+        : '<span class="dim lv-sechint">' + (selMode ? "Drag across a graph to choose a section (or mark start and end at the cursor)." : "Whole log") + "</span>") +
       '<span class="st-grow"></span>' +
       '<button type="button" class="btn sm" data-sec="start" title="Mark where a section starts, at the cursor">⟦ Start</button>' +
       '<button type="button" class="btn sm" data-sec="end" title="Mark where it ends, at the cursor">End ⟧</button>' +
@@ -479,7 +481,7 @@
       (LIVE ? "" : '<span class="lv-trim"><button type="button" class="btn sm" data-sec="keep"' + (sections.length ? "" : " disabled") +
         ' title="A new log with only the marked sections: trims off the start and end">✂ Keep only these</button>' +
         '<button type="button" class="btn sm" data-sec="cut"' + (sections.length ? "" : " disabled") + ' title="A new log with the marked sections taken out">✂ Cut these out</button>' +
-        (sections.length ? "" : '<small class="dim">mark a section to trim the log</small>') + "</span>");
+        (sections.length ? "" : '<small class="dim lv-sechint">mark a section to trim the log</small>') + "</span>");
   }
   function inSections(Tarr) {
     if (!sections.length) return null;
@@ -676,7 +678,7 @@
   function drawPane(p, last) {
     var f = fit(p.cv), ctx = f.ctx, W = f.w, H = f.h;
     if (W < 10 || H < 10) return;
-    var small = W < 520, fs = small ? 10.5 : 12, lh = fs + 2;
+    var small = W < 520, fs = small ? (TOUCH ? 12 : 10.5) : (TOUCH ? 13 : 12), lh = fs + 2;
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
     var span = view.t1 - view.t0, kx = W / span;
     var step = ticks(span), t;
@@ -726,11 +728,13 @@
     // then the highest and lowest it reached, on screen or in the whole log (the ⚙ menu).
     var font = "px system-ui, -apple-system, 'Segoe UI', Arial, sans-serif";
     ctx.textBaseline = "top"; ctx.textAlign = "left";
+    // A short graph keeps its readouts to the value alone (no ▲ highest ▼ lowest), so they don't cover the traces.
+    var brief = shown.length * lh > H * 0.34;
     var labelW = 0, rows = [];
     shown.forEach(function (s) {
       var src = opt.range === "log" || !s.rr ? { lo: s.m.lo, hi: s.m.hi } : s.rr;
       var now = s.d ? fmt(s.d.v[cur], s.m.d) : "…", u = s.m.u ? " " + s.m.u : "";
-      var mm = "▲" + fmt(src.hi, s.m.d) + "  ▼" + fmt(src.lo, s.m.d);
+      var mm = brief ? "" : "▲" + fmt(src.hi, s.m.d) + "  ▼" + fmt(src.lo, s.m.d);
       ctx.font = "bold " + (fs + 1) + font; var w1 = ctx.measureText(now).width;
       ctx.font = fs + font; var w2 = ctx.measureText(u).width, w3 = ctx.measureText(mm).width;
       rows.push({ s: s, now: now, u: u, mm: mm, w1: w1, w2: w2 });

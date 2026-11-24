@@ -1972,3 +1972,42 @@ fieldset.tsd-p { padding: 14px 10px 8px; border: 1px solid var(--line); border-r
 @keyframes lv-velive-pulse { 50% { opacity: .25; } }
 .lv-dlg-in.lv-dlg-wide { width: min(1240px, 100%); }
 .lv-dlg-velive .lv-cmp { margin-top: 4px; }
+
+/* ---------- log viewer: bigger graphs on phones and the Duo ----------
+   The graphs are what you came for: they keep a fixed share of the screen and everything else (sections,
+   cuts, gauges) goes below them, rather than squeezing them to a sliver. */
+@media (max-width: 759px) {
+  /* the tabs stay on one line and slide sideways instead of breaking "Scatter Plot" over two lines */
+  .lv-tabs { overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .lv-tabs::-webkit-scrollbar { display: none; }
+  .lv-tabs button { flex: 1 0 auto; height: 34px; padding: 0 12px; white-space: nowrap; font-size: 13px; }
+  .lv-over { height: 40px; }
+}
+@media (max-width: 759px) and (orientation: portrait) {
+  .lv.has-side:not(.no-tune):not(.tab-ve) .lv-graphs, .lv.has-side:not(.no-tune):not(.tab-ve) .lv-scatter { height: max(240px, 44dvh); }
+  .lv.has-side:not(.no-tune):not(.tab-ve) .lv-over { height: 32px; }
+}
+@media (max-width: 759px) and (max-height: 720px) and (orientation: portrait) {
+  .lv.has-side:not(.no-tune):not(.tab-ve) .lv-graphs, .lv.has-side:not(.no-tune):not(.tab-ve) .lv-scatter { height: max(220px, 40dvh); }
+}
+@media (orientation: landscape) and (min-width: 560px) and (max-width: 1099px) {
+  /* the graphs' half scrolls on its own; the graphs keep at least ~60% of it whatever is open below them */
+  .lv.has-side:not(.tab-ve) .lv-main { overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+  .lv.has-side:not(.tab-ve) .lv-main > * { flex-shrink: 0; }
+  .lv.has-side:not(.tab-ve) .lv-graphs, .lv.has-side:not(.tab-ve) .lv-scatter { flex: 1 0 auto; min-height: max(220px, calc(var(--lvh, 70dvh) * .58)); }
+  .lv.has-side:not(.tab-ve) .lv-status, .lv-name .dim { display: none; }
+  .lv.has-side:not(.tab-ve) .lv-transport { column-gap: 8px; }
+  .lv-btns button { height: 34px; min-width: 38px; }
+  .lv-over { height: 30px; }
+  /* the sections bar in as little height as it takes: the hints are in the ? help */
+  .lv.has-side:not(.tab-ve) .lv-secbar { padding: 4px 6px; gap: 4px; }
+  .lv.has-side:not(.tab-ve) .lv-secbar .lv-sechint { display: none; }
+  .lv.has-side:not(.tab-ve) .lv-secbar .btn.sm { min-height: 32px; padding: 0 8px; }
+}
+/* Short and wide (the Duo open in Safari, phones on their side): the app menu goes, the log's own bar has the
+   way back, so the graphs get the height. */
+@media (orientation: landscape) and (max-height: 620px) and (max-width: 1099px) {
+  body.page-viewer .menubar { display: none; }
+  body.page-viewer .main { padding-block: 4px 6px; }
+  .lv-bar { gap: 4px 8px; }
+}
