@@ -44,7 +44,31 @@
     el.classList.add("bad-input");
   }
 
-  function record(name, i, value, changed) {
+  /* Every cell changed on this tune, with its text before the first change, kept in this browser and carried to
+     the new tune on save, so the cells you've already been over stay in red numbers until you clear them.
+     Shared with the log viewer's tables (viewer.js uses the same key and cell numbering). */
+  var TKEY = "msq.touched." + slug, touched = {};
+  try { touched = JSON.parse(stash(TKEY) || "{}") || {}; } catch (e) { touched = {}; }
+  function saveTouched(key) { stash(key || TKEY, Object.keys(touched).length ? JSON.stringify(touched) : null); }
+  function markTouched(box, el) {
+    var m = touched[box.dataset.editName], was = m && m[el.dataset.i], tol = 0.5 * Math.pow(10, -(+box.dataset.digits || 0)) + 1e-9;
+    el.classList.toggle("touched", was != null && Math.abs(num(textOf(el)) - num(was)) > tol);
+  }
+  function touch(box, el) {
+    var name = box.dataset.editName, m = touched[name] = touched[name] || {};
+    if (!(el.dataset.i in m)) { m[el.dataset.i] = num(el.dataset.orig); saveTouched(); }
+    markTouched(box, el);
+    renderRedNote();
+  }
+  function renderRedNote() {
+    $$("[data-clear-red]").forEach(function (b) {
+      var box = b.closest("[data-edit-name]"), n = box ? $$(".touched", box).length : 0;
+      b.hidden = !n;
+      $("span", b).textContent = n + " changed";
+    });
+  }
+  function record(name, i, value, changed, box, el) {
+    if (box && el) touch(box, el);
     var e = edits[name] || {};
     if (changed) e[i] = value; else delete e[i];
     if (Object.keys(e).length) edits[name] = e; else delete edits[name];
@@ -97,7 +121,7 @@
   }
   function setValue(box, el, v) {
     var s = show(box, el, v);
-    record(box.dataset.editName, el.dataset.i, parseFloat(s), s !== el.dataset.orig);
+    record(box.dataset.editName, el.dataset.i, parseFloat(s), s !== el.dataset.orig, box, el);
   }
   function refreshPlots(boxes) {
     boxes.forEach(function (b) { if (b._plot) b._plot.refresh(); });
@@ -116,6 +140,18 @@
     });
   });
   refreshPlots($$(".hm-wrap[data-edit-name]"));
+  $$("[data-edit-name] [data-i]").forEach(function (el) { markTouched(el.closest("[data-edit-name]"), el); });
+  renderRedNote();
+  document.addEventListener("click", function (ev) {
+    var b = ev.target.closest("[data-clear-red]"), box = b && b.closest("[data-edit-name]");
+    if (!box) return;
+    if (!window.confirm("Clear the red marks on this table? The values stay as they are.")) return;
+    touched[box.dataset.editName] = undefined;
+    touched = JSON.parse(JSON.stringify(touched));
+    saveTouched();
+    $$(".touched", box).forEach(function (el) { el.classList.toggle("touched", false); });
+    renderRedNote();
+  });
 
   /* ---------- everything that follows from a setting ----------
      Other copies of the same field, gauge readouts, the limit dials (their needle and their scale), table
@@ -639,12 +675,12 @@
   function commitField(el, final) {
     var box = el.closest("[data-edit-name]"), v = num(el.textContent), cur = el.dataset.cur;
     if (isNaN(v)) {
-      if (final) { el.textContent = cur; bad(el); record(box.dataset.editName, el.dataset.i, num(cur), cur !== el.dataset.orig); }
+      if (final) { el.textContent = cur; bad(el); record(box.dataset.editName, el.dataset.i, num(cur), cur !== el.dataset.orig, box, el); }
       return;
     }
     var s = fmt(v, +box.dataset.digits);
     if (!final) {
-      record(box.dataset.editName, el.dataset.i, parseFloat(s), s !== el.dataset.orig);
+      record(box.dataset.editName, el.dataset.i, parseFloat(s), s !== el.dataset.orig, box, el);
       el.classList.toggle("edited", s !== el.dataset.orig);
       moveChartPoint(box.dataset.editName, el.dataset.i, v, s);
       return;
@@ -794,6 +830,8 @@
         if (!res.ok || !res.j.url) throw new Error(res.j.error || "Couldn't save the tune. Try again.");
         stash(KEY, null);
         stash(MODE_KEY, null);
+        var to = /\/t\/([^/?#.]+)/.exec(res.j.url);  // the new tune keeps the red marks
+        if (to) saveTouched("msq.touched." + to[1]);
         location.href = res.j.url;
       }).catch(function (err) {
         saveBtn.disabled = false;

@@ -1058,7 +1058,7 @@ body.page-viewer .main { max-width: none; padding-block: 8px 12px; padding-inlin
   .lv-wide, .lv-sel { display: none; }
   .lv-names button { font-size: 11px; line-height: 14px; }
   .lv-btns button { min-width: 40px; height: 36px; }
-  .lv-status { flex-basis: 100%; }
+  .lv-status { flex-basis: 100%; white-space: normal; }  /* a phone shows the whole line, not "Play spee…" */
   .lv-pop { right: 0; bottom: 0; left: 0; width: auto; max-height: 60dvh; border-radius: 10px 10px 0 0; }
   .lv-help-in dl { grid-template-columns: 1fr; gap: 2px; }
   .lv-help-in dd { margin-bottom: 8px; }
@@ -1102,6 +1102,7 @@ body.page-viewer .main { max-width: none; padding-block: 8px 12px; padding-inlin
 .lv-ve-ctl select { height: 32px; padding: 0 6px; border: 1px solid var(--btn-line); border-radius: 4px; background: var(--btn-2); color: var(--text); font: inherit; font-size: 13px; }
 .lv-ve-ctl [data-ve=run] { min-width: 170px; justify-content: center; }
 .lv-ve-status { margin: 0; color: var(--text); font-size: 12.5px; line-height: 1.45; }
+.lv-ve-status.mono { font-family: var(--ui); font-variant-numeric: tabular-nums; }  /* prose reads better than typewriter; numbers still line up */
 .lv-ve-bar { height: 4px; border-radius: 2px; background: var(--field); overflow: hidden; }
 .lv-ve-bar i { display: block; width: 0; height: 100%; background: linear-gradient(90deg, #3574f0, #39e6ff); }
 .lv-ve-warn { margin-bottom: 6px; padding: 8px 10px; border: 1px solid var(--warn-line); border-radius: 4px; background: var(--warn-bg); color: var(--warn-ink); font-size: 12.5px; }
@@ -1159,6 +1160,15 @@ body.page-viewer .main { max-width: none; padding-block: 8px 12px; padding-inlin
 /* ---------- log viewer: 3D tables, edited copies, sharing, options ---------- */
 .lv-tt td.vx-ch { background-image: linear-gradient(135deg, #ff9f0a 5px, transparent 5px); }
 .lv-tt td.vx-ed.vx-ch { background-image: linear-gradient(225deg, #c2185b 5px, transparent 5px), linear-gradient(135deg, #ff9f0a 5px, transparent 5px) !important; }
+/* cells you've changed: red numbers, with a white halo so they read on every heat colour */
+.lv-tt td.vx-touched { color: #d00000 !important; font-weight: 800; text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 1px #fff; }
+.lv-redchip { color: #d00000; border-color: #e8a0a0; }
+.lv-redchip:disabled { cursor: default; opacity: 1; }
+.lv-redchip[hidden] { display: none; }
+.hm td.edited, .hm td.touched { color: #d00000 !important; font-weight: 800; text-shadow: 0 0 2px #fff, 0 0 2px #fff; }
+[data-i].touched:not(td) { color: #e5484d; font-weight: 800; }
+.tool.redmarks { color: #d00000; }
+.tool.redmarks[hidden] { display: none; }
 .lv-3d { display: block; width: 100%; height: clamp(240px, 46vw, 420px); border-radius: 3px; cursor: grab; touch-action: none; }
 .lv-3d:active { cursor: grabbing; }
 .lv-3d[hidden] { display: none; }
@@ -1405,6 +1415,12 @@ body.page-viewer .main { max-width: none; padding-block: 8px 12px; padding-inlin
 }
 .lv-tv { white-space: nowrap; }
 .lv-th select { min-width: 0; flex: 1 1 auto; }
+/* phones: the table's name gets its own line instead of being squeezed to a letter by the buttons */
+@media (max-width: 600px) {
+  .lv-th { flex-wrap: wrap; row-gap: 5px; }
+  .lv-th select { flex: 1 1 100%; max-width: none; }
+  .lv-th .lv-tv { margin-left: 0; margin-right: auto; }
+}
 @media (max-width: 899px) and (orientation: landscape), (max-width: 400px) { .lv-secword { display: none; } }
 
 /* tables: always fitted, pinch to zoom in (Bigger is gone) */

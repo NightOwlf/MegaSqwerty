@@ -816,6 +816,7 @@
     var x0 = (view.t0 - tMin) * kx, x1 = (view.t1 - tMin) * kx;
     ctx.fillStyle = "rgba(53,116,240,.28)"; ctx.fillRect(x0, 0, Math.max(2, x1 - x0), H);
     ctx.strokeStyle = "#6ea2ff"; ctx.strokeRect(Math.round(x0) + 0.5, 0.5, Math.max(2, Math.round(x1 - x0) - 1), H - 1);
+    if (!T || !(T[cur] === T[cur])) return;  // the time channel isn't in yet
     var cx = Math.round((T[cur] - tMin) * kx) + 0.5;
     ctx.strokeStyle = "#39e6ff"; ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, H); ctx.stroke();
   }
@@ -900,6 +901,47 @@
     if (!g && ve.grid && box && box.contains(ve.grid.el)) g = ve.grid;
     return g;
   }
+  /* Every cell changed from this page, with the value it had before the first change, kept in this browser so the
+     red numbers survive a reload, a save and (on the live dashboard) the ECU taking the value. A cell put back to
+     where it started is no longer red. Per tune here (and on the tune's own pages); per live session link on the dashboard. */
+  function touchKey() { return "msq.touched." + (LIVE ? "live" + location.pathname : TUNE); }  // the tune page (edit.js) shares it
+  var touched = (function () { try { return JSON.parse(localStorage.getItem(touchKey()) || "{}") || {}; } catch (e) { return {}; } })();
+  var touchTimer = 0;
+  function saveTouched() {
+    clearTimeout(touchTimer);
+    touchTimer = setTimeout(function () {
+      try {
+        if (Object.keys(touched).length) localStorage.setItem(touchKey(), JSON.stringify(touched));
+        else localStorage.removeItem(touchKey());
+      } catch (e) { /* storage unavailable */ }
+    }, 250);
+  }
+  function touch(t, k) {
+    var m = touched[t.name] = touched[t.name] || {};
+    if (!(k in m)) { m[k] = t.z[k]; saveTouched(); }
+  }
+  function isTouched(t, k) {
+    var m = touched[t.name];
+    return !!(m && k in m) && Math.abs(valueAt(t, k) - m[k]) > 0.5 * Math.pow(10, -t.d);
+  }
+  function redCells(t) {
+    var n = 0, wa = t.p;
+    for (var k = 0; k < t.z.length; k++) {
+      if (edited(t, k) || isTouched(t, k) || (wa && Math.abs(valueAt(t, k) - wa[k]) > 0.5 * Math.pow(10, -t.d))) n++;
+    }
+    return n;
+  }
+  /* The "✎ 12 changed" chip over a table: how many numbers are red. Clicking it clears the red marks only. */
+  function renderTouched(g) {
+    var box = g.el && g.el.closest(".lv-table, .lv-ve-gridbox"), b = box && box.querySelector("[data-touched]");
+    if (!b) return;
+    var n = g.opts.live ? 0 : redCells(g.t), m = touched[g.t.name];
+    b.hidden = !n;
+    b.textContent = "✎ " + n + " changed";
+    b.disabled = !(m && Object.keys(m).length);
+    b.title = b.disabled ? "Cells that differ from the original tune are in red"
+      : "Cells you've changed are in red. Click to clear the red marks (the values stay as they are)";
+  }
   function valueAt(t, k) { var e = edits[t.name]; return e && k in e ? e[k] : t.z[k]; }
   function edited(t, k) { var e = edits[t.name]; return !!(e && k in e); }
   function range(t) {
@@ -912,6 +954,7 @@
     var unit = Math.pow(10, t.d);
     v = Math.round(v * unit) / unit;
     if (!(v === v)) return;
+    if (Math.abs(v - valueAt(t, k)) >= 0.5 / unit) touch(t, k);
     edits[t.name] = edits[t.name] || {};
     if (Math.abs(v - t.z[k]) < 0.5 / unit) delete edits[t.name][k];
     else edits[t.name][k] = v;
@@ -1254,11 +1297,15 @@
       // an edited copy: mark the cells that differ from the tune it was edited from
       var wa = self.opts.was || t.p, was = wa && !self.opts.live ? wa[k] : null, diff = was != null && Math.abs(v - was) > 0.5 * Math.pow(10, -t.d);
       td.classList.toggle("vx-ch", diff);
+      // red numbers: every cell you've changed, so you can see what you've already been over
+      var red = !self.opts.live && (edited(t, k) || diff || isTouched(t, k));
+      td.classList.toggle("vx-touched", red);
       if (diff) td.title = "Was " + cellText(was, t.d) + (self.opts.was ? " before VE Analyze Live (" + (v > was ? "+" : "") + ((v / was - 1) * 100).toFixed(1) + "%)" : " in the original");
       else if (td.title) td.removeAttribute("title");
     });
     this.fitText(cw);
     this.markSel();
+    renderTouched(this);
     if (this.s3) this.s3.draw();
   };
   /* The biggest text that fits the cells as they are on this screen, so numbers never overlap or get cut off,
@@ -1529,7 +1576,7 @@
   function buildSlot(slot) {
     var t = slot.t;
     var opts = idx.tables.map(function (o, i) { return "<option value=" + i + (o === t ? " selected" : "") + ">" + esc(o.label) + "</option>"; }).join("");
-    slot.el.innerHTML = '<div class="lv-th"><select aria-label="Table">' + opts + '</select><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn lv-undobtn" data-undo-edit hidden title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button><button type="button" class="lv-3dbtn lv-lockchip" data-locks hidden title="Cells locked against VE Analyze. Click to unlock them all">🔒</button><button type="button" class="lv-3dbtn" data-copy-ts title="Copy the table (or the selected cells) to paste into TunerStudio: select the top-left cell there and press Ctrl/Cmd+V">Copy</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div>' +
+    slot.el.innerHTML = '<div class="lv-th"><select aria-label="Table">' + opts + '</select><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn lv-undobtn" data-undo-edit hidden title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button><button type="button" class="lv-3dbtn lv-redchip" data-touched hidden>✎</button><button type="button" class="lv-3dbtn lv-lockchip" data-locks hidden title="Cells locked against VE Analyze. Click to unlock them all">🔒</button><button type="button" class="lv-3dbtn" data-copy-ts title="Copy the table (or the selected cells) to paste into TunerStudio: select the top-left cell there and press Ctrl/Cmd+V">Copy</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div>' +
       '<div class="lv-ovrow"><span>Cells show</span><select class="lv-ovsel" aria-label="What the cells show">' +
         '<option value="">Values</option><option value="time">Time in each cell</option>' +
         (idx.roles && idx.roles.knock != null ? '<option value="knock">Knock retard (most)</option>' : "") +
@@ -1729,7 +1776,7 @@
     if (fresh) {
       try { localStorage.removeItem(EDIT_KEY); } catch (e) { /* ignore */ }
       idx.tune.parent = { slug: TUNE, label: idx.tune.label };
-      TUNE = j.slug; EDIT_KEY = "msq.lv.edits:" + TUNE; idx.tune.slug = TUNE; root.dataset.tune = TUNE;
+      TUNE = j.slug; EDIT_KEY = "msq.lv.edits:" + TUNE; idx.tune.slug = TUNE; root.dataset.tune = TUNE; saveTouched();
       try { history.replaceState(null, "", urlWithTune(TUNE)); } catch (e) { /* sandboxed */ }
       query = location.search;
       $$(".lv-back").forEach(function (a) { a.href = "/t/" + TUNE; });
@@ -1947,7 +1994,7 @@
       "</div>" +
       '<div class="lv-ve-apply" hidden></div>' +
       '<div class="lv-ve-warn" hidden></div>' +
-      '<div class="lv-ve-main"><div class="lv-ve-gridbox"><div class="lv-th"><b>' + esc(t.label) + '</b><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn lv-undobtn" data-undo-edit hidden title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button><button type="button" class="lv-3dbtn lv-lockchip" data-locks hidden title="Cells locked against VE Analyze. Click to unlock them all">🔒</button><button type="button" class="lv-3dbtn" data-copy-ts title="Copy the table (or the selected cells) to paste into TunerStudio: select the top-left cell there and press Ctrl/Cmd+V">Copy</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div><div class="lv-grid"></div>' + toolbar() +
+      '<div class="lv-ve-main"><div class="lv-ve-gridbox"><div class="lv-th"><b>' + esc(t.label) + '</b><span class="lv-tv mono"></span><button type="button" class="lv-3dbtn lv-sizebtn" data-cells title="Bigger cells for editing (scroll sideways), or fit the whole table">Bigger</button><button type="button" class="lv-3dbtn lv-undobtn" data-undo-edit hidden title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button><button type="button" class="lv-3dbtn lv-redchip" data-touched hidden>✎</button><button type="button" class="lv-3dbtn lv-lockchip" data-locks hidden title="Cells locked against VE Analyze. Click to unlock them all">🔒</button><button type="button" class="lv-3dbtn" data-copy-ts title="Copy the table (or the selected cells) to paste into TunerStudio: select the top-left cell there and press Ctrl/Cmd+V">Copy</button><button type="button" class="lv-3dbtn" data-3d title="Show as a 3D surface">3D</button><button type="button" class="lv-3dbtn lv-shapebtn" data-shape hidden title="Shape the 3D map: drag a point up or down (selected cells move together)">Shape</button></div><div class="lv-grid"></div>' + toolbar() +
         '<p class="lv-tn">' + esc((t.yl || "Load") + (t.yu ? " (" + t.yu + ")" : "") + " ↑ · " + (t.xl || "RPM") + " →") + " · after a run, select cells to adjust them</p></div>" +
         '<div class="lv-ve-side">' +
           '<div class="lv-ve-why"></div>' +
@@ -3436,6 +3483,15 @@
     if (b) {
       var cg = gridIn(b);
       if (cg) cg.copyTS();
+      return;
+    }
+    b = e.target.closest("[data-touched]");
+    if (b) {
+      var tg = gridIn(b), tm = tg && touched[tg.t.name], tn = tm ? Object.keys(tm).length : 0;
+      if (!tn || !window.confirm("Clear the red marks in " + (tg.t.label || tg.t.name) + "? The values stay as they are; only the reminder of which cells you've changed goes.")) return;
+      delete touched[tg.t.name]; saveTouched();
+      allGrids().forEach(function (g) { if (g.t === tg.t) g.paint(); });
+      toast("Red marks cleared." + (tg.t.p ? " Cells that differ from the original tune stay red." : ""));
       return;
     }
     b = e.target.closest("[data-locks]");
