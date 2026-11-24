@@ -134,9 +134,11 @@
   }
 
   /* Some ECUs log VE in one byte (FOME/rusEFI: U08 × 0.5, so 0–127.5): a VE above 127.5 comes out 128 less
-     (a cell at 148.5 logs as 20.5). Put the 128 back when the table says the cell is up there. */
+     (a cell at 148.5 logs as 20.5). Put the 128 back when the table says the cell is up there: the logged value is
+     well under the table's (less than 0.6 of it) and adding 128 lands closer. The table it's checked against needn't
+     be the one that ran (a cell that ran at 151 may read 106 in today's tune), so there's no fixed threshold. */
   function unwrapVe(v, fromTune) {
-    if (!(fromTune > 110) || !(v < 128)) return v;
+    if (!(fromTune > 0) || !(v >= 0 && v < 128) || !(v < fromTune * 0.6)) return v;
     var best = v;
     for (var k = 1; k <= 3; k++) if (Math.abs(v + 128 * k - fromTune) < Math.abs(best - fromTune)) best = v + 128 * k;
     return best;
@@ -188,7 +190,7 @@
       return p * 9 + (dr + 1) * 3 + (dc + 1);
     }
 
-    /* Start on a log. d: {T, rpm, load, lam, tgt, ve, trim, trimMode, clt, tps, map, fuel, ae, dfco, cutCode, wall,
+    /* Start on a log. d: {T, rpm, load, lam, tgt, ve, veRef (the VE of the tune that ran with it), trim, trimMode, clt, tps, map, fuel, ae, dfco, cutCode, wall,
        mass, lamOk, idle, duty} as arrays (λ already divided to lambda), any but T/rpm/load/lam/tgt may be missing.
        Optional masks: d.inSection (1 = inside the sections chosen to tune) and d.userOk (1 = passes the
        user's own filters). */
@@ -283,7 +285,10 @@
           if (e < events.length && !why[i] && events[e][0] - T[i] <= o.lookAhead) why[i] = events[e][1];
         }
       }
-      log = { d: d, n: n, why: why, j: j, ok: okMask, lag: lag, measured: measured, rpmMed: rpmMed, fr: fr, wr: wr, lagAt: lagAt };
+      // a log that ever shows a VE above 127.5 isn't logging it in one byte: nothing in it has wrapped
+      var veMax = -Infinity;
+      if (d.ve) for (i = 0; i < n; i++) if (d.ve[i] > veMax && d.ve[i] < 300) veMax = d.ve[i];
+      log = { d: d, n: n, why: why, j: j, ok: okMask, canWrap: !!d.ve && veMax <= 127.5 + 1e-3, lag: lag, measured: measured, rpmMed: rpmMed, fr: fr, wr: wr, lagAt: lagAt };
       logs.push({ lag: lag, measured: measured });
       return log;
     }
@@ -301,9 +306,13 @@
       }
       var a = reason ? null : locate(table.x, d.rpm[i]), c = reason ? null : locate(table.y, d.load[i]);
       if (!reason && (!a || !c)) reason = 7;
-      var logged = !reason && d.ve && d.ve[i] > 0 && d.ve[i] < 300;
       var fromTune = reason ? NaN : interp(table, base, d.rpm[i], d.load[i]);
-      var used = reason ? NaN : (logged ? unwrapVe(d.ve[i], fromTune) : fromTune);
+      // unwrapped against the tune that ran with this log when it's known (d.veRef), else the one attached. In a
+      // one-byte log a 0 is a VE of 128 that wrapped, not a missing value
+      var ref = d.veRef && d.veRef[i] > 0 ? d.veRef[i] : fromTune;
+      var lv = !reason && d.ve && d.ve[i] >= 0 && d.ve[i] < 300 ? (log.canWrap ? unwrapVe(d.ve[i], ref) : d.ve[i]) : NaN;
+      var logged = lv > 0;
+      var used = reason ? NaN : (logged ? lv : fromTune);
       if (!reason && !(used > 0)) reason = 8;
       var want = NaN;
       if (!reason) {

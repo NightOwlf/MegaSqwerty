@@ -376,4 +376,34 @@ function liveSession({ truthOf = truth, noise = 0.004, passes = 40, passS = 5, h
   assert(w < 0.2, "the 50 kPa row of what ran stays near the VE logged around it, worst " + (w * 100).toFixed(0) + "% off");
   console.log("ok - cells reached only at the edge of their square stay sane (rebuilt within " + (w * 100).toFixed(0) + "% of what ran)");
 }
-console.log("all VE Analyze tests passed (incl. look-ahead, FOME channels, fuel film, edge cells)");
+// 22. A one-byte VE that wrapped is put right even when today's tune has the cell well under 128: a real FOME log ran
+// about 151 at 3500 rpm / 90 kPa and logged 23.1, while the tune attached now has that cell at 106.6. Read as 23 it
+// asked for ~85% less fuel and slipped past the plausibility check (which looks at λ, not the VE).
+{
+  assert.strictEqual(+VEAL.unwrapVe(23.1, 106.6).toFixed(1), 151.1, "23.1 against 106.6 is 151.1");
+  assert.strictEqual(VEAL.unwrapVe(23, 60), 23, "a low cell stays low");
+  assert.strictEqual(VEAL.unwrapVe(70, 106.6), 70, "a value near the tune is left alone");
+  const ran = tune.map(v => v + 80);                                  // the tune that ran: lots of cells over 127.5
+  const now = Object.assign({}, table, { z: ran.map(v => v * 0.72) }); // today's: the same cells 28% lower (106 for 148)
+  const truthR = ran.map((v, k) => v * truth[k] / tune[k]);
+  const log = makeLog();
+  for (let i = 0; i < log.T.length; i++) {
+    const v = VEAL.interp(table, ran, log.rpm[i], log.load[i]);
+    log.ve[i] = v > 127.5 ? Math.round((v - 128) * 2) / 2 : Math.round(v * 2) / 2;
+    log.lam[i] = log.tgt[i] * VEAL.interp(table, truthR, log.rpm[i], log.load[i]) / v;
+  }
+  const solve = (d, opts) => { const e = VEAL.create(now, Object.assign({ lag: 0.01, lagByRpm: false, maxChange: 50 }, opts)); e.begin(d); for (let i = 0; i < d.T.length; i++) e.step(i); return e.finish(); };
+  const res = solve(log);
+  let w = 0;
+  res.values.forEach((v, k) => { if (res.hits[k] > 1) w = Math.max(w, Math.abs(v / truthR[k] - 1)); });
+  assert(w < 0.03, "lands on what the engine needs, worst " + (w * 100).toFixed(1) + "%");
+  // with the tune that ran known (d.veRef), the same; and a log that ever shows a VE over 127.5 isn't one-byte: no unwrapping
+  const withRef = solve(Object.assign({}, log, { veRef: log.T.map((_, i) => VEAL.interp(table, ran, log.rpm[i], log.load[i])) }));
+  let w2 = 0;
+  withRef.values.forEach((v, k) => { if (withRef.hits[k] > 1) w2 = Math.max(w2, Math.abs(v / truthR[k] - 1)); });
+  assert(w2 < 0.03, "against the tune that ran, worst " + (w2 * 100).toFixed(1) + "%");
+  const e16 = VEAL.create(now, {}); const l16 = e16.begin(Object.assign({}, log, { ve: log.ve.map((v, i) => i === 5 ? 140 : v) }));
+  assert.strictEqual(l16.canWrap, false, "VE over 127.5 in the log: two-byte, never unwrapped");
+  console.log("ok - a wrapped one-byte VE is put right against a tune that has since moved (worst cell " + (w * 100).toFixed(1) + "%)");
+}
+console.log("all VE Analyze tests passed (incl. look-ahead, FOME channels, fuel film, edge cells, VE wrap)");

@@ -2247,8 +2247,18 @@
     if (o.lagms != null) { o.lag = o.lagms / 1000; delete o.lagms; } else o.lag = "auto";
     return o;
   }
-  /* Everything VE Analyze reads from one log, as arrays (λ as lambda). */
-  function veData(meta, get) {
+  /* The VE table of the tune a log was uploaded with (the one that ran with it, as near as we know), or null: VE
+     Analyze checks a VE the ECU logged in one byte against it (FOME wraps above 127.5). Today's tune may have moved
+     that cell a long way since. */
+  var ownVeCache = {};
+  function ownVe(slug) {
+    if (LIVE || !slug) return Promise.resolve(null);
+    if (!ownVeCache[slug]) ownVeCache[slug] = fetch("/l/" + slug + "/index.json").then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { return j && (j.tables || []).filter(function (x) { return x.id === "ve"; })[0] || null; }).catch(function () { return null; });
+    return ownVeCache[slug];
+  }
+  /* Everything VE Analyze reads from one log, as arrays (λ as lambda). own: the VE table it ran with, if known. */
+  function veData(meta, get, own) {
     var t = meta.tables.filter(function (x) { return x.id === "ve"; })[0], R = meta.roles;
     var need = { T: "t", rpm: t.xc, load: t.yc, lam: R.lambda, tgt: R.lambda_target, ve: R.ve, trim: R.ego_corr,
                  clt: R.clt, tps: R.tps, map: R.map, fuel: R.pw, ae: R.ae_active, dfco: R.dfco, lamOk: R.lambda_ok,
@@ -2273,6 +2283,11 @@
       if (t.ya !== 1 || t.yb !== 0) d.load = d.load.map(function (v) { return v * t.ya + t.yb; });
       if (d.clt) d.clt = cltForVe(meta.channels[R.clt], d.clt);  // compared with Min coolant: same units
       if (d.trim) d.trimMode = meta.channels[R.ego_corr].hi > 50 ? "pct100" : "pct0";
+      if (own && own.z && own.x && own.y && d.ve) {
+        var ot = { x: own.x, y: own.y, cols: own.cols || own.x.length }, nn = d.T.length;
+        d.veRef = new Float32Array(nn);
+        for (var q = 0; q < nn; q++) d.veRef[q] = VEAL.interp(ot, own.z, d.rpm[q], d.load[q]);
+      }
       return d;
     });
   }
@@ -2298,7 +2313,7 @@
       return fetch("/l/" + s + "/index.json" + query).then(function (r) { return r.json(); }).then(function (meta) {
         if (!meta.tables.some(function (x) { return x.id === "ve"; })) return null;
         var fetchC = function (c) { return fetchF32("/l/" + s + "/ch/" + c); };
-        return veData(meta, fetchC).then(function (d) {
+        return ownVe(s).then(function (own) { return veData(meta, fetchC, own); }).then(function (d) {
           return filterMask(d.T.length, function (name) {
             var c = -1;
             meta.channels.forEach(function (m, q) { if (m.n === name) c = q; });
@@ -2307,8 +2322,9 @@
         });
       }).catch(function () { return null; });
     });
-    jobs.push(veData(idx, function (c) { return c === "t" ? Promise.resolve(T) : load(c).then(function (x) { return x && x.v; }); })
-      .then(function (d) {
+    jobs.push(ownVe(LIVE ? null : SLUG).then(function (own) {
+      return veData(idx, function (c) { return c === "t" ? Promise.resolve(T) : load(c).then(function (x) { return x && x.v; }); }, own);
+    }).then(function (d) {
         var sec = inSections(d.T);
         if (sec) d.inSection = sec;
         return filterMask(d.T.length, function (name) { var c = byName(name); return c >= 0 ? load(c).then(function (x) { return x && x.v; }) : Promise.resolve(null); })
