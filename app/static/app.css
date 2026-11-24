@@ -1033,7 +1033,11 @@ body.page-viewer .main { max-width: none; padding-block: 8px 12px; padding-inlin
 .lv-pop[hidden], .lv-help[hidden] { display: none; }
 .lv-pop input { margin: 6px; min-height: 32px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: 4px; background: var(--field); color: var(--text); font: inherit; }
 .lv-pop ul { flex: 1; margin: 0; padding: 0 0 4px; overflow-y: auto; list-style: none; }
-.lv-pop li { padding: 5px 10px; font-size: 13px; cursor: pointer; }
+.lv-pop li { display: flex; align-items: center; gap: 8px; padding: 5px 10px; font-size: 13px; cursor: pointer; }
+.lv-pop li b { font-weight: 600; }
+.lv-pop-n { flex: 1; min-width: 0; }
+.lv-pop-add { flex: none; padding: 2px 8px; border: 1px solid var(--line-2); border-radius: 10px; color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.lv-pop li:hover .lv-pop-add { border-color: var(--sel, currentColor); color: var(--text); }
 .lv-pop li:hover, .lv-pop li.on { background: var(--sel-soft); }
 .lv-pop li.none { color: var(--muted); }
 .lv-pop li small { color: var(--faint); }

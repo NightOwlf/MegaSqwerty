@@ -106,7 +106,7 @@
     if (have) return have.then ? have : Promise.resolve(have);
     var m = idx.channels[i];
     var p = (m.virt ? m.virt() : fetchF32(base + "/ch/" + i)).then(function (v) {
-      if (m.toF) for (var q = 0; q < v.length; q++) v[q] = v[q] * 1.8 + 32;  // shown in °F
+      if (m.toF) for (var q = 0; q < v.length; q++) v[q] = (v[q] - (m.fromK || 0)) * 1.8 + 32;  // shown in °F
       if (m.toAfr) for (var q2 = 0; q2 < v.length; q2++) v[q2] = v[q2] * m.toAfr;  // lambda shown as AFR
       store[i] = { v: v, pyr: pyramid(v) };
       scatterDirty = true;
@@ -2940,8 +2940,20 @@
     } else { pop.style.left = pop.style.top = ""; }
     popIn.value = "";
     pop.querySelector(".lv-pop-title").textContent = allowNone ? "Choose a channel for this graph" : "Choose a channel";
+    var CS = window.CHANSEARCH, verb = current >= 0 ? "Use" : "Add";
+    // The plain name a tuning role gives a channel ("Coolant temp"), else the one chansearch.js knows, else none.
+    var roleName = {};
+    SUGGEST.forEach(function (r) { var c = channelFor(r[0]); if (c >= 0 && !(c in roleName)) roleName[c] = r[1]; });
+    var plainOf = function (i) { var a = CS && CS.about(idx.channels[i].n); return roleName[i] || (a ? a[0] : ""); };
+    var row = function (i, plain, note) {
+      var m = idx.channels[i], same = plain && CS && CS.key(plain) === CS.key(m.n);
+      return '<li data-c="' + i + '"' + (i === current ? ' class="on"' : "") + '><span class="lv-pop-n">' +
+        (plain && !same ? "<b>" + esc(plain) + "</b> <small>" + esc(m.n) + "</small>" : "<b>" + esc(m.n) + "</b>") +
+        (m.u ? " <small>· " + esc(m.u) + "</small>" : "") + (note ? " <small>" + note + "</small>" : "") +
+        '</span><span class="lv-pop-add">' + (i === current ? "In graph" : "+ " + verb) + "</span></li>";
+    };
     var render = function () {
-      var q = popIn.value.trim().toLowerCase().split(/\s+/).filter(Boolean), html = [], flat = [];
+      var q = popIn.value.trim().toLowerCase().split(/[\s,]+/).filter(Boolean), html = [], flat = [];
       if (allowNone && !q.length) html.push('<li data-c="-1" class="none">None (remove)</li>');
       if (!q.length) {  // the channels that matter for tuning, by plain name, before the full list
         var sug = [], seenS = {};
@@ -2949,18 +2961,20 @@
           var c = channelFor(r[0]);
           if (c < 0 || seenS[c]) return;
           seenS[c] = 1;
-          sug.push('<li data-c="' + c + '"' + (c === current ? ' class="on"' : "") + ">" + esc(r[1]) + " <small>" + esc(idx.channels[c].n) + "</small></li>");
+          sug.push(row(c, r[1]));
         });
         if (sug.length) html.push('<li class="lv-pop-h">Suggested for tuning</li>' + sug.join("") + '<li class="lv-pop-h">All channels</li>');
       }
+      var hits = [];
       idx.channels.forEach(function (m, i) {
-        var name = m.n.toLowerCase();
         if (m.lo == null && i !== current) return;  // nothing was logged on it
-        for (var k = 0; k < q.length; k++) if (name.indexOf(q[k]) < 0) return;
-        (m.lo === m.hi ? flat : html).push('<li data-c="' + i + '"' + (i === current ? ' class="on"' : "") + ">" + esc(m.n) +
-          (m.u ? " <small>" + esc(m.u) + "</small>" : "") + (m.lo === m.hi ? " <small>never changes</small>" : "") + "</li>");
+        var plain = plainOf(i), s = CS ? CS.score(q, m.n, m.u, roleName[i]) : (q.every(function (w) { return m.n.toLowerCase().indexOf(w) >= 0; }) ? 0 : -1);
+        if (s < 0) return;
+        hits.push({ i: i, s: q.length ? s + (roleName[i] ? -0.5 : 0) : 0, plain: plain, flat: m.lo === m.hi });
       });
-      popList.innerHTML = html.concat(flat).join("") || '<li class="none">No channel matches</li>';
+      if (q.length) hits.sort(function (a, b) { return a.flat - b.flat || a.s - b.s || a.i - b.i; });
+      hits.forEach(function (h) { (h.flat ? flat : html).push(row(h.i, h.plain, h.flat ? "never changes" : "")); });
+      popList.innerHTML = html.concat(flat).join("") || '<li class="none">No channel matches. Try ' + esc(CS ? CS.EXAMPLES : "rpm, map, afr") + "</li>";
       var on = popList.querySelector(".on");
       if (on && !q.length) popList.scrollTop = on.offsetTop - 60;
     };
@@ -3759,7 +3773,7 @@
   /* Temperatures in °F (the default; ⚙ has °C): whatever the log or tune stores, °C channels, ranges and
      temperature axes are converted for display. Table values themselves aren't, so edits save as stored. */
   var TEMP_F = (function () { try { return (localStorage.getItem("msq.lv.temp") || "F") !== "C"; } catch (e) { return true; } })();
-  function isCelsius(u) { return /^\s*(°\s*c|deg\s*c|degc|c|celsius|degrees\s*c)\s*$/i.test(String(u || "")); }
+  function isCelsius(u) { return /^\s*(°\s*c|º\s*c|deg\.?\s*c|degc|c|c°|℃|celsius|deg(ree)?s?\s*c(elsius)?)\s*$/i.test(String(u || "")); }
   function f(v) { return v == null ? v : v * 1.8 + 32; }
   /* Mixture is always shown as AFR on the fuel's scale (the tune's stoich): a lambda channel (FOME logs the target as
      "Fuel: target lambda") is shown ×stoich and renamed, and a target table holding lambda is shown in AFR. Values go
@@ -3812,7 +3826,12 @@
     toAfr();
     if (!TEMP_F || !idx) return;
     idx.channels.forEach(function (m) {
-      if (!isCelsius(m.u)) return;
+      // a temperature logged with no units (some CSV logs): read as °C when it's in °C's range for that sensor
+      var a = !m.u && window.CHANSEARCH && window.CHANSEARCH.about(m.n), bare = a && /temp/i.test(a[0]) && m.hi != null &&
+        m.hi <= (/EGT/.test(a[0]) ? 1100 : 125);
+      var kelvin = (/^\s*(k|kelvin)\s*$/i.test(m.u || "") || (!m.u && / K$/.test(m.n))) && /temp/i.test(m.n);  // FOME's "Air: Charge temperature estimate K"
+      if (!isCelsius(m.u) && !bare && !kelvin) return;
+      if (kelvin) { m.fromK = 273.15; if (m.lo != null) { m.lo -= 273.15; m.hi -= 273.15; } }
       m.toF = true; m.u = "°F"; m.lo = f(m.lo); m.hi = f(m.hi);
       if (m.lo != null) { m.lo = Math.round(m.lo * 10) / 10; m.hi = Math.round(m.hi * 10) / 10; }
     });
@@ -3868,7 +3887,7 @@
       var v = vals[k];
       if (v == null || v !== v) continue;
       var m = idx.channels[i];
-      if (m.toF) v = v * 1.8 + 32;
+      if (m.toF) v = (v - (m.fromK || 0)) * 1.8 + 32;
       if (m.toAfr) v = v * m.toAfr;
       if (!LB.ch[i]) { LB.ch[i] = new Float32Array(LB.cap); LB.ch[i].fill(NaN); }
       LB.ch[i][n] = v; seen[i] = LB.stamp;

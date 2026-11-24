@@ -23,7 +23,7 @@
   }
   // Temperatures shown in °F (the ECU works in °C: values are converted for display, and back when set)
   var TEMP_F = (function () { try { return (localStorage.getItem("msq.lv.temp") || "F") !== "C"; } catch (e) { return true; } })();
-  function isC(u) { return /^\s*(°\s*c|deg\s*c|degc|c|celsius|degrees\s*c)\s*$/i.test(String(u || "")); }
+  function isC(u) { return /^\s*(°\s*c|º\s*c|deg\.?\s*c|degc|c|c°|℃|celsius|deg(ree)?s?\s*c(elsius)?)\s*$/i.test(String(u || "")); }
   function showT(v, u) { return TEMP_F && isC(u) && v != null ? v * 1.8 + 32 : v; }
   function showU(u) { return TEMP_F && isC(u) ? "°F" : u || ""; }
   var frames = 0, fps = 0, rtt = null, chList = [];
@@ -1048,16 +1048,26 @@
       if (el && o) { var sv = showT(och[n], o.units); el.textContent = fmt(sv, o.kind === "bits" ? 0 : Math.abs(sv) >= 100 ? 0 : 2); }
     });
   }
+  function score(CS, q, name, u, label) { var s = CS.score(q, name, u, label); return s < 0 ? 99 : s; }
   function pickGauge() {
     var dlg = $(".lt-pick"), list = Object.keys(layout.outputs).map(function (n) { return [n, layout.outputs[n].label || n]; })
       .sort(function (a, b) { return a[1].localeCompare(b[1]); });
     dlg.hidden = false;
     var inp = $("input", dlg), ul = $("ul", dlg);
     var render = function () {
-      var q = inp.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
-      ul.innerHTML = list.filter(function (x) { var s = (x[1] + " " + x[0]).toLowerCase(); return q.every(function (w) { return s.indexOf(w) >= 0; }); })
-        .slice(0, 120).map(function (x) { return '<li data-pick="' + esc(x[0]) + '">' + esc(x[1]) + (x[1] !== x[0] ? " <small>" + esc(x[0]) + "</small>" : "") + "</li>"; }).join("") ||
-        '<li class="dim">No channel matches</li>';
+      var CS = window.CHANSEARCH, q = inp.value.trim().toLowerCase().split(/[\s,]+/).filter(Boolean);
+      // "coolant temp" finds CLT: plain names and everyday words (chansearch.js), best matches first
+      var hits = list.map(function (x) {
+        var u = showU(layout.outputs[x[0]].units), s = CS ? Math.min(score(CS, q, x[0], u, x[1]), score(CS, q, x[1], u, "")) :
+          (q.every(function (w) { return (x[1] + " " + x[0]).toLowerCase().indexOf(w) >= 0; }) ? 0 : -1);
+        return { x: x, s: s, u: u, plain: CS && (CS.about(x[0]) || CS.about(x[1])) };
+      }).filter(function (h) { return h.s >= 0 && h.s < 99; });
+      if (q.length) hits.sort(function (a, b) { return a.s - b.s; });
+      ul.innerHTML = hits.slice(0, 120).map(function (h) {
+        var x = h.x, p = h.plain && h.plain[0], own = x[1] !== x[0] ? x[1] + " · " + x[0] : x[0];
+        return '<li data-pick="' + esc(x[0]) + '"><b>' + esc(p || x[1]) + "</b> <small>" + esc(p ? own : x[1] !== x[0] ? x[0] : "") +
+          (h.u ? " · " + esc(h.u) : "") + "</small></li>";
+      }).join("") || '<li class="dim">No channel matches. Try ' + esc(CS ? CS.EXAMPLES : "rpm, map, afr") + "</li>";
     };
     inp.value = ""; inp.oninput = render; render();
     if (window.innerWidth > 700) inp.focus();
