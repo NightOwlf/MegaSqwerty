@@ -752,3 +752,14 @@ def test_a_section_of_an_mlg_keeps_tunerstudios_header():
     assert log.rows == len(drive())
     assert log.header == ['"rusEFI (FOME) Vthpnp.2026: FOME"', '"Capture Date: Mon Oct 05 20:53:35 CDT 2026, File author: TunerStudio"']
     assert begin > 0
+
+
+def test_fill_roles_finds_fome_channels_on_a_stored_log():
+    """A log stored before a role existed gains it from its channel names: FOME's cut code, wall-wetting correction,
+    fuel mass and AE fuel, which VE Analyze uses to leave out what the VE table wasn't in charge of."""
+    from app import logs as L
+    chans = [{"n": "RPM", "lo": 0}, {"n": "Fuel: Cut Code", "lo": 0}, {"n": "Fuel: Wall correction", "lo": -3},
+             {"n": "Fuel: base cycle mass", "lo": 7}, {"n": "Fuel: TPS AE add fuel ms", "lo": 0},
+             {"n": "Fuel: Wall amount", "lo": None}]
+    roles = L.fill_roles({"rpm": 0}, chans)
+    assert roles == {"rpm": 0, "cut_code": 1, "wall_corr": 2, "cycle_mass": 3, "ae_active": 4}

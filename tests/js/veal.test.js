@@ -289,3 +289,91 @@ function liveSession({ truthOf = truth, noise = 0.004, passes = 40, passS = 5, h
   assert(down < 0.2 && down < downNaive / 2, "with it, they stop coming down: -" + (down * 100).toFixed(0) + "% vs -" + (downNaive * 100).toFixed(0) + "%");
   console.log("ok - a wideband stuck rich doesn't lean the table out: held at -" + (down * 100).toFixed(0) + "% (-" + (downNaive * 100).toFixed(0) + "% without the check)");
 }
+
+// 17. The delay is measured on fuel per unit of air (fuel that just follows MAP doesn't move λ, and lining it up
+// with λ pulled the answer 40-60 ms short), and between samples: a 20 Hz log isn't stuck to 50 ms steps.
+{
+  const at20 = (log) => Object.fromEntries(Object.entries(log).map(([k, v]) => [k, v.filter((_, i) => i % 5 === 0)]));
+  for (const lag of [0.13, 0.22, 0.31]) {
+    for (const [name, log] of [["100 Hz", makeLog({ lag })], ["20 Hz", at20(makeLog({ lag }))]]) {
+      const got = VEAL.create(table, { lagByRpm: false }).begin(log).lag;
+      assert(Math.abs(got - lag) < 0.02, name + ": measured " + got.toFixed(3) + " s for " + lag + " s");
+    }
+  }
+  console.log("ok - the delay is measured to within 20 ms, at 100 Hz and at 20 Hz");
+}
+
+// 18. Look ahead: with the delay set a little long, the lean spike of a fuel cut leaks into the readings just before
+// it (its first readings ask for 10-30% more fuel, which passes as plausible). Those records are left out.
+{
+  const log = makeLog({ lag: 0.15 });
+  const cuts = [];
+  for (let s = 6000; s < 58000; s += 400) cuts.push(s);  // stop-and-go: a lift-off every 4 s
+  cuts.forEach(s => { for (let i = s; i < s + 150; i++) log.fuel[i] = 0; for (let i = s + 15; i < s + 165; i++) log.lam[i] = Math.min(1.6, log.lam[i] + 0.03 * (i - s - 15)); });  // λ ramps lean
+  const ahead = run(log, { lag: 0.25, maxChange: 30, confidence: 0 }).res, blind = run(log, { lag: 0.25, maxChange: 30, confidence: 0, lookAhead: 0 }).res;
+  assert(ahead.stats.decel > blind.stats.decel, "records just before a cut are left out");
+  assert(worst(ahead) < worst(blind), "and the table is closer: " + worst(ahead) + " vs " + worst(blind));
+  console.log("ok - records just before a fuel cut are left out (worst cell " + (worst(ahead) * 100).toFixed(2) + "% vs " + (worst(blind) * 100).toFixed(2) + "%)");
+}
+
+// 19. FOME / rusEFI: the cut code (fuel cut right now), AE fuel added or taken (in ms, either sign) and a big
+// wall-wetting correction all mark records the VE table wasn't in charge of.
+{
+  const log = makeLog({ n: 20000 });
+  const n = log.T.length;
+  log.cutCode = new Float32Array(n); log.ae = new Float32Array(n); log.wall = new Float32Array(n); log.mass = new Float32Array(n).fill(20);
+  for (let i = 3000; i < 3400; i++) log.cutCode[i] = 3;    // RPM limit
+  for (let i = 8000; i < 8200; i++) log.ae[i] = -0.4;      // decel enleanment
+  for (let i = 12000; i < 12300; i++) log.wall[i] = 2.5;   // 12.5% of the fuel
+  const { res } = run(log, { lag: 0.15 });
+  assert(res.stats.decel >= 400, "cut code: " + res.stats.decel);
+  assert(res.stats.transient >= 500, "AE and wall wetting: " + res.stats.transient);
+  console.log("ok - FOME's cut code, AE fuel and wall-wetting correction are used");
+}
+
+// 20. Fuel film: the ECU's wall-wetting model is never exact, so what it corrects partly shows on the wideband.
+// With the correction logged, records it's busy in count for less and the table lands closer.
+{
+  const log = makeLog({ n: 60000 });
+  const n = log.T.length, wall = new Float32Array(n), mass = new Float32Array(n);
+  let F = 0, film = Float32Array.from(log.lam);
+  // throttle stabs every 6 s: the load (and fuel) jumps 25%, half the film effect is left over on the wideband
+  for (let i = 0; i < n; i++) {
+    const stab = i % 600 < 300 ? 1.25 : 1, inj = log.fuel[i] * stab, ev = F / 50;
+    F += 0.3 * inj - ev;
+    const err = inj > 0 ? ((0.7 * inj + ev) / inj - 1) : 0;
+    wall[i] = -err * 0.5 * inj; mass[i] = inj;
+    const k = Math.min(n - 1, i + 15);
+    film[k] = log.lam[k] / (1 + err * 0.5);
+  }
+  log.lam = film;
+  const withWall = run(Object.assign({}, log, { wall, mass }), { lag: 0.15, maxChange: 30, confidence: 0 }).res;
+  const without = run(log, { lag: 0.15, maxChange: 30, confidence: 0 }).res;
+  assert(worst(withWall) < worst(without), "wall correction logged: " + worst(withWall) + " vs " + worst(without));
+  console.log("ok - fuel film is allowed for (worst cell " + (worst(withWall) * 100).toFixed(2) + "% vs " + (worst(without) * 100).toFixed(2) + "% without the wall correction)");
+}
+// 21. A cell the log only reaches at the edge of its square (here MAP sits at 59-60 kPa, so the 50 kPa row is never
+// more than a tenth of the mix) isn't pinned down by the rebuild of the table that ran: any inconsistency in the logged
+// VE (FOME logs it in 0.5 steps; a table changed mid-log) is multiplied tenfold there. On a real FOME log with a tune
+// attached that wasn't the one that ran, that swung such a cell to a VE of 3 where the ECU logged about 40. A guard:
+// the rebuilt cell is held near the VE logged around it.
+{
+  const log = makeLog({ n: 30000 });
+  for (let i = 0; i < log.T.length; i++) {
+    const at = i % 2 ? 60 : 59;                                         // right on the row, and a whisker below it
+    log.load[i] = log.map[i] = at;
+    const v = VEAL.interp(table, tune, log.rpm[i], at);
+    log.ve[i] = at === 59 ? Math.round((v - 0.75) * 2) / 2 : Math.round(v * 2) / 2;  // logged in 0.5 steps, a bit off
+    log.lam[i] = log.tgt[i] * VEAL.interp(table, truth, log.rpm[i], at) / v;
+  }
+  const other = Object.assign({}, table, { z: tune.map(v => v * 0.8) });  // not the tune that ran
+  const e = VEAL.create(other, { lag: 0.01, lagByRpm: false });
+  e.begin(log); for (let i = 0; i < log.T.length; i++) e.step(i);
+  const res = e.finish();
+  let w = 0;
+  const row50 = Y.indexOf(50);
+  res.ran.forEach((v, k) => { if (Math.floor(k / C) === row50 && res.hits[k] > 0.05) w = Math.max(w, Math.abs(v / tune[k] - 1)); });
+  assert(w < 0.2, "the 50 kPa row of what ran stays near the VE logged around it, worst " + (w * 100).toFixed(0) + "% off");
+  console.log("ok - cells reached only at the edge of their square stay sane (rebuilt within " + (w * 100).toFixed(0) + "% of what ran)");
+}
+console.log("all VE Analyze tests passed (incl. look-ahead, FOME channels, fuel film, edge cells)");

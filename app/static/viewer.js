@@ -2252,7 +2252,7 @@
     var t = meta.tables.filter(function (x) { return x.id === "ve"; })[0], R = meta.roles;
     var need = { T: "t", rpm: t.xc, load: t.yc, lam: R.lambda, tgt: R.lambda_target, ve: R.ve, trim: R.ego_corr,
                  clt: R.clt, tps: R.tps, map: R.map, fuel: R.pw, ae: R.ae_active, dfco: R.dfco, lamOk: R.lambda_ok,
-                 idle: R.idle_active, duty: R.inj_duty };
+                 idle: R.idle_active, duty: R.inj_duty, cutCode: R.cut_code, wall: R.wall_corr, mass: R.cycle_mass };
     var afr = meta.tables.filter(function (x) { return x.id === "afr"; })[0], afrY = afr ? afr.yc : null;
     var names = Object.keys(need).filter(function (k) { return need[k] != null; });
     var extra = !need.tgt && afr ? [afr.xc, afrY] : [];
@@ -2271,7 +2271,7 @@
         }
       }
       if (t.ya !== 1 || t.yb !== 0) d.load = d.load.map(function (v) { return v * t.ya + t.yb; });
-      if (d.clt && TEMP_F && isCelsius((meta.channels[R.clt] || {}).u)) d.clt = d.clt.map(f);  // other logs arrive in °C
+      if (d.clt) d.clt = cltForVe(meta.channels[R.clt], d.clt);  // compared with Min coolant: same units
       if (d.trim) d.trimMode = meta.channels[R.ego_corr].hi > 50 ? "pct100" : "pct0";
       return d;
     });
@@ -3822,13 +3822,25 @@
       if (m.d > cap) m.d = cap;
     });
   }
+  // a temperature logged with no units (some CSV logs): read as °C when it's in °C's range for that sensor
+  function bareCelsius(m) {
+    var a = m && !m.u && window.CHANSEARCH && window.CHANSEARCH.about(m.n);
+    return !!(a && /temp/i.test(a[0]) && m.hi != null && m.hi <= (/EGT/.test(a[0]) ? 1100 : 125));
+  }
+  function isFahrenheit(u) { return /^\s*(°\s*f|º\s*f|deg\.?\s*f|degf|f|f°|℉|fahrenheit|deg(ree)?s?\s*f(ahrenheit)?)\s*$/i.test(String(u || "")); }
+  /* A coolant channel in the units VE Analyze's "Min coolant" is in (°F, or °C when ⚙ says °C), whatever the log
+     stored it in. This log's own channels already arrive in °F; another log's arrive as recorded. */
+  function cltForVe(m, v) {
+    if (!m || !v) return v;
+    if (TEMP_F && (isCelsius(m.u) || bareCelsius(m))) return v.map(f);
+    if (!TEMP_F && isFahrenheit(m.u)) return v.map(function (x) { return (x - 32) / 1.8; });
+    return v;
+  }
   function toFahrenheit() {
     toAfr();
     if (!TEMP_F || !idx) return;
     idx.channels.forEach(function (m) {
-      // a temperature logged with no units (some CSV logs): read as °C when it's in °C's range for that sensor
-      var a = !m.u && window.CHANSEARCH && window.CHANSEARCH.about(m.n), bare = a && /temp/i.test(a[0]) && m.hi != null &&
-        m.hi <= (/EGT/.test(a[0]) ? 1100 : 125);
+      var bare = bareCelsius(m);
       var kelvin = (/^\s*(k|kelvin)\s*$/i.test(m.u || "") || (!m.u && / K$/.test(m.n))) && /temp/i.test(m.n);  // FOME's "Air: Charge temperature estimate K"
       if (!isCelsius(m.u) && !bare && !kelvin) return;
       if (kelvin) { m.fromK = 273.15; if (m.lo != null) { m.lo -= 273.15; m.hi -= 273.15; } }

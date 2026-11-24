@@ -64,8 +64,12 @@ ROLES: dict[str, tuple[str, ...]] = {
     "ve": (r"^fuelve$", r"^vecurr", r"^vecurrent", r"^ve1?$", r"^vetable1?$"),
     "accel": (r"^accelenrich", r"^tpsaccel", r"^accel$", r"^aeamount"),
     # Used by the viewer's VE Analyze to leave out samples the VE table wasn't in charge of.
-    "ae_active": (r"^fueltpsaeactive$", r"^tpsaeactive$", r"^aeactive$"),
+    "ae_active": (r"^fueltpsaeactive$", r"^tpsaeactive$", r"^aeactive$", r"^fueltpsaeaddfuel"),
     "dfco": (r"^dfcoactive$", r"^fuelcut$", r"^dfco$"),
+    # FOME / rusEFI: why fuel is cut right now (0 = it isn't), and the wall-wetting correction against the fuel mass
+    "cut_code": (r"^fuelcutcode$",),
+    "wall_corr": (r"^fuelwallcorrection$",),
+    "cycle_mass": (r"^fuelbasecyclemass$",),
     "lambda_ok": (r"^lambdacurrentlygood$",),
     "idle_active": (r"^idleclosedloopactive$",),
 }
@@ -86,6 +90,24 @@ def resolve(log: LogDoc) -> dict[str, Channel]:
                 taken.add(i)
                 break
             if role in out:
+                break
+    return out
+
+
+def fill_roles(roles: dict, channels: list[dict]) -> dict:
+    """Roles added since a log was stored, found from its channel names ({"n", "lo", ...} as in the column index):
+    a stored log keeps the roles it was read with, and gains the new ones without being read again."""
+    out = dict(roles)
+    taken = set(out.values())
+    for role, patterns in ROLES.items():
+        if role in out:
+            continue
+        for pattern in patterns:
+            hit = next((i for i, c in enumerate(channels)
+                        if i not in taken and c.get("lo") is not None and re.match(pattern, _key(c.get("n", "")))), None)
+            if hit is not None:
+                out[role] = hit
+                taken.add(hit)
                 break
     return out
 

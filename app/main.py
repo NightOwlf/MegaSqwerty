@@ -1093,8 +1093,8 @@ def create_app(data_dir: str | Path | None = None, uploads_per_hour: int | None 
         index, _ = log_index(log_slug)
         tune_slug, doc = viewer_tune(request, row)
         tables, tune = [], None
-        roles = index.get("roles", {})
         channels = index["channels"]
+        roles = logsmod.fill_roles(index.get("roles", {}), channels)
         if doc is not None:
             tmap, tviews = tune_views(doc)
             tables = logsmod.viewer_tables(tviews, index, lambda z: meta_digits(tmap, z))

@@ -27,6 +27,14 @@
     tpsRate: 30,       // %/s of throttle movement that counts as a transient
     mapRate: 80,       // kPa/s of MAP movement that counts as a transient
     holdoff: 0.35,     // s to wait after a transient for the fuel film to settle
+    lookAhead: 0.15,   // s: a record this close BEFORE a transient or fuel cut is left out too: with any error in the
+                       // wideband delay its reading catches the start of the spike (a fuel-cut lean spike reads as
+                       // "needs 50% more fuel", inside what passes as plausible)
+    fuelRate: 0.4,     // 1/s: a record whose fuel per unit of air is changing this fast (relative) counts half: an
+                       // error in the delay × how fast the mixture is being moved = how wrong its reading is
+    wallPct: 5,        // %: wall-wetting correction (FOME/rusEFI) bigger than this share of the fuel is a transient
+    wallSoft: 2,       // %: ...and a record whose wall correction is this share counts half (the ECU's film model is
+                       // never exact, so what it's correcting partly shows on the wideband)
     decelHold: 1.0,    // s to wait after fuel cut
     lag: "auto",       // wideband delay: "auto" (measured from the log) or seconds
     lagByRpm: true,    // exhaust takes longer to reach the sensor at low RPM: scale the delay with it
@@ -88,7 +96,10 @@
 
   /* The wideband's delay behind the fuel the ECU commanded: the shift that best lines up changes in fuel
      (pulse width, or VE × MAP) with the opposite change in measured λ. -> seconds, or null if unclear. */
-  function measureLag(T, fuel, lam, ok) {
+  function measureLag(T, fuel, lam, ok) { var m = lagFit(T, fuel, lam, ok); return m ? m.lag : null; }
+  /* -> {lag, r}: the delay, refined between samples (a parabola through the best correlation and its neighbours, so a
+     20 Hz log isn't stuck to 50 ms steps), and how strongly the two line up. */
+  function lagFit(T, fuel, lam, ok) {
     var n = T.length;
     if (!fuel || !lam || n < 500) return null;
     var dt = (T[n - 1] - T[0]) / (n - 1);
@@ -99,20 +110,27 @@
       df[i] = good ? Math.log(fuel[i] / fuel[i - 1]) : NaN;
       dl[i] = good ? -Math.log(lam[i] / lam[i - 1]) : NaN;
     }
-    var best = -1, bestLag = null, step = Math.max(1, Math.round(0.025 / dt)), maxK = Math.round(0.8 / dt);
-    for (var k = 0; k <= maxK; k += step) {
+    var step = Math.max(1, Math.round(0.025 / dt)), maxK = Math.round(0.8 / dt), rs = {};
+    var corr = function (k) {
+      if (k in rs) return rs[k];
       var sab = 0, saa = 0, sbb = 0, sa = 0, sb = 0, m = 0;
       for (var j = 1; j + k < n; j++) {
         var a = df[j], b = dl[j + k];
         if (a !== a || b !== b) continue;
         sa += a; sb += b; sab += a * b; saa += a * a; sbb += b * b; m++;
       }
-      if (m < 200) continue;
+      if (m < 200) return (rs[k] = null);
       var cov = sab / m - sa / m * sb / m, va = saa / m - sa * sa / m / m, vb = sbb / m - sb * sb / m / m;
-      var r = va > 0 && vb > 0 ? cov / Math.sqrt(va * vb) : 0;
-      if (r > best) { best = r; bestLag = k * dt; }
-    }
-    return best > 0.02 ? bestLag : null;
+      return (rs[k] = va > 0 && vb > 0 ? cov / Math.sqrt(va * vb) : 0);
+    };
+    var best = -1, bestK = -1;
+    for (var k = 0; k <= maxK; k += step) { var r = corr(k); if (r !== null && r > best) { best = r; bestK = k; } }
+    if (!(best > 0.02)) return null;
+    // the neighbouring samples, then the top of the parabola through the three
+    for (var q = Math.max(0, bestK - step + 1); q < bestK + step; q++) { var rq = corr(q); if (rq !== null && rq > best) { best = rq; bestK = q; } }
+    var r0 = corr(bestK - 1), r2 = corr(bestK + 1), off = 0;
+    if (bestK > 0 && r0 !== null && r2 !== null) { var den = r0 - 2 * best + r2; if (den < 0) off = Math.max(-0.5, Math.min(0.5, 0.5 * (r0 - r2) / den)); }
+    return { lag: (bestK + off) * dt, r: best };
   }
 
   /* Some ECUs log VE in one byte (FOME/rusEFI: U08 × 0.5, so 0–127.5): a VE above 127.5 comes out 128 less
@@ -144,6 +162,9 @@
     // the range of VE the ECU actually logged in each cell: the rebuilt "what ran" can't leave it (with sparse data,
     // or a table that was changed while the log ran, an unbounded fit swings neighbours to impossible values)
     var ranLo = new Float64Array(N).fill(Infinity), ranHi = new Float64Array(N).fill(-Infinity);
+    // ...and the logged VE around each cell, weighted by how much each sample leans on it: a cell only ever reached at
+    // the edge of its square (MAP never down at that row) isn't pinned by the fit, but can't be far from this
+    var ranU = new Float64Array(N), ranW = new Float64Array(N);
     var mism = { n: 0, sum: 0, logged: 0 };
     var errSum = new Float64Array(N), errW = new Float64Array(N);  // mixture error each cell saw, before the fix
     // the correction each sample asked of a cell (want / used), weighted: its mean, scatter and effective count
@@ -167,8 +188,8 @@
       return p * 9 + (dr + 1) * 3 + (dc + 1);
     }
 
-    /* Start on a log. d: {T, rpm, load, lam, tgt, ve, trim, trimMode, clt, tps, map, fuel, ae, dfco, lamOk,
-       idle, duty} as arrays (λ already divided to lambda), any but T/rpm/load/lam/tgt may be missing.
+    /* Start on a log. d: {T, rpm, load, lam, tgt, ve, trim, trimMode, clt, tps, map, fuel, ae, dfco, cutCode, wall,
+       mass, lamOk, idle, duty} as arrays (λ already divided to lambda), any but T/rpm/load/lam/tgt may be missing.
        Optional masks: d.inSection (1 = inside the sections chosen to tune) and d.userOk (1 = passes the
        user's own filters). */
     function begin(d) {
@@ -181,40 +202,62 @@
         var lv = d.lam[i];
         okMask[i] = lv > railLo && lv < railHi && (!d.lamOk || d.lamOk[i] > 0) ? 1 : 0;
       }
+      // What the wideband responds to is fuel per unit of air: fuel that just follows the air (MAP) leaves λ where it
+      // is. So the delay is measured, and how settled a record is judged, on fuel ÷ MAP: it moves when the target,
+      // the trim or the table under the engine changes, which is exactly when λ moves.
+      var fuel = null;
+      if (d.fuel || (d.ve && d.map)) {
+        fuel = new Float32Array(n);
+        for (i = 0; i < n; i++) {
+          var fq = d.fuel ? d.fuel[i] : d.ve[i] * d.map[i] / (d.tgt && d.tgt[i] > 0 ? d.tgt[i] : 1);
+          fuel[i] = d.map && d.map[i] > 5 ? fq / d.map[i] : fq;
+        }
+      }
       var lag = typeof o.lag === "number" ? o.lag : null, measured = false;
       if (lag === null) {
-        var fuel = d.fuel;
-        if (!fuel && d.ve && d.map) { fuel = new Float32Array(n); for (i = 0; i < n; i++) fuel[i] = d.ve[i] * d.map[i]; }
         lag = measureLag(T, fuel, d.lam, okMask);
         measured = lag !== null;
         if (lag === null) lag = 0.2;
         lag = Math.max(0.05, Math.min(0.6, lag));
       }
       var rpmMed = median(d.rpm.length > 20000 ? d.rpm.filter(function (_, q) { return q % 7 === 0; }) : d.rpm) || 2000;
+      var lagAt = function (rpm) {
+        return o.lagByRpm ? lag * Math.max(0.7, Math.min(1.5, Math.sqrt(rpmMed / Math.max(300, rpm || 300)))) : lag;
+      };
 
       // reasons a record can't be used, decided up front (so a record knows about the transients around it)
       var why = new Uint8Array(n), j = new Int32Array(n), lastTrans = -1e9, lastDecel = -1e9;
-      var win = 0.1, back = 0;
+      var fr = new Float32Array(n);  // how fast fuel per unit of air is changing, relative, per second
+      var wr = new Float32Array(n);  // wall-wetting correction, % of the fuel
+      var events = [];               // [time, reason] where a transient or fuel cut begins, for the look-ahead
+      var win = 0.1, back = 0, back2 = 0, wasTrans = false, wasCut = false;
       for (i = 0; i < n; i++) {
         var t = T[i];
         while (back < i && T[back] < t - win) back++;
+        while (back2 < i && T[back2] < t - 0.25) back2++;
         var span = t - T[back];
         var trans = false;
         if (span > 0) {
           if (d.tps && finite(d.tps[i]) && finite(d.tps[back]) && Math.abs(d.tps[i] - d.tps[back]) / span > o.tpsRate) trans = true;
           if (d.map && finite(d.map[i]) && finite(d.map[back]) && Math.abs(d.map[i] - d.map[back]) / span > o.mapRate) trans = true;
         }
-        if (d.ae && d.ae[i] > 0) trans = true;
-        if (trans) lastTrans = t;
-        var rpm = d.rpm[i];
+        if (d.ae && finite(d.ae[i]) && d.ae[i] !== 0) trans = true;  // a flag, or fuel added/taken (FOME: ms, can be −)
+        if (d.wall && d.mass && d.mass[i] > 0) { wr[i] = Math.abs(d.wall[i]) / d.mass[i] * 100; if (wr[i] > o.wallPct) trans = true; }
+        if (trans) { lastTrans = t; if (!wasTrans) events.push([t, 2]); }
+        wasTrans = trans;
+        if (fuel && T[i] > T[back2] && fuel[i] > 0 && fuel[back2] > 0) fr[i] = Math.abs(Math.log(fuel[i] / fuel[back2])) / (T[i] - T[back2]);
+        var rpm = d.rpm[i], lagI = lagAt(rpm);
+        var lamCut = d.tps && d.tps[i] < 1.5 && d.lam[i] > 1.12 && rpm > 1400;
         var cut = (d.dfco && d.dfco[i] > 0) || (d.fuel && d.fuel[i] <= 0.05 && rpm > 600) ||
-                  (d.tps && d.tps[i] < 1.5 && d.lam[i] > 1.12 && rpm > 1400);
+                  (d.cutCode && finite(d.cutCode[i]) && Math.abs(d.cutCode[i]) >= 0.5) || lamCut;
         if (cut) lastDecel = t;
+        // a cut seen only on the wideband began a delay earlier
+        if (cut && !wasCut) events.push([lamCut && !(d.dfco && d.dfco[i] > 0) ? t - lagI : t, 3]);
+        wasCut = cut;
 
-        // the record whose λ shows this record's fuel
-        var lagI = o.lagByRpm ? lag * Math.max(0.7, Math.min(1.5, Math.sqrt(rpmMed / Math.max(300, rpm || 300)))) : lag;
+        // the record whose λ shows this record's fuel (none yet when what comes after it isn't known: live waits)
         var lo = i, hi = n - 1, want = t + lagI;
-        if (T[hi] < want) { j[i] = -1; } else {
+        if (T[hi] < Math.max(want, t + o.lookAhead)) { j[i] = -1; } else {
           while (lo < hi) { var mid = (lo + hi) >> 1; if (T[mid] < want) lo = mid + 1; else hi = mid; }
           j[i] = lo;
         }
@@ -231,7 +274,16 @@
                  (d.tps && !within(d.tps[i], o.tpsLo, o.tpsHi))) reason = 11;
         why[i] = reason;
       }
-      log = { d: d, n: n, why: why, j: j, ok: okMask, lag: lag, measured: measured, rpmMed: rpmMed };
+      // look ahead: a record just before a transient or cut reads the start of it if the delay is a little off
+      if (o.lookAhead > 0 && events.length) {
+        events.sort(function (p, q) { return p[0] - q[0]; });
+        var e = 0;
+        for (i = 0; i < n; i++) {
+          while (e < events.length && events[e][0] <= T[i]) e++;
+          if (e < events.length && !why[i] && events[e][0] - T[i] <= o.lookAhead) why[i] = events[e][1];
+        }
+      }
+      log = { d: d, n: n, why: why, j: j, ok: okMask, lag: lag, measured: measured, rpmMed: rpmMed, fr: fr, wr: wr, lagAt: lagAt };
       logs.push({ lag: lag, measured: measured });
       return log;
     }
@@ -269,7 +321,9 @@
       dt = Math.max(0, Math.min(0.2, dt || 0));
       var rate = 0;
       if (i > 0 && d.T[i] > d.T[i - 1]) rate = Math.abs(d.rpm[i] - d.rpm[i - 1]) / (d.T[i] - d.T[i - 1]);
-      var s = dt / (1 + Math.pow(rate / 2500, 2));   // settled samples count for more
+      // settled samples count for more: RPM sweeping, or fuel demand changing, put the reading in doubt
+      var s = dt / (1 + Math.pow(rate / 2500, 2) + (o.fuelRate > 0 ? Math.pow(log.fr[i] / o.fuelRate, 2) : 0) +
+                    (o.wallSoft > 0 ? Math.pow(log.wr[i] / o.wallSoft, 2) : 0));
       if (!(s > 0)) return -1;
 
       var c0 = a[0], r0 = c[0], fx = a[1], fy = c[1];
@@ -291,7 +345,8 @@
         valRan[cp] += s * w / (hits[cp] + prior) * errRan;
         b[cp] += s * w * want;
         bRan[cp] += s * w * used;
-        if (w >= 0.25 && used === used) { if (used < ranLo[cp]) ranLo[cp] = used; if (used > ranHi[cp]) ranHi[cp] = used; }
+        if (w >= 0.05 && used === used) { if (used < ranLo[cp]) ranLo[cp] = used; if (used > ranHi[cp]) ranHi[cp] = used; }
+        if (used === used) { ranU[cp] += s * w * w * used; ranW[cp] += s * w * w; }
         for (q = 0; q < 4; q++) if (weight[q] > 0) A[band(cp, corner[q])] += s * w * weight[q];
       }
       return weight[0] >= weight[1] && weight[0] >= weight[2] && weight[0] >= weight[3] ? corner[0]
@@ -359,7 +414,7 @@
     function decay(f) {
       if (!(f < 1)) return;
       f = Math.max(0, f);
-      [hits, A, b, bRan, errSum, errW, rS, rS2].forEach(function (arr) { for (var q = 0; q < arr.length; q++) arr[q] *= f; });
+      [hits, A, b, bRan, errSum, errW, rS, rS2, ranU, ranW].forEach(function (arr) { for (var q = 0; q < arr.length; q++) arr[q] *= f; });
       for (var q = 0; q < N; q++) wS2[q] *= f * f;
     }
 
@@ -406,14 +461,19 @@
     /* Solve the whole table from every sample. -> {values, changed: [{i, from, to, pct, hits}], ...} */
     function finish() {
       // what ran is rebuilt exactly (no smoothing): it's a record of the ECU's table, not a measurement
-      var live = o.ref === "base";
-      var x = solve(b, val, o.smooth, true), ran = live ? Float64Array.from(base) : solve(bRan, valRan, 0, false), k;
+      // the tune attached is the one that ran (the logged VE matches it to within a couple of %): that's the record
+      var live = o.ref === "base", same = !live && mism.n > 100 && mism.sum / mism.n < 0.02;
+      var x = solve(b, val, o.smooth, true), ran = live || same ? Float64Array.from(base) : solve(bRan, valRan, 0, false), k;
       for (k = 0; k < N; k++) {  // keep what ran inside what was logged there (or the tune, where nothing was)
-        if (live) continue;
+        if (live || same) continue;
+        if (!(ran[k] === ran[k])) ran[k] = base[k];
         if (ranLo[k] <= ranHi[k]) {
           var lo = Math.min(ranLo[k], base[k]) * 0.85, hi = Math.max(ranHi[k], base[k]) * 1.15;
-          ran[k] = Math.max(lo, Math.min(hi, ran[k] === ran[k] ? ran[k] : base[k]));
-        } else if (!(ran[k] > 0)) ran[k] = base[k];
+          ran[k] = Math.max(lo, Math.min(hi, ran[k]));
+        }
+        // and near the VE the ECU logged around it: a cell the fit can't pin down otherwise swings to nonsense
+        if (ranW[k] > 0) { var avg = ranU[k] / ranW[k]; ran[k] = Math.max(avg * 0.85, Math.min(avg * 1.15, ran[k])); }
+        else ran[k] = base[k];
       }
       var digits = Math.max(0, Math.min(4, table.d == null ? 1 : table.d)), unit = Math.pow(10, digits);
       var values = new Array(N), changed = [];
